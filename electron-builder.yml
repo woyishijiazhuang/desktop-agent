@@ -1,0 +1,53 @@
+appId: com.desktop-agent.app
+productName: 桌面助手
+directories:
+  buildResources: build
+files:
+  - '!**/.vscode/*'
+  - '!src/*'
+  - '!{scripts,docs,.trae}/*'
+  - '!electron.vite.config.{js,ts,mjs,cjs}'
+  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.env,.env.*,.npmrc,pnpm-lock.yaml,pnpm-workspace.yaml,.editorconfig,.gitignore}'
+  - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
+  - '!electron-builder.yml'
+  # node_modules 内的开发内容：源码映射 / 类型声明 / SDK 自带示例，运行时均不需要
+  - '!**/*.map'
+  - '!**/*.{d.ts,d.mts,d.cts}'
+  - '!node_modules/@modelcontextprotocol/sdk/dist/**/examples/**'
+asarUnpack:
+  - resources/**
+win:
+  executableName: 桌面助手
+nsis:
+  artifactName: ${name}-${version}-setup.${ext}
+  shortcutName: ${productName}
+  uninstallDisplayName: ${productName}
+  createDesktopShortcut: always
+  # 向导式安装器（非一键）：允许用户自定义安装目录
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+mac:
+  # 未签名/notarize=false 时 entitlements 不生效，保留 JIT 兼容项以备开发签名
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    - NSDocumentsFolderUsageDescription: 桌面助手需要访问"文稿"文件夹以读写文件。
+    - NSDownloadsFolderUsageDescription: 桌面助手需要访问"下载"文件夹以读写文件。
+  notarize: false
+  category: public.app-category.productivity
+dmg:
+  artifactName: ${name}-${version}.${ext}
+linux:
+  target:
+    - AppImage
+    - deb
+  maintainer: desktop-agent
+  category: Utility
+appImage:
+  artifactName: ${name}-${version}.${ext}
+npmRebuild: false
+publish:
+  provider: generic
+  url: https://example.com/auto-updates
+electronDownload:
+  mirror: https://npmmirror.com/mirrors/electron/

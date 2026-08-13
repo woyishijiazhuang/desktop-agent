@@ -1,0 +1,22 @@
+node_modules
+dist
+out
+release
+.DS_Store
+.eslintcache
+*.log*
+# TypeScript 增量编译缓存
+*.tsbuildinfo
+# 根目录主进程打包产物（electron-vite 误落到根目录的构建产物）
+/index.js
+# IDE 内部设计文档（不上传公开仓库）
+.trae
+# IDE 本地配置
+.vscode
+# 构建验证产物
+.verify-dist
+# 打包安装包
+*.dmg
+*.exe
+*.AppImage
+*.deb

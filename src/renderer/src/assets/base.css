@@ -1,0 +1,183 @@
+/*
+ * 全站配色 token 体系。
+ * 设计取向：中性 zinc 灰阶 + 紫罗兰强调色，暗色对标代码编辑器（VS Code / One Dark /
+ * Tokyo Night）的中性炭灰底，避免蓝调泥感。各组件以 var(--xxx) 引用，便于整体换肤。
+ */
+:root {
+  /* 背景层级（zinc 中性灰，不带蓝调） */
+  --bg: #ffffff;
+  --bg-soft: #fafafa;
+  --bg-mute: #f4f4f5;
+
+  /* 边框 */
+  --border: #e4e4e7;
+  --border-soft: #ececef;
+
+  /* 文字层级 */
+  --text-1: #18181b;
+  --text-2: #52525b;
+  --text-3: #a1a1aa;
+
+  /* 主题色：紫罗兰（Naive UI themeOverrides.primaryColor 对齐） */
+  --primary: #7c3aed;
+  --primary-hover: #6d28d9;
+  --primary-pressed: #5b21b6;
+  --primary-soft: #ede9fe;
+
+  /* 语义色 */
+  --success: #16a34a;
+  --success-soft: #dcfce7;
+  --warning: #d97706;
+  --warning-soft: #fef3c7;
+  --error: #dc2626;
+  --error-soft: #fee2e2;
+
+  /* 代码 */
+  --code-bg: #f6f6f7;
+  --code-border: #e4e4e7;
+
+  /* 阴影 / 圆角 */
+  --shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.06);
+  --shadow-md: 0 4px 12px rgba(24, 24, 27, 0.08);
+  --radius: 8px;
+  --radius-lg: 12px;
+
+  /* 消息行 / 头像 / 悬停 */
+  --user-msg-bg: var(--bg-mute);
+  --hover-bg: #f4f4f5;
+  --hover-bg-strong: #e9e9ec;
+  --msg-max-width: 768px;
+  --avatar-size: 30px;
+  --avatar-bg: var(--bg-mute);
+  --avatar-fg: var(--text-2);
+  --row-gap: 22px;
+
+  /* 兼容旧引用（main.css body 仍用 --color-background / --color-text） */
+  --color-background: var(--bg);
+  --color-background-soft: var(--bg-soft);
+  --color-background-mute: var(--bg-mute);
+  --color-text: var(--text-1);
+}
+
+/*
+ * 深色主题变量覆盖。
+ * 在 <html> 上加 .dark 类即生效（由 useThemeStore 同步切换）。
+ * 采用 zinc 中性炭灰底（非 slate 蓝调），对标代码编辑器暗色主题；
+ * 强调色用更亮的紫罗兰（violet-400）以保证暗底对比度。
+ * --color-background / --color-text 经 var() 间接引用，自动翻转。
+ */
+:root.dark {
+  --bg: #18181b;
+  --bg-soft: #1f1f23;
+  --bg-mute: #27272a;
+
+  --border: #2a2a2e;
+  --border-soft: #232327;
+
+  --text-1: #f4f4f5;
+  --text-2: #a1a1aa;
+  --text-3: #71717a;
+
+  --primary: #a78bfa;
+  --primary-hover: #c4b5fd;
+  --primary-pressed: #8b5cf6;
+  --primary-soft: rgba(167, 139, 250, 0.16);
+
+  --success: #34d399;
+  --success-soft: rgba(52, 211, 153, 0.15);
+  --warning: #fbbf24;
+  --warning-soft: rgba(251, 191, 36, 0.15);
+  --error: #f87171;
+  --error-soft: rgba(248, 113, 113, 0.15);
+
+  --code-bg: #0c0c0e;
+  --code-border: #27272a;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+
+  --user-msg-bg: #27272a;
+  --hover-bg: #27272a;
+  --hover-bg-strong: #2f2f33;
+  --avatar-bg: #27272a;
+  --avatar-fg: #a1a1aa;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  font-weight: normal;
+}
+
+ul {
+  list-style: none;
+}
+
+body {
+  min-height: 100vh;
+  color: var(--color-text);
+  background: var(--color-background);
+  line-height: 1.6;
+  font-family:
+    Inter,
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    Oxygen,
+    Ubuntu,
+    Cantarell,
+    'Fira Sans',
+    'Droid Sans',
+    'Helvetica Neue',
+    sans-serif;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* 主题切换时的平滑过渡（首屏已在 mount 前应用 .dark，不会触发动画） */
+@media (prefers-reduced-motion: no-preference) {
+  body {
+    transition:
+      background-color 0.2s ease,
+      color 0.2s ease;
+  }
+}
+
+/*
+ * 全局滚动条归一化（兜底）。
+ * 主滚动容器优先用 Naive UI 的 NScrollbar（自动主题化）；
+ * 此处仅对组件内部残留的原生滚动（NCode 的 <pre>、NCollapse 溢出等）做统一细化，
+ * 避免 Windows / Electron 默认粗大滚动条破坏视觉。
+ */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.45);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(100, 116, 139, 0.7);
+}
+
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}

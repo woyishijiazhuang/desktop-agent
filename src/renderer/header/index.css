@@ -1,0 +1,154 @@
+/*
+ * 标题栏视图样式：高度与主进程 HEADER_HEIGHT(32px) 一致。
+ * 主题 token 来自 base.css（index.ts 一并引入），随 <html>.dark 翻转。
+ */
+html,
+body {
+  height: 32px;
+  overflow: hidden;
+}
+
+body {
+  background: var(--bg-soft);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+/* 拖拽区（no-drag 区内的按钮/交互元素可正常点击） */
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  -webkit-app-region: drag;
+}
+
+.titlebar__brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 12px;
+  height: 100%;
+}
+
+/* 原生标题栏模式（macOS 红绿灯 / Windows overlay 系统按钮）：只需系统窗口按钮，
+   隐藏自绘全部元素（品牌/置顶/窗口控制），保留空白拖拽条；Linux 原生模式下
+   header 由主进程收起为 0 高度 */
+html.win-native .titlebar__brand,
+html.win-native .titlebar__controls {
+  display: none;
+}
+
+.titlebar__logo {
+  width: 20px;
+  height: 20px;
+  /* 降低品牌色饱和度，避免左上角图标过于抢眼 */
+  filter: grayscale(0.4);
+}
+
+.titlebar__title {
+  font-size: 12px;
+  color: var(--text-1);
+  letter-spacing: 0.2px;
+  transition: color 0.15s ease;
+}
+
+/* 失焦状态 */
+html:not(.win-focused) .titlebar__logo {
+  opacity: 0.5;
+}
+
+html:not(.win-focused) .titlebar__title {
+  color: var(--text-3);
+}
+
+html:not(.win-focused) .titlebar__btn {
+  color: var(--text-3);
+}
+
+html:not(.win-focused) .titlebar__btn:hover {
+  background: var(--border);
+}
+
+/* 窗口控制按钮（no-drag） */
+.titlebar__controls {
+  display: flex;
+  height: 100%;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar__btn {
+  width: 46px;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  color: var(--text-1);
+  cursor: pointer;
+  transition:
+    background 0.1s ease,
+    color 0.1s ease;
+}
+
+.titlebar__btn:hover {
+  background: var(--bg-mute);
+}
+
+.titlebar__btn:active {
+  background: var(--border);
+}
+
+.titlebar__btn--close:hover {
+  background: var(--error);
+  color: #ffffff;
+}
+
+.titlebar__btn--close:active {
+  background: var(--primary-pressed);
+  color: #ffffff;
+}
+
+.titlebar__icon {
+  width: 14px;
+  height: 14px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* 置顶 pin 图标：独立类，不继承 .titlebar__icon 的全局描边样式（否则 CSS 会覆盖
+   内联的 stroke-width/fill，导致圆头过细、针杆透明）。尺寸适配 32px 标题栏。 */
+.titlebar__pin-icon {
+  width: 15px;
+  height: 15px;
+}
+
+/* 置顶激活态：主色高亮 */
+.titlebar__btn--pin:hover {
+  background: var(--bg-mute);
+}
+html.win-on-top .titlebar__btn--pin {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+html.win-on-top .titlebar__btn--pin:hover {
+  background: var(--primary-soft);
+}
+
+/* 最大化 ↔ 还原图标切换（html.win-max 由窗口状态推送驱动） */
+.titlebar__icon--restore {
+  display: none;
+}
+
+html.win-max .titlebar__icon--maximize {
+  display: none;
+}
+
+html.win-max .titlebar__icon--restore {
+  display: block;
+}

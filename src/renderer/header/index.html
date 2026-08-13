@@ -1,0 +1,68 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Header</title>
+    <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
+    />
+  </head>
+
+  <body>
+    <div class="titlebar">
+      <div class="titlebar__brand">
+        <img class="titlebar__logo" src="../src/assets/sparkle.svg" alt="logo" />
+        <span class="titlebar__title">桌面助手</span>
+      </div>
+      <div class="titlebar__controls">
+        <button
+          class="titlebar__btn titlebar__btn--pin"
+          id="btn-pin"
+          type="button"
+          title="置顶窗口"
+        >
+          <svg class="titlebar__pin-icon" viewBox="0 0 512 512">
+            <circle
+              cx="256"
+              cy="96"
+              r="64"
+              fill="none"
+              stroke="currentColor"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              stroke-width="32"
+            />
+            <path
+              d="M272 164a9 9 0 0 0-9-9h-14a9 9 0 0 0-9 9v293.56a32.09 32.09 0 0 0 2.49 12.38l10.07 24a3.92 3.92 0 0 0 6.88 0l10.07-24a32.09 32.09 0 0 0 2.49-12.38z"
+              fill="currentColor"
+            />
+            <circle cx="280" cy="72" r="24" fill="currentColor" />
+          </svg>
+        </button>
+        <button class="titlebar__btn" id="btn-minimize" type="button" title="最小化">
+          <svg class="titlebar__icon" viewBox="0 0 24 24">
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+        </button>
+        <button class="titlebar__btn" id="btn-maximize" type="button" title="最大化">
+          <svg class="titlebar__icon titlebar__icon--maximize" viewBox="0 0 24 24">
+            <rect x="5" y="5" width="14" height="14" rx="1" />
+          </svg>
+          <svg class="titlebar__icon titlebar__icon--restore" viewBox="0 0 24 24">
+            <rect x="3" y="7" width="11" height="11" rx="1" />
+            <path d="M9 7 V5 a1 1 0 0 1 1 -1 H20 a1 1 0 0 1 1 1 V15 a1 1 0 0 1 -1 1 H18" />
+          </svg>
+        </button>
+        <button class="titlebar__btn titlebar__btn--close" id="btn-close" type="button" title="关闭">
+          <svg class="titlebar__icon" viewBox="0 0 24 24">
+            <line x1="6" y1="6" x2="18" y2="18" />
+            <line x1="18" y1="6" x2="6" y2="18" />
+          </svg>
+        </button>
+      </div>
+    </div>
+    <script type="module" src="/header/index.ts"></script>
+  </body>
+</html>

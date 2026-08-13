@@ -1,0 +1,30 @@
+@import './base.css';
+
+body {
+  /* DefaultLayout 用 100vh/100vw 自行布局；此处仅给纯色浅底，去掉模板 wavy-lines.svg 背景 */
+  overflow: hidden;
+  background: var(--color-background);
+  user-select: none;
+}
+
+code {
+  font-weight: 600;
+  padding: 3px 5px;
+  border-radius: 4px;
+  background-color: var(--color-background-mute);
+  color: var(--text-1);
+  font-family:
+    ui-monospace,
+    SFMono-Regular,
+    SF Mono,
+    Menlo,
+    Consolas,
+    Liberation Mono,
+    monospace;
+  font-size: 85%;
+}
+
+#app {
+  height: 100vh;
+  width: 100vw;
+}
