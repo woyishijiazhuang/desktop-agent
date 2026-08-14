@@ -3,6 +3,9 @@ import type { BrowserWindow, WebContents } from 'electron'
 import { join } from 'path'
 import { is, optimizer } from '@electron-toolkit/utils'
 import icon from '../../../resources/icon.png?asset'
+// Windows 用多尺寸 ico（小帧内容撑满画布）：任务栏槽位仅 16~32px，直接缩带留白的
+// 大图会导致任务栏图标偏小；macOS/Linux 仍走 icon.png（留白为 Dock 尺寸调校）
+import winIcon from '../../../build/icon.ico?asset'
 import { createLogger } from '../utils/log'
 import { fileUrlToPath } from '../utils/file-url'
 import { db } from '../database'
@@ -191,7 +194,11 @@ export function createMainWindow(bounds?: MainWindowBounds, replace = false): vo
     // 按生效主题预置窗口底色（nativeTheme 已由设置驱动），避免首帧露出白底
     backgroundColor: currentWindowBg(),
     // Linux 窗口栏 / Windows 任务栏图标（开发态默认是 Electron 图标，这里显式指定品牌图标）
-    ...(process.platform === 'linux' || process.platform === 'win32' ? { icon } : {})
+    ...(process.platform === 'win32'
+      ? { icon: winIcon }
+      : process.platform === 'linux'
+        ? { icon }
+        : {})
   })
   mainWindow = win
   // 新窗口视图未加载完成前不算就绪，托盘/菜单动作需等渲染层监听器注册后再发送

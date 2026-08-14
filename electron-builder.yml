@@ -19,6 +19,8 @@ asarUnpack:
   - resources/**
 win:
   executableName: 桌面助手
+  # 多尺寸 ico（16~256，小帧内容撑满），避免任务栏图标因大图留白缩显得偏小
+  icon: build/icon.ico
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
