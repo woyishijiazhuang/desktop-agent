@@ -1,6 +1,7 @@
 import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { readFile } from 'node:fs/promises'
+import { basename, extname } from 'node:path'
 import { isDocumentFile, readAndExtractDocument } from '../../utils/doc-parser'
 import { createLogger } from '../../utils/log'
 
@@ -9,6 +10,19 @@ const log = createLogger('tool:read_file')
 /** 纯文本文件默认截断上限：超出的部分不注入上下文，提示用 offset 续读。 */
 const MAX_LINES = 2000
 const MAX_BYTES = 50 * 1024
+/** 图片大小上限：超过则不注入（各提供方 base64 上限约 5MB）。 */
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+/** 二进制检测窗口：开头 8KB 内含 NUL 字节即判定为二进制。 */
+const BINARY_SNIFF_BYTES = 8192
+
+/** 提供方普遍支持的图片类型（BMP 提供方多不支持，不在此列；SVG 是文本直接按文本读）。 */
+const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp'
+}
 
 const params = Type.Object({
   reason: Type.Optional(
@@ -19,7 +33,7 @@ const params = Type.Object({
   ),
   path: Type.String({
     description:
-      '要读取的文件的绝对路径。支持纯文本（UTF-8）与常见文档（docx / pdf / xlsx / pptx / csv，自动解析为 Markdown）。'
+      '要读取的文件的绝对路径。支持纯文本（UTF-8）、图片（png/jpg/gif/webp，需多模态模型）与常见文档（docx / pdf / xlsx / pptx / csv，自动解析为 Markdown）。'
   }),
   offset: Type.Optional(
     Type.Number({
@@ -30,73 +44,168 @@ const params = Type.Object({
   limit: Type.Optional(Type.Number({ description: '最多读取的行数。仅对纯文本文件生效。' }))
 })
 
-export const readFileTool: AgentTool<
-  typeof params,
-  { path: string; bytes: number; truncated?: boolean }
-> = {
-  name: 'read_file',
-  label: '读取文件',
-  description:
-    '读取指定路径的文件内容。纯文本直接返回原文（超过 2000 行或 50KB 自动截断并提示继续读取，可用 offset/limit 分段读取）；Word/PDF/Excel/PPT/CSV 文档自动解析为 Markdown 后返回。',
-  parameters: params,
-  executionMode: 'parallel',
-  async execute(_toolCallId, p) {
-    const start = Date.now()
-    // 文档（docx/pdf/xlsx/pptx/csv）：走 mdize 解析为 Markdown；其余按 UTF-8 原文读取
-    const content = isDocumentFile(p.path)
-      ? await readAndExtractDocument(p.path)
-      : await readText(p.path, p.offset, p.limit)
-    log.debug('读取文件', {
-      path: p.path,
-      bytes: content.length,
-      durationMs: Date.now() - start,
-      isDocument: isDocumentFile(p.path)
-    })
-    return {
-      content: [{ type: 'text', text: content }],
-      details: { path: p.path, bytes: content.length }
+export interface ReadFileDetails {
+  path: string
+  bytes: number
+  truncated?: boolean
+  /** 为 true 时返回了 image block（仅多模态模型）。 */
+  image?: boolean
+}
+
+/**
+ * 创建 read_file 工具实例。
+ * supportsImages 由当前会话模型的 input 能力决定（model.input 含 'image'）：
+ * - 支持：图片文件返回 image content block（base64），供多模态模型直接查看；
+ * - 不支持：返回文本提示而非 image block —— pi-ai 不会按模型能力过滤，
+ *   image block 发给纯文本模型会在下一次模型调用时被提供方以 400 拒绝，导致整回合中断。
+ */
+export function createReadFileTool(
+  supportsImages: boolean
+): AgentTool<typeof params, ReadFileDetails> {
+  return {
+    name: 'read_file',
+    label: '读取文件',
+    description:
+      '读取指定路径的文件内容。纯文本直接返回原文并带行号（超过 2000 行或 50KB 自动截断并提示继续读取，可用 offset/limit 分段读取）；Word/PDF/Excel/PPT/CSV 文档自动解析为 Markdown 后返回；图片文件返回图像内容（需多模态模型支持）。',
+    parameters: params,
+    executionMode: 'parallel',
+    async execute(_toolCallId, p) {
+      const start = Date.now()
+      // 三种形态分流：文档（mdize 解析）→ 图片（多模态注入/提示）→ 纯文本（行号输出）
+      if (isDocumentFile(p.path)) {
+        const content = await readAndExtractDocument(p.path)
+        log.debug('读取文件', {
+          path: p.path,
+          bytes: content.length,
+          durationMs: Date.now() - start,
+          isDocument: true
+        })
+        return {
+          content: [{ type: 'text', text: content }],
+          details: { path: p.path, bytes: content.length }
+        }
+      }
+
+      const buf = await readFile(p.path)
+      const mime = IMAGE_MIME_BY_EXT[extname(p.path).toLowerCase()]
+      if (mime && looksLikeImage(buf)) {
+        const bytes = buf.byteLength
+        if (supportsImages && bytes <= MAX_IMAGE_BYTES) {
+          log.debug('读取图片', { path: p.path, bytes, durationMs: Date.now() - start })
+          return {
+            content: [
+              { type: 'image', data: buf.toString('base64'), mimeType: mime },
+              {
+                type: 'text',
+                text: `[图片：${basename(p.path)}，${Math.round(bytes / 1024)}KB，${mime}]`
+              }
+            ],
+            details: { path: p.path, bytes, image: true }
+          }
+        }
+        // 不支持图片 / 图片过大：返回文本提示而非 image block（image block 发给纯文本模型会被提供方 400 拒绝）
+        const text = !supportsImages
+          ? `(当前模型不支持图片输入，无法查看图片内容。\n文件：${basename(p.path)}（${Math.round(bytes / 1024)}KB，${mime}）。\n建议：请用户切换多模态模型后重试，或请用户用文字描述图片内容。)`
+          : `(图片过大：${basename(p.path)} 为 ${Math.round(bytes / 1024 / 1024)}MB，超过 ${MAX_IMAGE_BYTES / 1024 / 1024}MB 上限，未注入。建议压缩或缩小分辨率后重试。)`
+        log.debug('读取图片被拦截', { path: p.path, bytes, supportsImages })
+        return { content: [{ type: 'text', text }], details: { path: p.path, bytes } }
+      }
+
+      if (isBinary(buf)) {
+        throw new Error(
+          `二进制文件不支持读取：${basename(p.path)}（${extname(p.path) || '未知扩展名'}，${Math.round(buf.byteLength / 1024)}KB）。若是文档请确认扩展名正确，否则无法作为文本注入上下文。`
+        )
+      }
+
+      const result = readText(buf, p.offset, p.limit)
+      log.debug('读取文本文件', {
+        path: p.path,
+        bytes: Buffer.byteLength(result.rawSelected, 'utf-8'),
+        truncated: result.truncated,
+        durationMs: Date.now() - start
+      })
+      return {
+        content: [{ type: 'text', text: result.text }],
+        details: {
+          path: p.path,
+          bytes: Buffer.byteLength(result.rawSelected, 'utf-8'),
+          truncated: result.truncated
+        }
+      }
     }
   }
 }
 
-/** 按 offset/limit 读取纯文本，超出 MAX_LINES / MAX_BYTES 时截断并附续读提示。 */
-async function readText(path: string, offset?: number, limit?: number): Promise<string> {
-  const text = await readFile(path, 'utf-8')
-  const allLines = text.split('\n')
+/** 注册表占位实例（仅用于 UI 展示 name/label/description，实际执行走 buildTools 按模型能力创建的实例）。 */
+export const readFileTool = createReadFileTool(false)
+
+/** 魔数校验：扩展名声称是图片时验证真实格式，防止文本文件伪装成图片破坏请求。 */
+function looksLikeImage(buf: Buffer): boolean {
+  if (buf.length < 12) return false
+  return (
+    (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) || // PNG
+    (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) || // JPEG
+    (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) || // GIF
+    (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[8] === 0x57 && buf[9] === 0x45) // WEBP (RIFF....WEBP)
+  )
+}
+
+function isBinary(buf: Buffer): boolean {
+  return buf.subarray(0, BINARY_SNIFF_BYTES).includes(0)
+}
+
+interface ReadTextResult {
+  text: string
+  /** 未加行号的选中原文（用于 details.bytes 统计）。 */
+  rawSelected: string
+  truncated: boolean
+}
+
+/** 按 offset/limit 读取纯文本并附加行号（cat -n 风格），超出上限时截断并附续读提示。 */
+function readText(buf: Buffer, offset?: number, limit?: number): ReadTextResult {
+  const allLines = buf.toString('utf-8').split('\n')
+  // 尾部换行产生的末尾空元素不算一行（对齐 cat -n 语义）
+  if (allLines.length > 1 && allLines[allLines.length - 1] === '') allLines.pop()
   const total = allLines.length
   const startIdx = offset ? Math.max(0, offset - 1) : 0
   if (startIdx >= total) {
     throw new Error(`offset ${offset} 超出文件总行数（共 ${total} 行）`)
   }
   const endIdx = limit !== undefined ? Math.min(startIdx + limit, total) : total
-  let selected = allLines.slice(startIdx, endIdx).join('\n')
 
   // 截断：优先限行数，其次限字节（按行递减直到不超限）
   let truncated = false
-  let outputLines = endIdx - startIdx
-  let linesArr = selected.split('\n')
+  let linesArr = allLines.slice(startIdx, endIdx)
   if (linesArr.length > MAX_LINES) {
     linesArr = linesArr.slice(0, MAX_LINES)
-    selected = linesArr.join('\n')
-    outputLines = MAX_LINES
     truncated = true
   }
-  let bytes = Buffer.byteLength(selected, 'utf-8')
-  while (bytes > MAX_BYTES && linesArr.length > 1) {
+  while (Buffer.byteLength(linesArr.join('\n'), 'utf-8') > MAX_BYTES && linesArr.length > 1) {
     linesArr = linesArr.slice(0, linesArr.length - 1)
-    selected = linesArr.join('\n')
-    outputLines = linesArr.length
-    bytes = Buffer.byteLength(selected, 'utf-8')
     truncated = true
   }
+  const outputLines = linesArr.length
 
-  if (!truncated && outputLines < total) {
-    // 用户指定了范围但未截断：提示剩余行数，方便继续读取
-    return `${selected}\n\n[还剩 ${total - (startIdx + outputLines)} 行未读取。如需继续，使用 offset=${startIdx + outputLines + 1}]`
-  }
+  // 行号右对齐 + tab，便于模型按行号定位；edit_file 的 oldText 需去掉行号前缀
+  const width = String(startIdx + outputLines).length
+  const numbered = linesArr
+    .map((l, i) => `${String(startIdx + i + 1).padStart(width)}\t${l}`)
+    .join('\n')
+
   if (truncated) {
     const shownEnd = startIdx + outputLines
-    return `${selected}\n\n[内容较长，仅显示第 ${startIdx + 1}-${shownEnd} 行（共 ${total} 行）。如需继续，使用 offset=${shownEnd + 1}]`
+    return {
+      text: `${numbered}\n\n[内容较长，仅显示第 ${startIdx + 1}-${shownEnd} 行（共 ${total} 行）。如需继续，使用 offset=${shownEnd + 1}]`,
+      rawSelected: linesArr.join('\n'),
+      truncated: true
+    }
   }
-  return selected
+  if (outputLines < total) {
+    return {
+      text: `${numbered}\n\n[还剩 ${total - (startIdx + outputLines)} 行未读取。如需继续，使用 offset=${startIdx + outputLines + 1}]`,
+      rawSelected: linesArr.join('\n'),
+      truncated: false
+    }
+  }
+  return { text: numbered, rawSelected: linesArr.join('\n'), truncated: false }
 }

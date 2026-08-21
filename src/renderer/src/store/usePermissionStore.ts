@@ -49,7 +49,12 @@ export const usePermissionStore = defineStore('permission', () => {
     return pending.value.filter((r) => r.sessionId === sessionId)
   }
 
-  /** 回传单条请求的确认结果；拒绝时把对应卡片翻转为拒绝态。 */
+  /**
+   * 回传单条请求的确认结果；批准时把对应卡片置为「执行中」，拒绝时翻转为拒绝态。
+   * 批准后必须补置 running：pi-agent-core 的 tool_execution_start 早于 beforeToolCall
+   * 触发、且已被 onPermissionRequest 覆盖为 pending，放行后不会重发，否则整个执行
+   * 期间卡片一直停留在「等待确认」。
+   */
   function respond(
     req: PermissionRequest,
     approved: boolean,
@@ -57,7 +62,16 @@ export const usePermissionStore = defineStore('permission', () => {
   ): void {
     void mainClient.agent.respondPermission(req.requestId, approved, scope)
     remove(req.requestId)
-    if (!approved) {
+    if (approved) {
+      // 仅当仍为 pending（或从未置位）时补置：避免异常时序下覆盖已到达的 completed/error
+      const current = useChatStore().toolStatus[req.toolCallId]
+      if (!current || current.status === 'pending') {
+        useChatStore().setToolStatus(req.sessionId, req.toolCallId, {
+          status: 'running',
+          toolName: req.toolName
+        })
+      }
+    } else {
       useChatStore().setToolStatus(req.sessionId, req.toolCallId, {
         status: 'error',
         toolName: req.toolName

@@ -9,6 +9,7 @@ import MessageItem from './MessageItem.vue'
 import CompressDivider from './CompressDivider.vue'
 import WelcomeView from './WelcomeView.vue'
 import { useStableMessageKeys } from '@renderer/composables/useStableMessageKeys'
+import { provideStickToBottomPause } from '@renderer/composables/useStickToBottomPause'
 import { useChatStore } from '@renderer/store/useChatStore'
 
 const props = defineProps<{
@@ -139,6 +140,18 @@ const { scrollRef, contentRef, isAtBottom, isNearBottom, scrollToBottom, stopScr
     resize: 'instant',
     initial: false
   })
+
+/**
+ * 向可展开卡片（ToolCallCard / ReasoningBlock 等）提供「暂停粘底」入口。
+ *
+ * 必要性：空闲态贴底时，底部附近的任意一次向下滚动都会让库悄悄复活粘底
+ * （isScrollingDown 清 escapedFromLock + 贴底置 isAtBottom=true），而 public
+ * isAtBottom 因 isNearBottom 恒真不再变化，上方空闲回收 watch（值变化语义）
+ * 捕捉不到这次复活。此后展开卡片内容变高，库的 ResizeObserver 会把视口拉回
+ * 底部——卡片头部被顶起，视觉上变成「往上展开」。点击展开时先 stopScroll
+ * 解除粘底，让卡片就地向下展开、视口稳定。
+ */
+provideStickToBottomPause(() => stopScroll())
 
 /** 生成结束延迟关闭粘底的 rAF id（等终态内容在跟随下重排完成，再停掉跟随）。 */
 let stopScrollRaf: number | null = null

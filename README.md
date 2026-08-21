@@ -44,7 +44,7 @@
 | `node:sqlite`（Node 内置） | 本地 SQLite 数据库（WAL 模式） |
 | `electron-ipc-service` | 类型安全双向 IPC |
 | `@modelcontextprotocol/sdk` | MCP 客户端（stdio / HTTP） |
-| `markstream-vue` + `highlight.js` | 流式 Markdown 渲染与代码高亮 |
+| `markstream-vue` | 流式 Markdown 渲染与代码高亮 |
 | `echarts` | 用量统计图表 |
 
 ## 项目结构

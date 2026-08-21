@@ -7,11 +7,11 @@ import {
   normalizeEChartsOption,
   type ECharts
 } from '@renderer/utils/echarts'
-import { NButton, NCode, NIcon } from 'naive-ui'
+import { NButton, NIcon } from 'naive-ui'
 import { AlertCircleOutline, CopyOutline } from '@vicons/ionicons5'
 import { useThemeStore } from '@renderer/store/useThemeStore'
 import { useCopy } from '@renderer/composables/useCopy'
-import hljs, { tryPrettyJSON } from '@renderer/utils/highlight'
+import { tryPrettyJSON, toCodeFence } from '@renderer/utils/codeBlock'
 
 /**
  * markstream 语言级覆盖：```echarts 围栏 → ECharts 图表。
@@ -75,8 +75,18 @@ const showFallback = computed(
 /** 图表容器高度：优先配置中的 height，默认 360px。 */
 const chartHeight = computed(() => parsed.value?.height ?? '360px')
 
-/** 回退源码：可解析则 pretty-print，否则原样。 */
-const fallbackText = computed(() => tryPrettyJSON(rawCode.value) ?? rawCode.value)
+/** 回退源码：可解析则 pretty-print（JSON 走 Monaco 高亮），否则原样（pre 纯文本）。 */
+const fallback = computed(() => {
+  const pretty = tryPrettyJSON(rawCode.value)
+  return {
+    text: pretty ?? rawCode.value,
+    language: (pretty !== null ? 'json' : null) as string | null
+  }
+})
+const fallbackFence = computed(() => toCodeFence(fallback.value.text, fallback.value.language))
+const fallbackRenderer = computed<'monaco' | 'pre'>(() =>
+  fallback.value.language ? 'monaco' : 'pre'
+)
 
 /** height 归一化：数字 / 纯数字字符串 → px，带单位字符串原样，非法回退 360。 */
 function normalizeHeight(h: unknown): string {
@@ -219,12 +229,20 @@ function onCopyOption(): void {
         </NButton>
       </div>
       <div class="echarts-block__code-wrap">
-        <NCode
-          :code="fallbackText"
-          :hljs="hljs"
-          language="json"
-          :word-wrap="true"
-          class="echarts-block__code"
+        <MarkdownRender
+          mode="chat"
+          custom-id="echarts-fallback"
+          :content="fallbackFence"
+          final
+          :code-renderer="fallbackRenderer"
+          :is-dark="themeStore.isDark"
+          :code-block-props="{
+            showCopyButton: false,
+            showHeader: false,
+            theme: { light: 'vitesse-light', dark: 'vitesse-dark' },
+            monacoOptions: { wordWrap: 'on' }
+          }"
+          class="echarts-block__markdown"
         />
       </div>
     </div>
@@ -308,9 +326,13 @@ function onCopyOption(): void {
   overflow: auto;
   scrollbar-gutter: stable;
 }
-.echarts-block__code :deep(.n-code) {
-  background: transparent;
-  padding: 0;
+.echarts-block__markdown {
+  font-size: 12px;
+  max-width: 100%;
+}
+.echarts-block__markdown :deep(pre) {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .echarts-block__error-msg {
   display: flex;

@@ -605,8 +605,9 @@ export const useChatStore = defineStore('chat', () => {
   /**
    * 显式设置某会话某工具调用的状态（权限确认场景用）：
    * - pending：收到 onPermissionRequest 时置位，使对应工具卡片渲染「等待确认」；
+   * - running：批准后由 usePermissionStore.respond 补置（tool_execution_start 早于
+   *   权限拦截发出、且已被 pending 覆盖，放行后不会重发）；
    * - error：用户拒绝 / 超时自动拒绝后置位，使卡片从「等待确认」翻转为拒绝态。
-   * 允许后无需处理：main 侧放行会发出 tool_execution_start，走 applyChatEvent 置 running。
    */
   function setToolStatus(sessionId: string, toolCallId: string, status: ToolStatus): void {
     const state = ensureState(sessionId)

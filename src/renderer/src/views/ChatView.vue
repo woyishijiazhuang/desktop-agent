@@ -7,6 +7,7 @@ import MessageList from '@renderer/components/chat/MessageList.vue'
 import ChatInput from '@renderer/components/chat/ChatInput.vue'
 import SessionSidebar from '@renderer/components/sidebar/SessionSidebar.vue'
 import PermissionBar from '@renderer/components/permission/PermissionBar.vue'
+import PlanApprovalBar from '@renderer/components/permission/PlanApprovalBar.vue'
 import { useSessionStore } from '@renderer/store/useSessionStore'
 import { useChatStore, type ComposerAttachment } from '@renderer/store/useChatStore'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
@@ -190,6 +191,8 @@ function goToSettings(): void {
         </NAlert>
         <!-- 批量操作条：多个工具同时等待确认时提供全部允许/拒绝 -->
         <PermissionBar />
+        <!-- 计划审批卡片：Agent 提交计划后展示，供用户批准/拒绝 -->
+        <PlanApprovalBar />
         <div class="chat-view__composer">
           <ChatInput :is-busy="chatStore.isBusy" @send="onSend" @abort="onAbort" />
         </div>

@@ -10,6 +10,11 @@ export interface ToolStatus {
   status: 'pending' | 'running' | 'completed' | 'error'
   toolName: string
   result?: unknown
+  /**
+   * 执行中的流式输出快照（tool_execution_update，bash 等工具每次推完整累计文本，替换语义）。
+   * 仅 running 期间有值；tool_execution_end 覆盖 status 时随旧对象一起丢弃，由终态结果接管。
+   */
+  stream?: string
 }
 
 /**
@@ -129,6 +134,20 @@ export function applyChatEvent(state: SessionChatState, event: AgentEvent, error
       // 仅使用该 toolCallId 的卡片重渲染，而非整列表一起刷新。
       state.toolStatus[event.toolCallId] = { status: 'running', toolName: event.toolName }
       break
+    case 'tool_execution_update': {
+      // 流式输出快照（替换语义，bash 每次推完整累计文本）：写入 stream 供卡片执行中实时展示。
+      // 仅在 running/pending 期间接收；结束后由 tool_execution_end + toolResult 终态接管。
+      const text = extractToolPartialText(event.partialResult)
+      if (!text) break
+      const cur = state.toolStatus[event.toolCallId]
+      if (cur && cur.status !== 'running' && cur.status !== 'pending') break
+      state.toolStatus[event.toolCallId] = {
+        status: cur?.status ?? 'running',
+        toolName: cur?.toolName ?? event.toolName,
+        stream: text
+      }
+      break
+    }
     case 'tool_execution_end':
       state.toolStatus[event.toolCallId] = {
         status: event.isError ? 'error' : 'completed',
@@ -152,7 +171,24 @@ export function applyChatEvent(state: SessionChatState, event: AgentEvent, error
       }
       break
     default:
-      // tool_execution_update 暂不处理（Phase 3 可做进度条）
+      // 其余事件（turn_start/turn_end 等）无 UI 状态可更新
       break
   }
+}
+
+/** 从 tool_execution_update 的 partialResult（AgentToolResult）提取全部文本（当前仅 text 块）。 */
+function extractToolPartialText(partial: unknown): string {
+  if (!partial || typeof partial !== 'object') return ''
+  const content = (partial as { content?: unknown }).content
+  if (!Array.isArray(content)) return ''
+  return content
+    .filter(
+      (b): b is { type: 'text'; text: string } =>
+        !!b &&
+        typeof b === 'object' &&
+        (b as { type?: string }).type === 'text' &&
+        typeof (b as { text?: string }).text === 'string'
+    )
+    .map((b) => b.text)
+    .join('')
 }

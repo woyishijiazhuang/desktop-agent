@@ -40,8 +40,7 @@
 | Pinia | 状态管理（setup store 形式） |
 | Vue Router 4 | hash 模式，路由懒加载 |
 | Naive UI | 组件库，通过 `NConfigProvider` 联动主题 |
-| `markstream-vue` | 流式 Markdown 渲染器（chat 模式 + final 标志 + echarts 语言级覆盖） |
-| `highlight.js` | 按需注册语言，供 NCode 高亮 |
+| `markstream-vue` | 流式 Markdown 渲染器（chat 模式 + final 标志 + echarts 语言级覆盖）；代码块统一走 markstream（JSON 用 Monaco 高亮、纯文本用 pre 轻量渲染），已替代 NCode + highlight.js |
 | `vue-stick-to-bottom` | 粘底滚动，ResizeObserver 驱动 |
 | `@vicons/ionicons5` | 图标 |
 | `electron-ipc-service` | 双向 IPC 客户端/服务端框架 |
@@ -334,7 +333,7 @@ namespace `agentEvent`：`onEvent(payload)` —— 所有会话事件路由到�
 | `utils/main-client.ts` | `createIpcRendererClient<IpcMainServices>()` IPC 客户端单例 |
 | `utils/messageText.ts` | 消息 block 判别与文本提取：`FileTextBlock`/`SkillTextBlock` + 守卫 + `extractUserText`（排除文件/技能块） |
 | `utils/toolResult.ts` | 工具结果/参数摘要：`summarizeToolResult`（退出码/字节/条数，失败显首行）、`summarizeToolArgs`（reason 缺失时从关键参数推导意图） |
-| `utils/highlight.ts` | highlight.js 按需注册 8 种语言导出单例 + `tryPrettyJSON` |
+| `utils/codeBlock.ts` | 代码块包装与格式化：`toCodeFence`（内容自适应反引号长度、按语言包围栏）、`tryPrettyJSON`（JSON pretty-print，供工具结果/参数按 JSON 高亮） |
 | `utils/toast.ts` | 全局 toast：`registerToast` 由 ToastBridge 注册，`showToast` 供 UiService IPC 使用（API 未就绪时降级 console） |
 | `utils/format.ts` | `formatContextWindow`（2 的幂次按 1024 换算、整千按 1000、1M 附近统一「1M」）、`formatTokens`（千分位）、`formatCompactTokens`（图表轴）、`formatCost`（¥ 自适应小数位） |
 

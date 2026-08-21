@@ -7,6 +7,7 @@ import type {
 import { rendererClient } from '../utils/render-client'
 import { db } from '../database'
 import { createLogger } from '../utils/log'
+import { isPlanMode } from './tools/plan-mode'
 import type { PermissionRequest, PermissionBatchItem, PermissionScope } from './types'
 import { PERMISSION_TIMEOUT_MS } from './types'
 
@@ -152,6 +153,15 @@ export function createBeforeToolCallHook(
   return async (ctx, signal) => {
     const { toolCall } = ctx
     if (!DANGEROUS_TOOLS.has(toolCall.name)) return undefined
+
+    // 计划模式：危险工具一律拦截，引导先提交计划（exit_plan_mode 审批）
+    if (isPlanMode(sessionId)) {
+      log.info('计划模式拦截危险工具', { sessionId, toolName: toolCall.name })
+      return {
+        block: true,
+        reason: '当前处于计划模式：请先调用 exit_plan_mode 提交计划并获得用户批准后再执行操作。'
+      }
+    }
 
     // 自动放行判定（bash 走三层规则；文件操作仅支持会话放行）
     let decision: 'allow' | 'ask'

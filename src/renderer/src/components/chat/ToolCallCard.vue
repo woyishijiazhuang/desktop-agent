@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import { NCode, NTag, NButton, NIcon } from 'naive-ui'
+import { computed, nextTick, ref, watch } from 'vue'
+import { NTag, NButton, NIcon } from 'naive-ui'
+import MarkdownRender from 'markstream-vue'
 import {
   CheckmarkCircleOutline,
   CloseCircleOutline,
@@ -13,9 +14,10 @@ import {
 } from '@vicons/ionicons5'
 import type { ToolCall, ToolResultMessage } from '@earendil-works/pi-ai'
 import type { ToolStatus } from '@renderer/store/useChatStore'
+import { useThemeStore } from '@renderer/store/useThemeStore'
 import { useCopy } from '@renderer/composables/useCopy'
 import { useStickToBottomPause } from '@renderer/composables/useStickToBottomPause'
-import hljs, { tryPrettyJSON } from '@renderer/utils/highlight'
+import { tryPrettyJSON, toCodeFence } from '@renderer/utils/codeBlock'
 import { summarizeToolArgs, summarizeToolResult } from '@renderer/utils/toolResult'
 import { extractMessageText } from '@renderer/utils/messageText'
 
@@ -69,6 +71,29 @@ const resultDisplay = computed(() => {
   if (pretty !== null) return { text: pretty, language: 'json' as string | null }
   return { text: resultText.value, language: null as string | null }
 })
+
+/** 参数区代码块（恒为 JSON）：包成 ```json 围栏交给 markstream 以 Monaco 渲染。 */
+const argsFence = computed(() => toCodeFence(argsText.value, 'json'))
+
+/** 结果区代码块：JSON → Monaco 高亮；纯文本 → pre 轻量渲染（等价原 NCode 无高亮）。 */
+const resultFence = computed(() =>
+  toCodeFence(resultDisplay.value.text, resultDisplay.value.language)
+)
+const resultRenderer = computed<'monaco' | 'pre'>(() =>
+  resultDisplay.value.language ? 'monaco' : 'pre'
+)
+
+const themeStore = useThemeStore()
+/**
+ * edit_file 的标准 unified diff（来自 details.diff，历史消息同样有）：
+ * 用 markstream 的 diff 渲染器（Monaco DiffEditor，+/- 着色、hunk 信息）。
+ * 包成 ```diff 围栏交给 MarkdownRender；无 diff（失败结果）时回退普通代码块。
+ */
+const editDiffContent = computed(() => {
+  if (props.toolCall.name !== 'edit_file' || !props.result) return null
+  const diff = (props.result.details as Record<string, unknown> | undefined)?.diff
+  return typeof diff === 'string' && diff.includes('@@') ? `\`\`\`diff\n${diff}\n\`\`\`` : null
+})
 /** 结果摘要：卡片收起时也可见的一行文案（含失败信息）。 */
 const resultSummary = computed(() => (props.result ? summarizeToolResult(props.result) : null))
 
@@ -115,10 +140,32 @@ const spinning = computed(() => !!props.status && props.status.status === 'runni
 
 /** 详情默认折叠（仅保留头部意图 + 结果摘要），点击头部展开「参数 / 结果」。 */
 const expanded = ref(false)
-/** 代码是否已渲染过：首次展开前不渲染 NCode（懒渲染），
-  避免折叠时仍做 JSON 序列化 + 语法高亮；渲染后保留在 DOM。 */
+/** 代码是否已渲染过：首次展开前不渲染代码块（懒渲染），
+  避免折叠时仍做 JSON 序列化 + 代码块挂载；渲染后保留在 DOM。 */
 const codeRendered = ref(false)
-const canExpand = computed(() => hasArgs.value || hasResult.value)
+/** 可滚动 body（流式输出时自动滚底）。 */
+const bodyRef = ref<HTMLElement | null>(null)
+
+/** 执行中的流式输出（tool_execution_update 快照）；仅 running 期间非空，结束后由终态结果接管。 */
+const streamText = computed(() =>
+  props.status?.status === 'running' ? (props.status.stream ?? '') : ''
+)
+const isStreaming = computed(() => !!streamText.value)
+
+/** 流式输出到达：自动展开卡片并跟随滚动到底部，让用户实时看到命令输出。 */
+watch(streamText, () => {
+  if (!streamText.value) return
+  if (!expanded.value) {
+    pauseStick?.()
+    expanded.value = true
+    codeRendered.value = true
+  }
+  void nextTick(() => {
+    if (bodyRef.value) bodyRef.value.scrollTop = bodyRef.value.scrollHeight
+  })
+})
+
+const canExpand = computed(() => hasArgs.value || hasResult.value || isStreaming.value)
 
 function toggleExpand(): void {
   if (canExpand.value) {
@@ -152,8 +199,9 @@ function onCopyResult(): void {
           </NIcon>
           <span class="tool-card__name">{{ toolCall.name }}</span>
           <span v-if="reason" class="tool-card__reason">{{ reason }}</span>
-          <NTag :type="statusType" size="tiny" round>{{ statusLabel }}</NTag>
         </span>
+      </div>
+      <span class="tool-card__extra">
         <span
           v-if="resultSummary"
           class="tool-card__summary"
@@ -161,8 +209,7 @@ function onCopyResult(): void {
         >
           {{ resultSummary.text }}
         </span>
-      </div>
-      <span class="tool-card__extra">
+        <NTag :type="statusType" size="tiny" round>{{ statusLabel }}</NTag>
         <NIcon v-if="canExpand" class="tool-card__chevron" :size="14" title="展开/收起详情">
           <ChevronUpOutline v-if="expanded" />
           <ChevronDownOutline v-else />
@@ -172,6 +219,7 @@ function onCopyResult(): void {
 
     <div
       v-if="canExpand"
+      ref="bodyRef"
       class="tool-card__body"
       :class="{ 'tool-card__body--collapsed': !expanded }"
     >
@@ -190,14 +238,30 @@ function onCopyResult(): void {
             </template>
           </NButton>
         </div>
-        <NCode
+        <MarkdownRender
           v-if="codeRendered"
-          :code="argsText"
-          :hljs="hljs"
-          language="json"
-          :word-wrap="true"
-          class="tool-card__code"
+          mode="chat"
+          custom-id="tool-card"
+          :content="argsFence"
+          final
+          code-renderer="monaco"
+          :is-dark="themeStore.isDark"
+          :code-block-props="{
+            showCopyButton: false,
+            showHeader: false,
+            theme: { light: 'vitesse-light', dark: 'vitesse-dark' },
+            monacoOptions: { wordWrap: 'on' }
+          }"
+          class="tool-card__markdown"
         />
+      </div>
+
+      <!-- 执行中的流式输出：仅 running 期间展示，完成后由「结果」终态接管 -->
+      <div v-if="isStreaming" class="tool-card__section">
+        <div class="tool-card__section-head">
+          <span class="tool-card__section-label">实时输出</span>
+        </div>
+        <pre class="tool-card__stream">{{ streamText }}</pre>
       </div>
 
       <div v-if="hasResult" class="tool-card__section">
@@ -215,13 +279,38 @@ function onCopyResult(): void {
             </template>
           </NButton>
         </div>
-        <NCode
-          v-if="codeRendered"
-          :code="resultDisplay.text"
-          :hljs="hljs"
-          :language="resultDisplay.language ?? undefined"
-          :word-wrap="true"
-          class="tool-card__code"
+        <!-- edit_file：标准 unified diff 走 Monaco DiffEditor 渲染（+/- 着色、hunk 信息） -->
+        <MarkdownRender
+          v-if="codeRendered && editDiffContent"
+          mode="chat"
+          custom-id="tool-diff"
+          :content="editDiffContent"
+          final
+          code-renderer="monaco"
+          :is-dark="themeStore.isDark"
+          :code-block-props="{
+            showCopyButton: false,
+            showHeader: false,
+            monacoOptions: { MAX_HEIGHT: 300, diffWordWrap: 'on' },
+            theme: { light: 'vitesse-light', dark: 'vitesse-dark' }
+          }"
+          class="tool-card__diff"
+        />
+        <MarkdownRender
+          v-else-if="codeRendered"
+          mode="chat"
+          custom-id="tool-card"
+          :content="resultFence"
+          final
+          :code-renderer="resultRenderer"
+          :is-dark="themeStore.isDark"
+          :code-block-props="{
+            showCopyButton: false,
+            showHeader: false,
+            theme: { light: 'vitesse-light', dark: 'vitesse-dark' },
+            monacoOptions: { wordWrap: 'on' }
+          }"
+          class="tool-card__markdown"
         />
       </div>
 
@@ -242,8 +331,8 @@ function onCopyResult(): void {
   background: var(--bg-soft);
   overflow: hidden;
   max-width: var(--msg-max-width);
-  width: fit-content;
-  min-width: 200px;
+  /* width: fit-content; */
+  /* min-width: 200px; */
 }
 .tool-card__head {
   display: flex;
@@ -326,7 +415,7 @@ function onCopyResult(): void {
   /* 始终为滚动条预留 gutter，避免滚动条出现/消失时文字宽度变化导致重排。 */
   scrollbar-gutter: stable;
   /* padding 统一收拢到此处，作为唯一边距来源；
-     NCode 自带 padding 由下方 :deep 清零，避免双倍边距。 */
+     代码块内容由 markstream 自带间距，此处不额外叠加。 */
   padding: 10px 12px;
   transition:
     max-height 0.2s ease,
@@ -358,13 +447,31 @@ function onCopyResult(): void {
   font-weight: 600;
   color: var(--text-3);
 }
-.tool-card__code {
+/* 参数/结果代码块（markstream 渲染）：字号与卡片一致，宽度不超出卡片。
+   纯文本（pre 渲染）结果保持自动换行，等价原 NCode 的 word-wrap。 */
+.tool-card__markdown {
   font-size: 12px;
-  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  max-width: 100%;
 }
-.tool-card__body :deep(.n-code) {
-  background: transparent;
-  padding: 0;
+.tool-card__markdown :deep(pre) {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+/* edit_file 的 diff 块：宽度不超出卡片，与普通代码块视觉对齐 */
+.tool-card__diff {
+  font-size: 12px;
+  max-width: 100%;
+}
+/* 流式输出（执行中）：等宽字体 + 自动换行，正文跟随 body 滚动 */
+.tool-card__stream {
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 0;
+  max-width: 100%;
 }
 .tool-card__empty {
   font-size: 12px;

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { NCode, NTag, NButton, NIcon, useMessage } from 'naive-ui'
+import { NTag, NButton, NIcon, useMessage } from 'naive-ui'
 import {
   CheckmarkCircleOutline,
   CloseCircleOutline,
@@ -31,7 +31,7 @@ import { useChatStore } from '@renderer/store/useChatStore'
 import { useThemeStore } from '@renderer/store/useThemeStore'
 import { useCopy } from '@renderer/composables/useCopy'
 import { useStickToBottomPause } from '@renderer/composables/useStickToBottomPause'
-import hljs, { tryPrettyJSON } from '@renderer/utils/highlight'
+import { tryPrettyJSON, toCodeFence } from '@renderer/utils/codeBlock'
 import { summarizeToolResult } from '@renderer/utils/toolResult'
 import { mainClient } from '@renderer/utils/main-client'
 import {
@@ -176,8 +176,8 @@ const toolResultSummary = computed(() => {
 
 /**
  * 工具结果展示：尝试 JSON pretty-print + 语法高亮，否则纯文本。
- * - JSON：缩进 2 + language="json" 高亮
- * - 其它：等宽纯文本（不高亮）
+ * - JSON：缩进 2 + ```json 围栏交给 markstream 以 Monaco 渲染
+ * - 其它：等宽纯文本（不高亮，pre 轻量渲染）
  */
 const displayInfo = computed(() => {
   const pretty = tryPrettyJSON(resultText.value)
@@ -185,12 +185,18 @@ const displayInfo = computed(() => {
   return { text: resultText.value, language: null as string | null }
 })
 
+/** 结果代码块内容：JSON → Monaco 高亮；纯文本 → pre 轻量渲染（等价原 NCode 无高亮）。 */
+const resultFence = computed(() => toCodeFence(displayInfo.value.text, displayInfo.value.language))
+const resultRenderer = computed<'monaco' | 'pre'>(() =>
+  displayInfo.value.language ? 'monaco' : 'pre'
+)
+
 const isEmpty = computed(() => resultText.value.trim().length === 0)
 
 /** 工具结果默认折叠（与工具调用卡片一致），点击头部展开/收起。 */
 const expanded = ref(false)
-/** 代码是否已渲染过：首次展开前不渲染 NCode（懒渲染），
-  大段结果（JSON 解析 + 语法高亮）只在用户展开时付出成本；
+/** 代码是否已渲染过：首次展开前不渲染代码块（懒渲染），
+  大段结果（JSON 解析 + 代码块挂载）只在用户展开时付出成本；
   渲染后保留在 DOM，折叠动画与宽度稳定不受影响。 */
 const codeRendered = ref(false)
 
@@ -319,13 +325,21 @@ const messageId = computed<number | undefined>(() => (props.message as { id?: nu
           class="tool-result__body"
           :class="{ 'tool-result__body--collapsed': !expanded }"
         >
-          <NCode
+          <MarkdownRender
             v-if="codeRendered"
-            :code="displayInfo.text"
-            :hljs="hljs"
-            :language="displayInfo.language ?? undefined"
-            :word-wrap="true"
-            class="tool-result__code"
+            mode="chat"
+            custom-id="tool-result"
+            :content="resultFence"
+            final
+            :code-renderer="resultRenderer"
+            :is-dark="themeStore.isDark"
+            :code-block-props="{
+              showCopyButton: false,
+              showHeader: false,
+              theme: { light: 'vitesse-light', dark: 'vitesse-dark' },
+              monacoOptions: { wordWrap: 'on' }
+            }"
+            class="tool-result__markdown"
           />
         </div>
         <div v-else class="tool-result__empty">（无输出）</div>
@@ -648,7 +662,7 @@ const messageId = computed<number | undefined>(() => (props.message as { id?: nu
   /* 始终为滚动条预留 gutter，避免滚动条出现/消失时文字宽度变化导致重排。 */
   scrollbar-gutter: stable;
   /* padding 统一收拢到此处，作为唯一边距来源；
-     NCode 自带 padding 由下方 :deep 清零，避免双倍边距。 */
+     代码块内容由 markstream 自带间距，此处不额外叠加。 */
   padding: 10px 12px;
   transition:
     max-height 0.2s ease,
@@ -665,19 +679,20 @@ const messageId = computed<number | undefined>(() => (props.message as { id?: nu
   border-top-color: transparent;
   overflow: hidden;
 }
-.tool-result__code {
+/* 结果代码块（markstream 渲染）：字号与卡片一致，宽度不超出卡片。
+   纯文本（pre 渲染）结果保持自动换行，等价原 NCode 的 word-wrap。 */
+.tool-result__markdown {
   font-size: 12px;
-  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+  max-width: 100%;
+}
+.tool-result__markdown :deep(pre) {
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 .tool-result__empty {
   padding: 10px 12px;
   font-size: 12px;
   color: var(--text-3);
   font-style: italic;
-}
-/* NCode 在卡片内铺满；让 .n-code 不带额外内边距与背景 */
-.tool-result__body :deep(.n-code) {
-  background: transparent;
-  padding: 0;
 }
 </style>

@@ -2,9 +2,10 @@ import { IpcService } from 'electron-ipc-service/renderer'
 import type { AgentEvent } from '@earendil-works/pi-agent-core'
 import { useChatStore } from '../store/useChatStore'
 import { usePermissionStore } from '../store/usePermissionStore'
+import { usePlanStore } from '../store/usePlanStore'
 import { useSessionStore } from '../store/useSessionStore'
 import type { Session } from '@main/service/db-service'
-import type { AgentEventPayload, PermissionRequest } from '@main/agent/types'
+import type { AgentEventPayload, PermissionRequest, PlanApprovalRequest } from '@main/agent/types'
 
 /**
  * Agent 事件接收服务：main 进程通过 rendererClient.agentEvent.* 推送事件到此处。
@@ -25,6 +26,17 @@ export class AgentEventService extends IpcService {
   } | null = null
   #rafId: number | null = null
 
+  /**
+   * tool_execution_update 流式输出缓冲：key = `${sessionId}::${toolCallId}`，每 key 仅保留
+   * 最近一帧的最新快照。bash 等工具每次推完整累计文本（替换语义），丢弃中间态安全，
+   * 故同一帧内只保留最新一条、rAF 每帧至多应用一次即可（与 message_update 限频同思路）。
+   */
+  #pendingToolUpdate: Map<
+    string,
+    { sessionId: string; event: Extract<AgentEvent, { type: 'tool_execution_update' }> }
+  > = new Map()
+  #toolRafId: number | null = null
+
   /** Agent 生命周期事件（agent_start/message_update/.../agent_end）。 */
   onEvent(payload: AgentEventPayload): void {
     const chat = useChatStore()
@@ -32,6 +44,18 @@ export class AgentEventService extends IpcService {
     // 不应残留，翻转为拒绝态后一并移出队列。
     if (payload.event.type === 'agent_end') {
       usePermissionStore().clearSession(payload.sessionId)
+      usePlanStore().clearSession(payload.sessionId)
+    }
+    // 流式工具输出：当前会话走 rAF 缓冲（每帧最多应用一次，防高频 IPC 逐条触发渲染）；
+    // 后台会话直接应用（不触发渲染，与 message_update 处理一致）。
+    if (payload.event.type === 'tool_execution_update') {
+      if (payload.sessionId === chat.currentSessionId) {
+        this.#bufferToolUpdate(payload.sessionId, payload.event)
+      } else {
+        this.#flushToolUpdates()
+        chat.applyEvent(payload.sessionId, payload.event)
+      }
+      return
     }
     // 所有会话的事件都路由到对应状态容器（多会话并发：后台会话照常更新，
     // 侧边栏据此显示「生成中/失败」；切回时状态保留）。不再丢弃非当前会话事件。
@@ -47,6 +71,7 @@ export class AgentEventService extends IpcService {
       return
     }
     this.#flushUpdate()
+    this.#flushToolUpdates()
     // agent_end 携带真实失败 error（中止不携带）时写入容器；当前会话由 ChatView
     // watch error 弹提示，后台会话仅侧边栏标红，切回后再提示。
     chat.applyEvent(payload.sessionId, payload.event, payload.error)
@@ -72,6 +97,30 @@ export class AgentEventService extends IpcService {
     chat.applyEvent(pending.sessionId, pending.event)
   }
 
+  /** 缓冲工具流式输出快照（每 key 只保留最新一条），并通过 rAF 合并到当前帧应用。 */
+  #bufferToolUpdate(
+    sessionId: string,
+    event: Extract<AgentEvent, { type: 'tool_execution_update' }>
+  ): void {
+    this.#pendingToolUpdate.set(`${sessionId}::${event.toolCallId}`, { sessionId, event })
+    if (this.#toolRafId !== null) return
+    this.#toolRafId = requestAnimationFrame(() => {
+      this.#toolRafId = null
+      this.#flushToolUpdates()
+    })
+  }
+
+  /** 把缓冲的工具流式快照应用到 store（每帧一次，替换语义故丢弃中间态安全）。 */
+  #flushToolUpdates(): void {
+    if (this.#pendingToolUpdate.size === 0) return
+    const chat = useChatStore()
+    const entries = [...this.#pendingToolUpdate.entries()]
+    this.#pendingToolUpdate.clear()
+    for (const [, { sessionId, event }] of entries) {
+      chat.applyEvent(sessionId, event)
+    }
+  }
+
   /** 危险工具执行前的权限确认请求。入队 + 把对应工具卡片标记为「等待确认」。 */
   onPermissionRequest(req: PermissionRequest): void {
     usePermissionStore().enqueue(req)
@@ -79,6 +128,11 @@ export class AgentEventService extends IpcService {
       status: 'pending',
       toolName: req.toolName
     })
+  }
+
+  /** 计划审批请求（exit_plan_mode 提交计划后推送）：入队，PlanApprovalBar 据此展示。 */
+  onPlanRequest(req: PlanApprovalRequest): void {
+    usePlanStore().enqueue(req)
   }
 
   /**

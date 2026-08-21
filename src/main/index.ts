@@ -16,6 +16,7 @@ import icon from '../../resources/icon.png?asset'
 // 副作用：初始化主进程文件日志（electron-log，捕获 console 写入 userData/logs/main.log）
 import { createLogger } from './utils/log'
 import { cleanupOrphanAttachments } from './agent/attachment'
+import { bashSessionManager } from './agent/tools/bash-session'
 
 const log = createLogger('app')
 
@@ -91,4 +92,6 @@ app.on('before-quit', () => {
   log.info('应用退出')
   // 放行窗口 close（托盘「退出」/ Cmd+Q）：否则关闭到托盘设置会拦截真实退出
   markQuitting()
+  // 回收全部持久化 shell 与后台命令进程，避免孤儿进程
+  bashSessionManager.disposeAll()
 })

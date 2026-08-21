@@ -99,6 +99,19 @@ export interface PermissionRequest {
 export const PERMISSION_TIMEOUT_MS = 60_000
 
 /**
+ * 计划审批请求（exit_plan_mode 提交计划后 main 推给 renderer 展示）。
+ * renderer 在计划卡片上批准/拒绝后调 agent.respondPlan 回传。
+ */
+export interface PlanApprovalRequest {
+  requestId: string
+  sessionId: string
+  /** 计划标题（简短概括）。 */
+  title: string
+  /** 完整计划文本（分步、可执行，供用户审阅）。 */
+  plan: string
+}
+
+/**
  * 模型定位键：{provider, id} 二元组。
  * provider 为 model_configs.id（config id），id 为 model_id。
  * 序列化为 JSON 字符串存入 settings.defaultModel（上次使用）/ session.model（TEXT 列）。
@@ -291,7 +304,7 @@ export function buildSystemCapabilitySections(workdir?: string): string {
     [
       '## 工作方式',
       '- 当任务需要查询文件、执行命令或获取外部信息时，优先调用对应工具，不要凭空猜测。',
-      '- bash 默认 30 秒超时；耗时较长的命令请显式设置更长的 timeout_ms。',
+      '- bash 默认 30 秒超时；长驻命令（如 npm run dev、长测试）用 background=true 后台启动，配合 bash_output 读输出、kill_shell 终止。bash 命令在同一持久化会话中执行，cd/export 会保留。',
       '- 删除、覆盖、写文件、执行命令等操作可能需要用户确认，等待确认后再继续。',
       '- 工具返回大量输出时，只提取与任务相关的部分，不要原样重复给用户。'
     ],

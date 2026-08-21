@@ -76,8 +76,9 @@ export function summarizeToolResult(
     case 'read_file': {
       const path = details.path as string | undefined
       const bytes = details.bytes as number | undefined
+      const image = details.image === true
       s = path
-        ? `已读取 ${basename(path)}${typeof bytes === 'number' ? `（${fmtBytes(bytes)}）` : ''}`
+        ? `已读取 ${basename(path)}${image ? '（图片）' : typeof bytes === 'number' ? `（${fmtBytes(bytes)}）` : ''}`
         : null
       break
     }
@@ -94,10 +95,35 @@ export function summarizeToolResult(
       s = typeof count === 'number' ? `列出 ${count} 项` : null
       break
     }
+    case 'glob': {
+      const count = details.count as number | undefined
+      s = typeof count === 'number' ? `匹配 ${count} 个文件` : null
+      break
+    }
+    case 'grep': {
+      const count = details.count as number | undefined
+      const mode = details.mode as string | undefined
+      s = typeof count === 'number' ? `命中 ${count} ${mode === 'content' ? '行' : '个文件'}` : null
+      break
+    }
     case 'web_search': {
       const count = details.count as number | undefined
       const query = details.query as string | undefined
       s = typeof count === 'number' ? `找到 ${count} 条结果${query ? `（"${query}"）` : ''}` : null
+      break
+    }
+    case 'web_fetch': {
+      const url = details.url as string | undefined
+      const bytes = details.bytes as number | undefined
+      let host = ''
+      try {
+        host = new URL(url ?? '').host
+      } catch {
+        host = ''
+      }
+      s = url
+        ? `已抓取 ${host || url}${typeof bytes === 'number' ? `（${fmtBytes(bytes)}）` : ''}`
+        : null
       break
     }
   }
@@ -127,8 +153,14 @@ export function summarizeToolArgs(name: string, args: Record<string, unknown>): 
       return arg('path') ? `写入 ${basename(arg('path'))}` : ''
     case 'list_files':
       return arg('dir') ? `列出 ${arg('dir')} 目录` : ''
+    case 'glob':
+      return arg('pattern') ? `匹配 ${truncate(arg('pattern'), 30)}` : ''
+    case 'grep':
+      return arg('pattern') ? `搜索 "${truncate(arg('pattern'), 30)}"` : ''
     case 'web_search':
       return arg('query') ? `搜索 "${truncate(arg('query'), 30)}"` : ''
+    case 'web_fetch':
+      return arg('url') ? `抓取 ${truncate(arg('url'), 40)}` : ''
     default:
       return ''
   }

@@ -27,6 +27,7 @@ import {
   clearWebSearchApiKeyConfig
 } from './tools/web-search-config'
 import { resolvePermission, SETTING_BASH_ALLOWLIST } from './permission'
+import { resolvePlanApproval } from './tools/plan-mode'
 import { extractDocumentText } from '../utils/doc-parser'
 import { completeText } from './models'
 import { resolveAssistantCost } from './model-config/pricing'
@@ -817,6 +818,11 @@ export class AgentService extends IpcService {
    */
   respondPermission(requestId: string, approved: boolean, scope: PermissionScope = 'once'): void {
     resolvePermission(requestId, approved, scope)
+  }
+
+  /** 回传计划审批结果（renderer 计划卡片「批准/拒绝」后调用，feedback 在拒绝时携带）。 */
+  respondPlan(requestId: string, approved: boolean, feedback?: string): void {
+    resolvePlanApproval(requestId, approved, feedback?.trim() ?? '')
   }
 
   /** 当前 bash 持久白名单（权限弹窗点「总是允许」累积的命令列表）。 */

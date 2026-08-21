@@ -9,6 +9,7 @@ import { mcpManager } from './mcp'
 import { getDecryptedApiKey, ensureAllModelConfigsRegistered } from './model-config'
 import { resolveAssistantCost } from './model-config/pricing'
 import { createBeforeToolCallHook, clearRunAutoAllow } from './permission'
+import { clearPlanMode } from './tools/plan-mode'
 import { getModelsInstance, resolveModel, completeText } from './models'
 import { resolveAgentWorkdir } from './workdir'
 import { createLogger } from '../utils/log'
@@ -398,7 +399,12 @@ export class AgentManager {
         : 'medium'
 
     // 内置工具（按开关过滤）+ MCP server 工具（已启用且连接成功的 server）
-    const tools = [...buildTools(), ...(await mcpManager.getTools())]
+    // read_file 的图片能力按模型 input 模态门控：不支持图片的模型不会注入 image block
+    // bash 家族（bash/bash_output/kill_shell）绑定本会话：持久化 shell 与后台会话以其为 key
+    const tools = [
+      ...buildTools({ supportsImages: model.input.includes('image'), sessionId }),
+      ...(await mcpManager.getTools())
+    ]
 
     const agent = new Agent({
       initialState: {
@@ -484,9 +490,11 @@ export class AgentManager {
     let persistedAssistantThisRun = false
     agent.subscribe((event) => {
       // agent_start 为每次 run 的起点：重置本轮辅助标志 + 清理上一轮残留的本批自动放行。
+      // 计划模式按 run 生效：新一轮开始即清除，避免跨轮残留拦截。
       if (event.type === 'agent_start') {
         persistedAssistantThisRun = false
         clearRunAutoAllow(sessionId)
+        clearPlanMode(sessionId)
       }
       // 轮次计数 + 超限保护：每轮结束 +1；达到配置上限时中止 agent 并标记，
       // 使 agent_end 携带「已达最大轮次」错误提示（而非静默的 aborted）。
