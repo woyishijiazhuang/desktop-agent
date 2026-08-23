@@ -7,10 +7,7 @@ import {
   CopyOutline,
   ChevronDownOutline,
   ChevronUpOutline,
-  PersonOutline,
-  Sparkles,
   RefreshOutline,
-  BuildOutline,
   GitBranchOutline
 } from '@vicons/ionicons5'
 import MarkdownRender from 'markstream-vue'
@@ -271,9 +268,6 @@ const messageId = computed<number | undefined>(() => (props.message as { id?: nu
 <template>
   <!-- toolResult 消息：结果卡片（高亮 / 折叠 / 复制），结构与工具调用卡片一致 -->
   <div v-if="isToolResult" class="row row--toolresult" :data-mid="messageId">
-    <div class="row__avatar row__avatar--tool">
-      <NIcon :size="18"><BuildOutline /></NIcon>
-    </div>
     <div class="row__body">
       <div class="tool-result" :class="{ 'tool-result--error': toolResultIsError }">
         <div
@@ -349,13 +343,6 @@ const messageId = computed<number | undefined>(() => (props.message as { id?: nu
 
   <!-- user / assistant 消息：左右分离（用户右侧气泡 / 助手左侧全宽） -->
   <div v-else class="row" :class="isUser ? 'row--user' : 'row--assistant'" :data-mid="messageId">
-    <div class="row__avatar" :class="isUser ? 'row__avatar--user' : 'row__avatar--assistant'">
-      <NIcon :size="18">
-        <PersonOutline v-if="isUser" />
-        <Sparkles v-else />
-      </NIcon>
-    </div>
-
     <div class="row__body">
       <div
         class="row__content"
@@ -477,36 +464,14 @@ const messageId = computed<number | undefined>(() => (props.message as { id?: nu
   padding-bottom: 26px;
   max-width: 100%;
 }
-/* 用户行：头像与内容翻到右侧，且头像与（单行）气泡垂直居中 */
+/* 用户行：内容翻到右侧 */
 .row--user {
   flex-direction: row-reverse;
   align-items: center;
 }
-.row__avatar {
-  flex-shrink: 0;
-  width: var(--avatar-size);
-  height: var(--avatar-size);
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.row__avatar--user {
-  background: var(--primary);
-  color: #fff;
-}
-.row__avatar--assistant {
-  background: var(--primary-soft);
-  color: var(--primary-pressed);
-}
-.row__avatar--tool {
-  background: var(--bg-mute);
-  color: var(--text-3);
-}
 .row__body {
   flex: 1;
   min-width: 0;
-  min-height: var(--avatar-size);
   display: flex;
   flex-direction: column;
   gap: 6px;

@@ -12,6 +12,7 @@ import { AlertCircleOutline, CopyOutline } from '@vicons/ionicons5'
 import { useThemeStore } from '@renderer/store/useThemeStore'
 import { useCopy } from '@renderer/composables/useCopy'
 import { tryPrettyJSON, toCodeFence } from '@renderer/utils/codeBlock'
+import { MarkdownRender } from 'markstream-vue'
 
 /**
  * markstream 语言级覆盖：```echarts 围栏 → ECharts 图表。
