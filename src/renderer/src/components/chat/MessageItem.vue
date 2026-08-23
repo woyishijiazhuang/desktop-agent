@@ -393,7 +393,11 @@ const messageId = computed<number | undefined>(() => (props.message as { id?: nu
             <!-- 代码块视口提前渲染：viewport-priority 的延迟观察器在窗口可见时正常工作，
                  viewport-priority-options 的提前量（rootMargin/heavyBlockMargin）让重节点
                  在「快进入视口」时提前挂载 Monaco 编辑器，避免滚入视口瞬间
-                 「灰白占位 → 彩色编辑器」的闪烁。 -->
+                 「灰白占位 → 彩色编辑器」的闪烁。
+                 node-virtual=false：markstream 对 chat 模式 final 消息（>50 节点）自动启用
+                 节点虚拟化——视口外节点卸载并换成「估算高度」占位，滚动时窗口移动造成的
+                 估算误差会让内容整体位移（滚动跳变的根源）。聊天消息量级全量渲染无压力，
+                 显式关闭以保证滚动稳定；Monaco 等重节点仍由 viewport-priority 延迟挂载。 -->
             <MarkdownRender
               v-else-if="block.kind === 'text' && block.text"
               mode="chat"
@@ -402,6 +406,7 @@ const messageId = computed<number | undefined>(() => (props.message as { id?: nu
               :final="!(isStreaming && i === blocks.length - 1)"
               code-renderer="monaco"
               :is-dark="themeStore.isDark"
+              :node-virtual="false"
               viewport-priority
               :viewport-priority-options="{
                 rootMargin: '900px',

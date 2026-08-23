@@ -439,6 +439,34 @@ export class BackgroundShell {
     return { text, exited: this.exited, exitCode: this.exitCode, errorMessage: this.errorMessage }
   }
 
+  /**
+   * 等待进程退出，最多等 timeoutMs 毫秒（进程退出 / 超时 / abort 先到先返回）。
+   * @returns true=已退出（调用方随后 read 即得最终输出）；false=仍在运行或已被中止
+   */
+  waitExit(timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
+    if (this.exited) return Promise.resolve(true)
+    const child = this.child
+    return new Promise((resolve) => {
+      let done = false
+      const finish = (ok: boolean): void => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        child.removeListener('close', onClose)
+        if (signal) signal.removeEventListener('abort', onAbort)
+        resolve(ok)
+      }
+      const timer = setTimeout(() => finish(false), timeoutMs)
+      const onClose = (): void => finish(true)
+      const onAbort = (): void => finish(false)
+      child.once('close', onClose)
+      if (signal) {
+        if (signal.aborted) finish(false)
+        else signal.addEventListener('abort', onAbort, { once: true })
+      }
+    })
+  }
+
   /** 终止进程组（SIGTERM → 宽限期 → SIGKILL）。 */
   kill(): void {
     const child = this.child

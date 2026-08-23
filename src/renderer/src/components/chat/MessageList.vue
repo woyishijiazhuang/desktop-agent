@@ -2,7 +2,6 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch, type ComponentPublicInstance } from 'vue'
 import { NIcon, NScrollbar } from 'naive-ui'
 import { ChevronDownOutline } from '@vicons/ionicons5'
-import { useStickToBottom } from 'vue-stick-to-bottom'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { ToolResultMessage } from '@earendil-works/pi-ai'
 import MessageItem from './MessageItem.vue'
@@ -114,66 +113,120 @@ const compressedCount = computed(() => {
   }).length
 })
 
-/**
- * 聊天列表「粘底」滚动：委托 vue-stick-to-bottom（use-stick-to-bottom 的 Vue 移植，
- * 同 pi-web-ui / Vercel AI chatbot 等 AI 聊天界面的滚动方案）。
- *
- * 默认「不粘底」：仅流式生成（isBusy）时跟随内容增长自动滚底；空闲态任何内容变化
- * （展开卡片、markdown 重排、切换会话、图片加载）都不再挪动滚动位置，把页面控制权
- * 完全交还用户——此前「空闲也粘底」会在切换会话（A 消息少→B 消息多，本在 A 底部）
- * 或展开卡片时被视作内容增长而强制滚底，产生一次明显的滚动闪烁。
- *
- * 实现要点：
- * - `initial: false`：首屏不再依赖库的初始滚动，统一由下方「落底/恢复锚点」逻辑在
- *   布局后同步设置 scrollTop（先于浏览器绘制，无中间帧）。
- * - isBusy 切换：生成开始 `scrollToBottom` 恢复跟随；生成结束等终态内容重排完成后
- *   `stopScroll` 关闭跟随。
- * - 兜底：空闲态库在「用户滚到近底部」时会自行把 isAtBottom 置回 true，这里 watch
- *   到即回收，保证空闲绝不自动跟随。
- * - 用户上滚浏览历史时 isAtBottom 变 false，自动停止粘底，不被流式更新打扰。
- * - 会话间位置记忆采用「消息 id + 视口偏移」锚点（非像素/距底部距离）：会话内容含
- *   延迟渲染卡片（echarts/markdown/monaco），高度异步变化会让像素位置失真，锚定到
- *   具体消息行则不受其下方内容高度变化影响；恢复后补两帧锚定抵消进入视口的卡片位移。
+/* ===== 手写精简「粘底」滚动 =====
+ * 规则：仅当「用户处于近底部」时才跟随内容增长滚到底；用户一上滚即解除跟随，此后
+ * 完全不动 scrollTop，内容异步变高（echarts / monaco / 代码高亮）由浏览器原生
+ * overflow-anchor 同帧补偿（CSS 已恢复 auto），不再用 JS 补锚，从根上消除跳动。
+ * 原方案显式 overflow-anchor: none + ResizeObserver 逐帧补锚，补偿与库的 scrollTop
+ * 写入互相竞争且晚于浏览器原生机制，是「小距离跳动」的来源。
  */
-const { scrollRef, contentRef, isAtBottom, isNearBottom, scrollToBottom, stopScroll, setOptions } =
-  useStickToBottom({
-    resize: 'instant',
-    initial: false
-  })
+const NEAR_BOTTOM_PX = 70
+/** NScrollbar 内部的原生滚动容器。 */
+const scrollRef = ref<HTMLElement | null>(null)
+/** 滚动内容层（观察高度变化）。 */
+const contentEl = ref<HTMLElement | null>(null)
+/** 距底 <= 70px（「回到底部」按钮显隐）。 */
+const isNearBottom = ref(true)
+/** 是否跟随内容增长滚底。 */
+let stick = false
+/** 生成结束延迟解除跟随的 rAF id。 */
+let stickRaf = 0
+let contentObserver: ResizeObserver | null = null
 
 /**
- * 向可展开卡片（ToolCallCard / ReasoningBlock 等）提供「暂停粘底」入口。
- *
- * 必要性：空闲态贴底时，底部附近的任意一次向下滚动都会让库悄悄复活粘底
- * （isScrollingDown 清 escapedFromLock + 贴底置 isAtBottom=true），而 public
- * isAtBottom 因 isNearBottom 恒真不再变化，上方空闲回收 watch（值变化语义）
- * 捕捉不到这次复活。此后展开卡片内容变高，库的 ResizeObserver 会把视口拉回
- * 底部——卡片头部被顶起，视觉上变成「往上展开」。点击展开时先 stopScroll
- * 解除粘底，让卡片就地向下展开、视口稳定。
+ * 会话恢复后的「沉降窗口」：恢复瞬间锚点行按「占位高度」定位，延迟渲染卡片
+ * （echarts / monaco / markdown）进入视口后内容高度异步变化会把锚点行顶走。
+ * 原生 overflow-anchor 补偿正常阅读时的变高，但恢复这一瞬仍会漂移，需要短窗口
+ * 补锚——补锚只在锚点行实际偏离目标位置时动作（原生已补偿时 delta 为 0，不冲突），
+ * 用户主动滚动或窗口超时即放弃。
  */
-provideStickToBottomPause(() => stopScroll())
+interface SettleAnchor {
+  el: HTMLElement
+  anchor: { mid: number; offset: number }
+  lastScrollTop: number
+  until: number
+}
+const SETTLE_MS = 2500
+let settleAnchor: SettleAnchor | null = null
 
-/** 生成结束延迟关闭粘底的 rAF id（等终态内容在跟随下重排完成，再停掉跟随）。 */
-let stopScrollRaf: number | null = null
+/** 近底部判定（与分页/恢复逻辑同一阈值）。 */
+function updateNearBottom(el: HTMLElement): void {
+  isNearBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX
+}
 
-// 生成中平滑跟随（smooth）；空闲时任何显式滚动都即时到位。
+/** 滚动事件：近底部恢复跟随，上滚解除；沉降窗口内用户主动滚动则放弃锚定。 */
+function onScroll(): void {
+  const el = scrollRef.value
+  if (!el) return
+  updateNearBottom(el)
+  stick = isNearBottom.value
+  const s = settleAnchor
+  if (s && s.el === el && s.lastScrollTop !== el.scrollTop) {
+    // 用户在沉降窗口内主动滚动：恢复锚定交给原生 overflow-anchor，不再补锚
+    settleAnchor = null
+  }
+}
+
+/** 立即滚到底并开启跟随（发送消息 / 生成开始 / 点回到底部）。 */
+function scrollToBottom(): void {
+  const el = scrollRef.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+  updateNearBottom(el)
+  stick = isNearBottom.value
+}
+
+/** 解除跟随（可展开卡片展开 / 搜索跳转定位后）。 */
+function stopStick(): void {
+  stick = false
+}
+
+/** 内容高度变化：跟随中滚底；沉降窗口内补回锚点行；否则仅同步 nearBottom（原生 overflow-anchor 已同帧补偿视口）。 */
+function onContentResize(): void {
+  const el = scrollRef.value
+  if (!el) return
+  if (stick) {
+    el.scrollTop = el.scrollHeight
+    return
+  }
+  const s = settleAnchor
+  if (s && s.el === el) {
+    if (performance.now() > s.until) {
+      settleAnchor = null
+    } else if (!restoreScrollAnchor(el, s.anchor)) {
+      settleAnchor = null
+    } else {
+      const moved = Math.abs(el.scrollTop - s.lastScrollTop)
+      s.lastScrollTop = el.scrollTop
+      // 锚点行已回到目标位置（原生锚定接手）或补锚不再有位移 → 结束沉降窗口
+      if (moved <= 1) settleAnchor = null
+    }
+    return
+  }
+  updateNearBottom(el)
+}
+
+/**
+ * 向可展开卡片（ToolCallCard / ReasoningBlock 等）提供「暂停粘底」入口：
+ * 点击展开时先解除跟随，让卡片就地向下撑开、视口稳定，不被拉回底部。
+ */
+provideStickToBottomPause(stopStick)
+
+// 生成中跟随滚底；生成结束等终态内容（markdown 重排/代码高亮）在跟随下完成，
+// 再解除跟随（用户仍贴底时保持跟随）。
 watch(
   () => props.isBusy,
   (busy) => {
-    setOptions({ resize: busy ? 'smooth' : 'instant' })
     if (busy) {
-      // 新一轮生成：立即贴底并恢复粘底跟随（用户刚发送，通常本就在底部，无跳动）
-      if (stopScrollRaf !== null) {
-        cancelAnimationFrame(stopScrollRaf)
-        stopScrollRaf = null
-      }
-      void scrollToBottom('instant')
+      if (stickRaf) cancelAnimationFrame(stickRaf)
+      scrollToBottom()
     } else {
-      // 生成结束：等终态内容（markdown 重排/代码高亮）在粘底跟随下完成，再关闭粘底
-      stopScrollRaf = requestAnimationFrame(() => {
-        stopScrollRaf = requestAnimationFrame(() => {
-          stopScrollRaf = null
-          stopScroll()
+      stickRaf = requestAnimationFrame(() => {
+        stickRaf = requestAnimationFrame(() => {
+          stickRaf = 0
+          const el = scrollRef.value
+          if (el) updateNearBottom(el)
+          if (!isNearBottom.value) stick = false
         })
       })
     }
@@ -181,32 +234,33 @@ watch(
   { immediate: true }
 )
 
-// 空闲态强制不粘底：库在「用户滚到近底部」时会把 isAtBottom 置回 true（恢复跟随），
-// 这里一旦发现空闲却粘底立即回收，保证空闲时内容变化不再自动滚动。
-watch(
-  isAtBottom,
-  (atBottom) => {
-    if (atBottom && !props.isBusy) stopScroll()
-  },
-  { flush: 'post' }
-)
+/** 回到底部按钮：空闲时平滑滚到底（到位后 onScroll 恢复跟随）；生成中即时滚底并保持跟随。 */
+function onScrollToBottom(): void {
+  const el = scrollRef.value
+  if (!el) return
+  if (props.isBusy) {
+    scrollToBottom()
+  } else {
+    el.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+  }
+}
 
 /**
  * 函数式模板 ref：vue-tsc 的 noUnusedLocals 不把静态 `ref="scrollRef"` 计为使用，
  * 改用 `:ref="setContentRef"` 表达式形式。滚动容器（scrollRef）不在模板上直接绑定：
  * NScrollbar 的模板 ref 拿到的是暴露对象（无 $el），改为在 scrollWrapRef
- * 的 DOM 树里查 .n-scrollbar-container（见 scrollWrapRef 的 watch），供 vue-stick-to-bottom /
+ * 的 DOM 树里查 .n-scrollbar-container（见 scrollWrapRef 的 watch），供滚动监听 /
  * 分页哨兵 / 搜索跳转直接操作。
  */
 function setContentRef(el: Element | ComponentPublicInstance | null): void {
-  contentRef.value = el instanceof HTMLElement ? el : null
+  contentEl.value = el instanceof HTMLElement ? el : null
 }
 
 /** 上一次 watch 记录到的「会话 + 末条消息」（区分同会话尾部新增 / 跨会话替换）。 */
 let lastTail: { sessionId: string | null | undefined; message: AgentMessage | null } | null = null
 
 // 用户发送的新消息强制滚底（即便用户正在上滚浏览历史，发送后也应跳到底部看回复）。
-// assistant / toolResult 追加与流式 token 增长一律交给库的 ResizeObserver：在底部时
+// assistant / toolResult 追加与流式 token 增长一律交给内容 ResizeObserver：在底部时
 // 自动跟随，上滚时不打扰。flush:'post' 确保用户消息已渲染后再滚动到真实底部。
 // 分页适配：向上加载 prepend 也会让 length 增长，但末条引用未变（lastTail 相同），
 // 不会误触滚底，避免打断用户阅读历史。
@@ -219,7 +273,7 @@ watch(
     const last = props.messages[newLen - 1] as { role?: string } | undefined
     const sameSession = lastTail?.sessionId === props.sessionId
     lastTail = { sessionId: props.sessionId, message: last as AgentMessage | null }
-    if (sameSession && last?.role === 'user') void scrollToBottom('instant')
+    if (sameSession && last?.role === 'user') scrollToBottom()
   },
   { flush: 'post' }
 )
@@ -235,26 +289,30 @@ const sentinelRef = ref<HTMLElement | null>(null)
 /** 包裹 NScrollbar 的普通 div：挂载后从中查找内部滚动容器（.n-scrollbar-container）。 */
 const scrollWrapRef = ref<HTMLElement | null>(null)
 let sentinelObserver: IntersectionObserver | null = null
+let scrollListenerEl: HTMLElement | null = null
 
-/** 滚动容器上一次记录的可见高度（容器 ResizeObserver 判定「变高/变矮」用）。 */
-let lastContainerHeight: number | null = null
-/** 观察滚动容器自身高度变化（内容元素之外的布局挤压/回弹）。 */
-let containerObserver: ResizeObserver | null = null
-/** 恢复粘底的延迟 rAF id（钳制 scroll 事件派发后再执行）。 */
-let restickRaf: number | null = null
+function detachScrollListener(): void {
+  scrollListenerEl?.removeEventListener('scroll', onScroll)
+  scrollListenerEl = null
+}
 
 /**
  * 滚动容器就绪回调：滚动区现在仅在有消息时挂载（空会话渲染 WelcomeView），
  * 首屏可能是欢迎页、发消息后滚动区才出现，因此不能用 onMounted 一次性赋值。
- * 监听 scrollWrapRef 模板 ref（挂载/卸载时自动更新），每次就绪时：
- * - 把 NScrollbar 内部的原生滚动容器交给 vue-stick-to-bottom（watchEffect 侦测到
- *   scrollRef 赋值后自动 attach）；
- * - 重建顶部哨兵观察器（滚动容器/哨兵任一重新挂载后旧 observer 已失效）。
+ * 监听 scrollWrapRef 模板 ref（挂载/卸载时自动更新），每次就绪时挂滚动监听、
+ * 重建顶部哨兵观察器（滚动容器/哨兵任一重新挂载后旧 observer 已失效），
+ * 并恢复该会话上次滚动锚点（无记录/正在生成则落底）。
  */
 watch(
   scrollWrapRef,
   (wrap) => {
     scrollRef.value = wrap?.querySelector<HTMLElement>('.n-scrollbar-container') ?? null
+    detachScrollListener()
+    const el = scrollRef.value
+    if (el) {
+      el.addEventListener('scroll', onScroll, { passive: true })
+      scrollListenerEl = el
+    }
     sentinelObserver?.disconnect()
     sentinelObserver = null
     const root = scrollRef.value
@@ -296,73 +354,40 @@ function restoreScrollAnchor(el: HTMLElement, anchor: { mid: number; offset: num
   return true
 }
 
-/**
- * 会话恢复后的「沉降窗口」：延迟渲染卡片（echarts/markdown/monaco）进入视口后内容
- * 高度会异步变化，期间每次内容高度变化都把锚点行重新拉回原位，直到位置稳定或超时。
- * 若不处理，恢复时内容仍是「占位高度」，锚点会被钳制到错误位置，卡片渲染后位置漂移。
- */
-interface SettlingAnchor {
-  el: HTMLElement
-  anchor: { mid: number; offset: number }
-  lastScrollTop: number
-  until: number
-}
-const SETTLE_MS = 2500
-let settlingAnchor: SettlingAnchor | null = null
-let contentObserver: ResizeObserver | null = null
-
-// 观察内容元素高度：会话恢复后（settlingAnchor 非空）内容高度一变化就重新落锚。
+// 观察内容元素高度：跟随中滚底，否则仅同步 nearBottom（非底部变高由原生
+// overflow-anchor 同帧补偿，无需也不应再手动补锚）。
 watch(
-  () => contentRef.value,
+  contentEl,
   (content) => {
     contentObserver?.disconnect()
     contentObserver = null
-    if (!content) return
-    contentObserver = new ResizeObserver(() => {
-      const s = settlingAnchor
-      if (!s || scrollRef.value !== s.el) {
-        settlingAnchor = null
-        return
-      }
-      if (!restoreScrollAnchor(s.el, s.anchor)) {
-        settlingAnchor = null
-        return
-      }
-      const moved = Math.abs(s.el.scrollTop - s.lastScrollTop)
-      s.lastScrollTop = s.el.scrollTop
-      if (moved <= 1 || performance.now() > s.until) settlingAnchor = null
-    })
-    contentObserver.observe(content)
+    if (content) {
+      contentObserver = new ResizeObserver(onContentResize)
+      contentObserver.observe(content)
+    }
   },
   { flush: 'post' }
 )
 
 /** 恢复会话滚动锚点：正在生成则落底跟随；有锚点则定位到锚点消息行；无记录/锚点不在窗口则落底。 */
 function applyScrollRestore(el: HTMLElement): void {
-  settlingAnchor = null
-  if (props.isBusy) {
-    el.scrollTop = el.scrollHeight
-    isNearBottom.value = true
-    return
-  }
+  settleAnchor = null
   const anchor = props.sessionId ? chatStore.getSessionScroll(props.sessionId) : undefined
-  if (anchor && restoreScrollAnchor(el, anchor)) {
-    isNearBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight <= 70
-    // 关键：立即关闭库的粘底跟随。恢复位置后库的 isAtBottom 仍是上一个会话残留的
-    // true（scroll 事件派发有延迟），内容渲染会触发库自动 scrollToBottom 把位置拉回
-    // 底部（掉底根因）。stopScroll 让库停止跟随，直到用户重新滚到近底部。
-    stopScroll()
-    // 进入沉降窗口：内容高度变化时持续补锚，覆盖延迟渲染卡片的异步高度变化
-    settlingAnchor = {
-      el,
-      anchor,
-      lastScrollTop: el.scrollTop,
-      until: performance.now() + SETTLE_MS
-    }
+  if (props.isBusy || !anchor || !restoreScrollAnchor(el, anchor)) {
+    el.scrollTop = el.scrollHeight
+    updateNearBottom(el)
+    stick = isNearBottom.value
     return
   }
-  el.scrollTop = el.scrollHeight
-  isNearBottom.value = true
+  // 恢复成功：进入沉降窗口，内容异步变高时把锚点行补回原位（原生锚定已接手时无位移、自动退出）
+  settleAnchor = {
+    el,
+    anchor,
+    lastScrollTop: el.scrollTop,
+    until: performance.now() + SETTLE_MS
+  }
+  updateNearBottom(el)
+  stick = isNearBottom.value
 }
 
 /** 保存当前会话的滚动锚点（须在旧内容仍挂载时调用）。 */
@@ -396,87 +421,56 @@ watch(
   { flush: 'post' }
 )
 
-/**
- * 滚动容器自身高度变化（外部布局挤压/回弹，如权限确认条出现/消失、窗口高度变化）
- * 不会触发库的 ResizeObserver——它只观察内容元素，感知不到容器高度变化。当容器
- * 变高（布局回弹）时，若滚动位置恰贴在旧底部，浏览器会把 scrollTop 钳制回新底部
- * 并触发 scroll 事件，被库误判为「用户上滚」而永久解除粘底（isAtBottom=false +
- * escapedFromLock=true），此后流式内容增长不再跟随滚底（如确认工具后页面不再下滚）。
- * 处理：容器回弹且位置贴底时，在钳制 scroll 事件派发后的下一帧补一次 scrollToBottom
- * 恢复粘底；滚动位置本就在底部，不会产生可见跳动。
- */
-watch(
-  () => scrollRef.value,
-  (el) => {
-    containerObserver?.disconnect()
-    containerObserver = null
-    if (restickRaf !== null) {
-      cancelAnimationFrame(restickRaf)
-      restickRaf = null
-    }
-    if (!el) return
-    lastContainerHeight = el.clientHeight
-    containerObserver = new ResizeObserver(() => {
-      const h = el.clientHeight
-      const prev = lastContainerHeight
-      lastContainerHeight = h
-      // 仅处理容器变高（回弹）；变矮是挤压，滚动位置不会越界，无需处理。
-      if (prev == null || h <= prev) return
-      const target = el.scrollHeight - el.clientHeight
-      // 位置未贴底（用户已上滚）时，变高不会触发 scrollTop 钳制，不受影响。
-      if (el.scrollTop < target - 1) return
-      // 容器回弹且贴底：补一次 scrollToBottom 恢复粘底。不能按「isAtBottom 为 false」
-      // 才补——库的公开 isAtBottom 含「近底部」语义，钳制后仍为 true，但内部
-      // state.isAtBottom 已被误判的 scroll 事件清掉，流式内容增长将不再跟随。
-      // 空闲态此处立即被上方 isAtBottom 兜底 watch 回收，不会产生空闲自动跟随。
-      restickRaf = requestAnimationFrame(() => {
-        restickRaf = requestAnimationFrame(() => {
-          restickRaf = null
-          if (!scrollRef.value) return
-          void scrollToBottom('instant')
-        })
-      })
-    })
-    containerObserver.observe(el)
-  },
-  { flush: 'post' }
-)
-
 onBeforeUnmount(() => {
   // 路由离开（如切到设置页）前保存当前会话滚动锚点，返回聊天页时可恢复
   saveCurrentAnchor(props.sessionId)
   contentObserver?.disconnect()
   contentObserver = null
-  settlingAnchor = null
+  settleAnchor = null
+  detachScrollListener()
   sentinelObserver?.disconnect()
   sentinelObserver = null
-  containerObserver?.disconnect()
-  containerObserver = null
-  if (restickRaf !== null) {
-    cancelAnimationFrame(restickRaf)
-    restickRaf = null
-  }
-  if (stopScrollRaf !== null) {
-    cancelAnimationFrame(stopScrollRaf)
-    stopScrollRaf = null
-  }
+  if (stickRaf) cancelAnimationFrame(stickRaf)
 })
 
 async function loadOlder(): Promise<void> {
   if (chatStore.loadingOlder || !chatStore.hasMore) return
   const el = scrollRef.value
-  const anchor = el ? el.scrollHeight - el.scrollTop : 0
+  const sessionIdAtStart = props.sessionId
+  // 消息行锚点（与会话恢复同策略）：加载前记录「视口顶部第一条可见消息行」。
+  // 新页消息在加载后持续异步变高（markstream 节点分批渲染、Monaco 挂载），
+  // 像素锚（距底距离）会随 scrollHeight 漂移导致恢复位置偏移；消息行锚点
+  // 只依赖该行自身位置，不受其上下内容高度变化影响。
+  const anchor = el ? captureScrollAnchor(el) : null
+  // 兜底像素锚：视口内找不到带 id 的消息行时使用
+  const distanceFromBottom = el ? el.scrollHeight - el.scrollTop : 0
   await chatStore.loadMoreMessages()
   await nextTick()
+  // 加载期间切换了会话：锚点行已不在 DOM，恢复交给会话切换 watch（applyScrollRestore）
+  if (props.sessionId !== sessionIdAtStart) return
   const el2 = scrollRef.value
-  if (el2) el2.scrollTop = el2.scrollHeight - anchor
+  if (!el2) return
+  if (anchor && restoreScrollAnchor(el2, anchor)) {
+    // 新页消息异步变高同样会让锚点行漂移，进入沉降窗口补锚
+    settleAnchor = {
+      el: el2,
+      anchor,
+      lastScrollTop: el2.scrollTop,
+      until: performance.now() + SETTLE_MS
+    }
+    updateNearBottom(el2)
+    stick = isNearBottom.value
+    return
+  }
+  el2.scrollTop = el2.scrollHeight - distanceFromBottom
+  updateNearBottom(el2)
+  stick = isNearBottom.value
 }
 
 /**
  * 搜索跳转定位：消费 chatStore.pendingJumpMessageId，滚动到目标消息并闪亮高亮。
  * - 在 post 渲染后按 data-mid 找到行节点，垂直居中到视口。
- * - 随后 stopScroll 解除「粘底」锁定（isAtBottom=false），使库对本次窗口替换触发的
- *   ResizeObserver 滚底在 rAF 校验时因不在底部而中止，保证定位不被顶走。
+ * - 随后解除跟随（stick=false），避免随后的内容渲染把位置拉回底部。
  * - 高亮通过临时 class 实现，1.8s 后移除。
  */
 watch(
@@ -508,7 +502,9 @@ watch(
         scroll.clientHeight / 2 +
         row.offsetHeight / 2
       scroll.scrollTop = Math.max(0, top)
-      stopScroll()
+      stopStick()
+      settleAnchor = null
+      updateNearBottom(scroll)
       row.classList.add('row--flash')
       window.setTimeout(() => row.classList.remove('row--flash'), 1800)
     }
@@ -565,11 +561,11 @@ watch(
       <!-- 回到底部：用户上滚离开底部时浮现 -->
       <Transition name="to-bottom">
         <button
-          v-if="!isAtBottom && !isNearBottom && messages.length > 0"
+          v-if="!isNearBottom && messages.length > 0"
           class="message-list__to-bottom"
           type="button"
           title="回到底部"
-          @click="scrollToBottom()"
+          @click="onScrollToBottom"
         >
           <NIcon :size="18"><ChevronDownOutline /></NIcon>
         </button>
@@ -600,13 +596,9 @@ watch(
   min-height: 0;
   min-width: 0;
 }
-/* 关闭内部滚动容器的原生滚动锚定，交由 vue-stick-to-bottom 管理 scrollTop，
- * 避免与 ResizeObserver 粘底冲突（naive-ui 已隐藏该容器的原生滚动条并自绘轨道）。
- * 需用 scroll-wrap 前缀 + :deep()：n-scrollbar-container 是 NScrollbar 内部元素，
- * 且 .message-list__scroll 是组件根（不带本组件 data-v），以它为前缀会永远不命中。 */
-.message-list__scroll-wrap :deep(.n-scrollbar-container) {
-  overflow-anchor: none;
-}
+/* 保留内部滚动容器的原生滚动锚定（overflow-anchor 默认 auto）：非底部浏览时，
+ * 视口上方内容异步变高（echarts/monaco/代码高亮）由浏览器同帧补偿，肉眼不可见；
+ * 底部跟随由 JS 粘底逻辑负责，两者互不冲突（不要再设 overflow-anchor: none）。 */
 /* 让滚动内容层纵向撑满滚动区（消息不满一屏时滚动区整体可见，顶部哨兵贴顶） */
 .message-list__scroll-wrap :deep(.n-scrollbar-content) {
   min-height: 100%;

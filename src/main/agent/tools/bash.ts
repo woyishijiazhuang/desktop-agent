@@ -54,6 +54,9 @@ const STDIN_READING_PROGRAMS = new Set([
 const GIT_COMMIT_MSG_RE =
   /-m\b|-am\b|-pm\b|--message\b|--amend\b|--no-edit\b|--fixup\b|--squash\b|--file\b|-F\b/
 
+/** bash_output 的 wait_ms 上限（防单次调用阻塞过久）。 */
+const MAX_WAIT_MS = 120_000
+
 /**
  * 检测命令是否交互式/读 stdin（持久化会话中会挂起或吞掉后续命令）。
  * 命中返回交互描述，否则返回 null。误伤宁可拒绝（错误信息会引导改用非交互写法）。
@@ -122,6 +125,12 @@ const bashOutputParams = Type.Object({
       description:
         'true=仅返回上次读取之后的新增输出（推荐，省 token）；false=从头返回全部输出。默认 true'
     })
+  ),
+  wait_ms: Type.Optional(
+    Type.Number({
+      description:
+        '等待时长（毫秒）：若进程仍在运行，最多等待这么久，进程退出或到时立即返回（避免反复轮询）。默认 0 不等待。建议对预期很快结束的命令用 5000~30000。'
+    })
   )
 })
 
@@ -189,7 +198,7 @@ export function createBashTools(sessionId: string): AgentTool[] {
 
       if (p.background) {
         const shell = bashSessionManager.startBackground(p.command, { cwd, env })
-        const text = `已启动后台命令。session_id: ${shell.sessionId}\n可用 bash_output 读取输出、kill_shell 终止。`
+        const text = `已启动后台命令。session_id: ${shell.sessionId}\n可用 bash_output 读取输出（建议传 wait_ms 等待命令完成，避免轮询）；kill_shell 可终止。`
         log.info('后台命令已启动', {
           sessionId,
           bgId: shell.sessionId,
@@ -246,13 +255,18 @@ export function createBashTools(sessionId: string): AgentTool[] {
     name: 'bash_output',
     label: '读取后台输出',
     description:
-      '读取 bash 后台命令（background=true）的输出。tail=true 只返回新增输出，tail=false 返回全部。进程仍在运行时结果带 [进程运行中] 标记，退出后带退出码。',
+      '读取 bash 后台命令（background=true）的输出。tail=true 只返回新增输出，tail=false 返回全部。wait_ms 可指定等待时长：进程退出或到时立即返回（避免反复轮询）。进程仍在运行时结果带 [进程运行中] 标记，退出后带退出码。',
     parameters: bashOutputParams,
     executionMode: 'parallel',
-    async execute(_toolCallId, p) {
+    async execute(_toolCallId, p, signal) {
       const shell = bashSessionManager.getBackground(p.session_id)
       if (!shell) {
         throw new Error(`后台会话不存在（可能已退出清理）：${p.session_id}`)
+      }
+      // wait_ms：阻塞等待进程退出（或到时 / abort 先到先返回），一次调用拿终态，避免轮询
+      const waitMs = p.wait_ms ? Math.min(Math.max(0, Math.floor(p.wait_ms)), MAX_WAIT_MS) : 0
+      if (waitMs > 0 && !shell.exited) {
+        await shell.waitExit(waitMs, signal)
       }
       const { text: output, exited, exitCode, errorMessage } = shell.read(p.tail ?? true)
       let head: string

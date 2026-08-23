@@ -48,6 +48,10 @@ linux:
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
+# 只保留中文和英文语言包，去掉其余 ~45MB 的无用 Electron locales
+electronLanguages:
+  - zh-CN
+  - en-US
 publish:
   provider: generic
   url: https://example.com/auto-updates

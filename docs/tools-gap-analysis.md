@@ -331,3 +331,12 @@
 - **`walkFiles` 跳过隐藏目录**（以 `.` 开头），对齐 ripgrep / Claude Code Glob 默认不遍历隐藏目录；隐藏文件仍列出（由模式决定是否命中）
 - grep.ts / glob.ts 改用 `createGlobMatcher`（入参统一为 `/` 分隔相对路径），并更新参数描述
 - 验证：`scripts/tmp-glob-test.mjs` 26 项全通过（`**`/`*`/`?`/字符类/花括号/hidden 文件/隐藏目录遍历/显式点号模式）；`pnpm typecheck` 通过、改动文件 eslint 0 问题
+
+### 2026-08-15（第九批）：bash_output 支持 wait_ms（消除后台输出轮询）
+
+- **问题**：`background=true` 后台命令的输出只能「此刻读缓冲」——进程未结束时返回 `[进程运行中]`+部分输出，agent 需要反复轮询才知道何时结束，模型负担重且易误判
+- **改动**：
+  - `bash-session.ts` 的 `BackgroundShell` 新增 `waitExit(timeoutMs, signal?)`：等待进程退出，进程退出 / 超时 / abort 先到先返回
+  - `bash_output` 新增 `wait_ms` 参数（上限 120s）：传入后阻塞等待「进程退出 或 到时」，一次调用即可拿到终态输出，无需轮询；进程仍运行时照旧返回 `[进程运行中]`+部分输出，agent 可加大 wait_ms 再等
+  - `bash` 后台返回指引文本补充「建议传 wait_ms 等待命令完成」
+- 验证：`pnpm typecheck`（node+web）通过；改动文件 eslint 0 问题

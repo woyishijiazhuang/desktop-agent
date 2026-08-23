@@ -75,7 +75,7 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
     label: bashMeta.label,
     description: bashMeta.description,
     defaultEnabled: true,
-    build: ({ sessionId }) => createBashTools(sessionId)
+    build: ({ sessionId }) => createBashTools(sessionId).filter((t) => t.name === 'bash')
   },
   {
     name: bashOutputMeta.name,
