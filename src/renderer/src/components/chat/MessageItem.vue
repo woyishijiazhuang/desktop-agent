@@ -8,7 +8,8 @@ import {
   ChevronDownOutline,
   ChevronUpOutline,
   RefreshOutline,
-  GitBranchOutline
+  GitBranchOutline,
+  WarningOutline
 } from '@vicons/ionicons5'
 import MarkdownRender from 'markstream-vue'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
@@ -148,6 +149,21 @@ const failedMessage = computed(() => {
     metadata?: { errorMessage?: string }
   }
   return m.metadata?.errorMessage || m.errorMessage || '生成失败'
+})
+
+/**
+ * 思考被截断提示：assistant 消息仅有思考、无正文，且因 max_tokens 上限被截断
+ *（stopReason/finishReason='length'，如推理模型长思考吃光输出预算）。
+ * 这类结束不是报错，run 正常收尾，若不提示用户只看到"思考没完就停了"。
+ * 渲染为警告提示条，引导提高该模型「最大输出 Tokens」或降低思考级别后重新生成。
+ */
+const isTruncatedThinking = computed(() => {
+  if (isUser.value || isToolResult.value) return false
+  const hasText = blocks.value.some((b) => b.kind === 'text' && b.text.trim())
+  const hasThinking = blocks.value.some((b) => b.kind === 'thinking')
+  if (hasText || !hasThinking) return false
+  const m = props.message as { stopReason?: string; finishReason?: string }
+  return m.stopReason === 'length' || m.finishReason === 'length'
 })
 
 /** toolResult 消息原始文本 */
@@ -365,6 +381,13 @@ const messageId = computed<number | undefined>(() => (props.message as { id?: nu
             <NIcon :size="16" :color="'var(--error)'"><CloseCircleOutline /></NIcon>
             <span class="row__failed-marker__text">{{ failedMessage }}</span>
           </div>
+          <div v-if="isTruncatedThinking" class="row__truncated-tip">
+            <NIcon :size="16" :color="'var(--warning)'"><WarningOutline /></NIcon>
+            <span class="row__truncated-tip__text"
+              >思考内容已达到该模型的最大输出长度（max_tokens）而被截断，未生成回答。可在「设置
+              →模型」中提高该模型的「最大输出 Tokens」，或降低思考级别后重新生成。</span
+            >
+          </div>
           <template v-for="(block, i) in blocks" :key="i">
             <ReasoningBlock
               v-if="block.kind === 'thinking'"
@@ -519,6 +542,24 @@ const messageId = computed<number | undefined>(() => (props.message as { id?: nu
   max-width: var(--msg-max-width);
 }
 .row__failed-marker__text {
+  word-break: break-word;
+}
+
+/* 思考被截断提示条（思考吃光 max_tokens 上限、无正文）：警告色弱底 + 图标 + 文案 */
+.row__truncated-tip {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--warning-soft);
+  border-radius: var(--radius);
+  background: var(--warning-soft);
+  color: var(--text-2);
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: var(--msg-max-width);
+}
+.row__truncated-tip__text {
   word-break: break-word;
 }
 

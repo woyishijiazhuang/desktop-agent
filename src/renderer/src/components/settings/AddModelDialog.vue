@@ -90,6 +90,11 @@ function periodsToForm(
   }))
 }
 
+/** 最大输出 Tokens 默认值：非推理模型 4096；推理模型的思考 tokens 计入输出上限，默认给足预算，
+ * 避免长思考在 max_tokens 处被截断（finish_reason='length'、正文为空，表现为"思考没完就停了"）。 */
+const DEFAULT_MAX_TOKENS = 4096
+const REASONING_MAX_TOKENS = 16384
+
 const form = reactive<FormState>({
   mode: 'preset',
   presetProvider: '',
@@ -283,6 +288,19 @@ watch(
     if (m.multimodal) form.multimodal = true
     if (m.reasoning) form.reasoning = true
     if (!form.displayName.trim()) form.displayName = m.name
+    // 推理模型：思考 tokens 计入 max_tokens 上限，选中时若仍是默认值则放大输出预算，
+    // 避免长思考在 max_tokens 处被截断（finish_reason='length'、正文为空）。
+    if (m.reasoning && form.maxTokens <= DEFAULT_MAX_TOKENS) form.maxTokens = REASONING_MAX_TOKENS
+  }
+)
+
+// 手动开启「推理」开关（自定义模式 / 手动输入模型 ID / 预置模式切开关）：
+// 与选中推理模型同策略放大输出预算，仅在仍为默认值时生效（用户改过的值不动）。
+watch(
+  () => form.reasoning,
+  (reasoning) => {
+    if (isEdit.value) return
+    if (reasoning && form.maxTokens <= DEFAULT_MAX_TOKENS) form.maxTokens = REASONING_MAX_TOKENS
   }
 )
 

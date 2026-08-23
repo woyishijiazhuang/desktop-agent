@@ -106,7 +106,7 @@ const layout = computed<LayoutItem[]>(() => {
 /** 已压缩消息条数（id <= compressLastIndex 的已落库消息；乐观/流式中消息无 id 不计）。 */
 const compressedCount = computed(() => {
   const boundary = props.compressLastIndex
-  if (boundary === null || boundary === undefined) return 0
+  if (boundary == null) return 0
   return props.messages.filter((m) => {
     const id = (m as { id?: number }).id
     return id !== undefined && id <= boundary
@@ -154,12 +154,17 @@ function updateNearBottom(el: HTMLElement): void {
   isNearBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight <= NEAR_BOTTOM_PX
 }
 
+/** 滚动位置变化后同步粘底跟随状态（近底则跟随，上滚则解除）。 */
+function syncStickState(el: HTMLElement): void {
+  updateNearBottom(el)
+  stick = isNearBottom.value
+}
+
 /** 滚动事件：近底部恢复跟随，上滚解除；沉降窗口内用户主动滚动则放弃锚定。 */
 function onScroll(): void {
   const el = scrollRef.value
   if (!el) return
-  updateNearBottom(el)
-  stick = isNearBottom.value
+  syncStickState(el)
   const s = settleAnchor
   if (s && s.el === el && s.lastScrollTop !== el.scrollTop) {
     // 用户在沉降窗口内主动滚动：恢复锚定交给原生 overflow-anchor，不再补锚
@@ -167,18 +172,44 @@ function onScroll(): void {
   }
 }
 
-/** 立即滚到底并开启跟随（发送消息 / 生成开始 / 点回到底部）。 */
+/** 立即滚到底并开启跟随（发送消息 / 生成开始 / 点回到底部）。滚到底后必然近底，直接置位。 */
 function scrollToBottom(): void {
   const el = scrollRef.value
   if (!el) return
   el.scrollTop = el.scrollHeight
-  updateNearBottom(el)
-  stick = isNearBottom.value
+  isNearBottom.value = true
+  stick = true
 }
 
 /** 解除跟随（可展开卡片展开 / 搜索跳转定位后）。 */
 function stopStick(): void {
   stick = false
+}
+
+/**
+ * 沉降窗口内：把锚点行补回目标位置。窗口超时 / 锚点行不在当前加载窗口 /
+ * 补锚无位移（原生锚定已接手）→ 结束沉降窗口。
+ */
+function trySettle(el: HTMLElement): void {
+  const s = settleAnchor
+  if (!s || s.el !== el) return
+  if (performance.now() > s.until || !restoreScrollAnchor(el, s.anchor)) {
+    settleAnchor = null
+    return
+  }
+  const moved = Math.abs(el.scrollTop - s.lastScrollTop)
+  s.lastScrollTop = el.scrollTop
+  if (moved <= 1) settleAnchor = null
+}
+
+/** 开启沉降窗口：记录锚点行与窗口截止时间，内容异步变高时由 trySettle 补锚。 */
+function openSettleWindow(el: HTMLElement, anchor: { mid: number; offset: number }): void {
+  settleAnchor = {
+    el,
+    anchor,
+    lastScrollTop: el.scrollTop,
+    until: performance.now() + SETTLE_MS
+  }
 }
 
 /** 内容高度变化：跟随中滚底；沉降窗口内补回锚点行；否则仅同步 nearBottom（原生 overflow-anchor 已同帧补偿视口）。 */
@@ -189,18 +220,8 @@ function onContentResize(): void {
     el.scrollTop = el.scrollHeight
     return
   }
-  const s = settleAnchor
-  if (s && s.el === el) {
-    if (performance.now() > s.until) {
-      settleAnchor = null
-    } else if (!restoreScrollAnchor(el, s.anchor)) {
-      settleAnchor = null
-    } else {
-      const moved = Math.abs(el.scrollTop - s.lastScrollTop)
-      s.lastScrollTop = el.scrollTop
-      // 锚点行已回到目标位置（原生锚定接手）或补锚不再有位移 → 结束沉降窗口
-      if (moved <= 1) settleAnchor = null
-    }
+  if (settleAnchor) {
+    trySettle(el)
     return
   }
   updateNearBottom(el)
@@ -375,19 +396,12 @@ function applyScrollRestore(el: HTMLElement): void {
   const anchor = props.sessionId ? chatStore.getSessionScroll(props.sessionId) : undefined
   if (props.isBusy || !anchor || !restoreScrollAnchor(el, anchor)) {
     el.scrollTop = el.scrollHeight
-    updateNearBottom(el)
-    stick = isNearBottom.value
+    syncStickState(el)
     return
   }
   // 恢复成功：进入沉降窗口，内容异步变高时把锚点行补回原位（原生锚定已接手时无位移、自动退出）
-  settleAnchor = {
-    el,
-    anchor,
-    lastScrollTop: el.scrollTop,
-    until: performance.now() + SETTLE_MS
-  }
-  updateNearBottom(el)
-  stick = isNearBottom.value
+  openSettleWindow(el, anchor)
+  syncStickState(el)
 }
 
 /** 保存当前会话的滚动锚点（须在旧内容仍挂载时调用）。 */
@@ -452,19 +466,12 @@ async function loadOlder(): Promise<void> {
   if (!el2) return
   if (anchor && restoreScrollAnchor(el2, anchor)) {
     // 新页消息异步变高同样会让锚点行漂移，进入沉降窗口补锚
-    settleAnchor = {
-      el: el2,
-      anchor,
-      lastScrollTop: el2.scrollTop,
-      until: performance.now() + SETTLE_MS
-    }
-    updateNearBottom(el2)
-    stick = isNearBottom.value
+    openSettleWindow(el2, anchor)
+    syncStickState(el2)
     return
   }
   el2.scrollTop = el2.scrollHeight - distanceFromBottom
-  updateNearBottom(el2)
-  stick = isNearBottom.value
+  syncStickState(el2)
 }
 
 /**
@@ -545,11 +552,7 @@ watch(
               />
               <!-- 压缩分界：在该条（或分界 toolResult 所并入的工具卡）之后插入分界卡片 -->
               <CompressDivider
-                v-if="
-                  compressLastIndex !== null &&
-                  compressLastIndex !== undefined &&
-                  item.isCompressBoundary
-                "
+                v-if="compressLastIndex != null && item.isCompressBoundary"
                 :count="compressedCount"
                 :summary="compressSummary ?? null"
               />
