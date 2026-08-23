@@ -164,6 +164,9 @@ export type ThemeMode = 'light' | 'dark' | 'system'
 /** settings 表中存储的「主题模式」key（默认 system）。主进程以此为唯一真源驱动 nativeTheme。 */
 export const SETTING_THEME_MODE = 'appearance.theme'
 
+/** settings 表中存储的「桌面通知」开关 key（默认开启；关闭后不弹系统通知）。 */
+export const SETTING_NOTIFICATIONS_ENABLED = 'notificationsEnabled'
+
 /** settings 表中存储的「长期记忆」开关 key（控制记忆工具可用性；记忆注入不受影响，默认开启）。 */
 export const SETTING_MEMORY_ENABLED = 'memoryEnabled'
 

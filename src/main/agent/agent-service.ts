@@ -243,7 +243,7 @@ export class AgentService extends IpcService {
         event: { type: 'agent_end', messages: agent.state.messages }
       })
       // 兜底路径也补一条失败通知（事件桥未推送 agent_end 时）
-      notifyAgentFinished({
+      void notifyAgentFinished({
         title: '任务出错',
         body: err instanceof Error ? err.message : String(err)
       })
@@ -266,6 +266,11 @@ export class AgentService extends IpcService {
    */
   async parseDocumentFile(buffer: Uint8Array, filename: string): Promise<string> {
     return extractDocumentText(buffer, filename)
+  }
+
+  /** 设置页测试通知：发送一条测试桌面通知并返回结果。 */
+  async testNotification(): Promise<{ success: boolean; error?: string }> {
+    return notifyAgentFinished({ title: '测试通知', body: '通知功能正常工作！' })
   }
 
   async abort(sessionId: string): Promise<void> {

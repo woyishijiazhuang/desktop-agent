@@ -104,6 +104,28 @@ async function onAlwaysOnTopChange(value: boolean): Promise<void> {
   message.success(value ? '已置顶窗口' : '已取消置顶')
 }
 
+async function onNotificationsChange(value: boolean): Promise<void> {
+  await settings.saveNotificationsEnabled(value)
+  message.success(value ? '已开启桌面通知' : '已关闭桌面通知')
+}
+
+const testingNotification = ref(false)
+async function onTestNotification(): Promise<void> {
+  testingNotification.value = true
+  try {
+    const result = await mainClient.agent.testNotification()
+    if (result.success) {
+      message.success('测试通知已发送，请查看桌面右上角')
+    } else {
+      message.warning(`通知发送失败：${result.error}`)
+    }
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : String(err))
+  } finally {
+    testingNotification.value = false
+  }
+}
+
 /** 切换标题栏模式：main 侧持久化并重建窗口。 */
 async function onTitleBarModeChange(mode: TitleBarMode): Promise<void> {
   if (mode === settings.titleBarMode) return
@@ -327,6 +349,27 @@ function onThemeChange(mode: ThemeMode): void {
               <span class="data-row__hint">始终置顶显示，不被其他窗口遮挡</span>
             </div>
             <NSwitch :value="windowStore.state.isAlwaysOnTop" @update:value="onAlwaysOnTopChange" />
+          </div>
+          <div class="data-row data-row--gap">
+            <div class="data-row__info">
+              <span class="data-row__label">桌面通知</span>
+              <span class="data-row__hint">任务出错或主动调用通知工具时弹出系统桌面通知</span>
+            </div>
+            <NSpace align="center" :size="8">
+              <NSwitch
+                :value="settings.notificationsEnabled"
+                @update:value="onNotificationsChange"
+              />
+              <NButton
+                size="small"
+                quaternary
+                :disabled="!settings.notificationsEnabled || testingNotification"
+                :loading="testingNotification"
+                @click="onTestNotification"
+              >
+                测试
+              </NButton>
+            </NSpace>
           </div>
           <div class="data-row data-row--gap">
             <div class="data-row__info">

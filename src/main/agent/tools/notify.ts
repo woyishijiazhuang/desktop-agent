@@ -19,7 +19,7 @@ const params = Type.Object({
   file: Type.Optional(
     Type.String({
       description:
-        '点击通知时要打开的文件或目录路径（如刚生成的 PDF/Word/脚本，或下载输出目录）。点击后系统会用默认程序打开。'
+        '点击通知时要打开的文件或目录路径（如刚生成的 PDF/Word/脚本，或下载输出目录）。点击后系统会用默认程序打开该文件/目录。'
     })
   )
 })
@@ -42,17 +42,29 @@ export const notifyTool: AgentTool<typeof params, { title: string; body: string;
       const body = p.body.trim()
       const file = p.file?.trim() || undefined
       log.info('发送桌面通知', { title, body: body.slice(0, 100), file })
-      notifyAgentFinished({ title, body, openPath: file })
+      const result = await notifyAgentFinished({ title, body, openPath: file })
+      if (result.success) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: file
+                ? `已发送桌面通知：${title}（点击通知将打开 ${file}）`
+                : `已发送桌面通知：${title}`
+            }
+          ],
+          details: { title, body, file }
+        }
+      }
+      // 通知发送失败：把错误信息反馈给 agent，让它知道并可以告知用户
       return {
         content: [
           {
             type: 'text',
-            text: file
-              ? `已发送桌面通知：${title}（点击通知将打开 ${file}）`
-              : `已发送桌面通知：${title}`
+            text: `桌面通知发送失败：${result.error}。用户可能未授予通知权限或应用未签名，已提示用户在应用内查看。`
           }
         ],
-        details: { title, body, file }
+        details: { title, body, file, error: result.error }
       }
     }
   }

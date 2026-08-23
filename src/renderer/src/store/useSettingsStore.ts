@@ -14,6 +14,7 @@ import {
   SETTING_DEFAULT_THINKING_LEVEL,
   SETTING_ENABLED_TOOLS,
   SETTING_MAX_TURNS_PER_RUN,
+  SETTING_NOTIFICATIONS_ENABLED,
   SETTING_MEMORY_ENABLED,
   SETTING_SKILLS_ENABLED,
   SETTING_KB_ENABLED,
@@ -69,6 +70,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const autoCompressEnabled = ref<boolean>(DEFAULT_AUTO_COMPRESS_ENABLED)
   /** 自动压缩阈值：未压缩上下文达到模型窗口的该百分比时触发（0~100）。 */
   const autoCompressThreshold = ref<number>(DEFAULT_AUTO_COMPRESS_THRESHOLD)
+  /** 桌面通知开关（默认开启；关闭后不弹系统通知）。 */
+  const notificationsEnabled = ref(true)
   /** 关闭窗口时最小化到托盘（默认关闭：关窗即退出/关闭窗口）。 */
   const closeToTray = ref(false)
   /** 标题栏模式（默认 native：优先当前平台原生窗口栏）。 */
@@ -94,6 +97,7 @@ export const useSettingsStore = defineStore('settings', () => {
       webSearchConfig,
       findSkillConfig,
       skills,
+      notificationsEnabledVal,
       memoryEnabledVal,
       skillsEnabledVal,
       kbEnabledVal,
@@ -111,6 +115,7 @@ export const useSettingsStore = defineStore('settings', () => {
       mainClient.agent.getWebSearchConfig(),
       mainClient.agent.getFindSkillConfig(),
       mainClient.agent.listInstalledSkills(),
+      mainClient.db.getSetting(SETTING_NOTIFICATIONS_ENABLED),
       mainClient.db.getSetting(SETTING_MEMORY_ENABLED),
       mainClient.db.getSetting(SETTING_SKILLS_ENABLED),
       mainClient.db.getSetting(SETTING_KB_ENABLED),
@@ -133,6 +138,7 @@ export const useSettingsStore = defineStore('settings', () => {
       typeof max === 'number' && Number.isInteger(max) && max > 0 ? max : DEFAULT_MAX_TURNS_PER_RUN
     webSearchKeyConfigured.value = webSearchConfig.hasKey
     findSkillSource.value = findSkillConfig.source
+    notificationsEnabled.value = (notificationsEnabledVal as boolean | undefined) ?? true
     memoryEnabled.value = (memoryEnabledVal as boolean | undefined) ?? true
     skillsEnabled.value = (skillsEnabledVal as boolean | undefined) ?? true
     kbEnabled.value = (kbEnabledVal as boolean | undefined) ?? true
@@ -232,6 +238,11 @@ export const useSettingsStore = defineStore('settings', () => {
     if (!Number.isFinite(v) || v < 50 || v > 100) return
     await mainClient.db.setSetting(SETTING_AUTO_COMPRESS_THRESHOLD, v)
     autoCompressThreshold.value = v
+  }
+
+  async function saveNotificationsEnabled(v: boolean): Promise<void> {
+    await mainClient.db.setSetting(SETTING_NOTIFICATIONS_ENABLED, v)
+    notificationsEnabled.value = v
   }
 
   /**
@@ -350,6 +361,7 @@ export const useSettingsStore = defineStore('settings', () => {
     kbEnabled,
     autoCompressEnabled,
     autoCompressThreshold,
+    notificationsEnabled,
     closeToTray,
     titleBarMode,
     workdir,
@@ -358,6 +370,7 @@ export const useSettingsStore = defineStore('settings', () => {
     saveDefaultSystemPrompt,
     setLastUsedThinkingLevel,
     saveMaxTurnsPerRun,
+    saveNotificationsEnabled,
     saveMemoryEnabled,
     saveSkillsEnabled,
     saveKbEnabled,

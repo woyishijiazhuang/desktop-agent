@@ -2,8 +2,6 @@ import '@renderer/assets/base.css'
 import './index.css'
 import { initializeIpcRendererServices, IpcService } from 'electron-ipc-service/renderer'
 import type { WindowState } from '@main/service/window-service'
-import type { AgentEventPayload, PermissionRequest } from '@main/agent/types'
-import type { Session } from '@main/service/db-service'
 import { mainClient } from '@renderer/utils/main-client'
 
 /**
@@ -38,32 +36,19 @@ function render(state: WindowState): void {
   pinBtn.title = state.isAlwaysOnTop ? '取消置顶' : '置顶窗口'
 }
 
-/** 接收 main 推送的窗口状态（广播同时到达内容视图与本视图）。 */
+/**
+ * 接收 main 推送的窗口状态。
+ * 路由表（render-client.ts VIEW_ROUTES）已保证只有 ui.windowStateChange 会发给本视图，
+ * showToast / trayAction / agentEvent.* 均定向发往内容视图，无需空实现兜底。
+ */
 class HeaderUiService extends IpcService {
   static override readonly namespace = 'ui'
   windowStateChange(state: WindowState): void {
     render(state)
   }
-  /** 托盘动作由主应用内容视图处理，本视图空实现防止派发报错。 */
-  // eslint-disable-next-line @typescript-eslint/no-empty-function, @typescript-eslint/no-unused-vars
-  trayAction(_action: 'new-chat' | 'open-settings'): void {}
 }
 
-/**
- * 主应用在内容视图注册了 agentEvent 服务，广播同样会到达本视图。
- * 提供同 namespace 的空实现，避免消息派发时 services[ns] 为 undefined 抛错。
- */
-class NoopAgentEventService extends IpcService {
-  static override readonly namespace = 'agentEvent'
-  // eslint-disable-next-line @typescript-eslint/no-empty-function, @typescript-eslint/no-unused-vars
-  onEvent(_payload: AgentEventPayload): void {}
-  // eslint-disable-next-line @typescript-eslint/no-empty-function, @typescript-eslint/no-unused-vars
-  onPermissionRequest(_req: PermissionRequest): void {}
-  // eslint-disable-next-line @typescript-eslint/no-empty-function, @typescript-eslint/no-unused-vars
-  onSessionUpdate(_session: Session): void {}
-}
-
-initializeIpcRendererServices([HeaderUiService, NoopAgentEventService])
+initializeIpcRendererServices([HeaderUiService])
 
 // 初始状态（广播可能早于注册到达，故主动拉取一次）
 void mainClient.window.initWindow().then(render)

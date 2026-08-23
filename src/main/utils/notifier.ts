@@ -1,6 +1,9 @@
 import { Notification, shell } from 'electron'
-import { getMainWindow, ensureMainWindow } from '../service/window-manager'
+import { db } from '../database'
+import { SETTING_NOTIFICATIONS_ENABLED } from '../agent/types'
+import { ensureMainWindow } from '../service/window-manager'
 import { createLogger } from './log'
+import { rendererClient } from './render-client'
 import icon from '../../../resources/icon.png?asset'
 
 const log = createLogger('notifier')
@@ -11,6 +14,31 @@ const MAX_BODY_CHARS = 120
 /** 有成果文件时通知上附带的「打开文件」按钮文案。 */
 const OPEN_FILE_ACTION_LABEL = '打开文件'
 
+/** 等待 failed 事件的超时（ms）：超时后视为发送成功。 */
+const FAILED_WAIT_MS = 1000
+
+/**
+ * macOS 通知失败引导：首次失败时提示用户检查权限 + 代码签名。
+ * Electron 42+ 的 macOS 通知要求应用进行代码签名，否则静默失败。
+ */
+let failHintShown = false
+function handleMacFailure(errorMsg: string): string {
+  if (!failHintShown) {
+    failHintShown = true
+    const hint =
+      'macOS 通知要求：1) 系统设置 → 通知 中为本应用开启权限；2) 应用需代码签名（开发阶段可用自签名证书）。'
+    log.warn('桌面通知发送失败', { error: errorMsg, hint })
+    rendererClient.ui.showToast({
+      type: 'warning',
+      content: `桌面通知发送失败：${errorMsg}。${hint}`,
+      duration: 8000,
+      closable: true,
+      keepAliveOnHover: true
+    })
+  }
+  return errorMsg
+}
+
 /** 打开通知目标路径（点通知主体或「打开文件」按钮共用）。 */
 function openTarget(path: string): void {
   void shell.openPath(path).then((err) => {
@@ -19,31 +47,34 @@ function openTarget(path: string): void {
 }
 
 /**
- * 发送桌面通知（agent 运行完成/失败时用）。
- * 规则：仅当主窗口不在前台（未聚焦）时弹出，避免用户正盯着应用还被通知打扰；
- * 最小化/隐藏到托盘时窗口未聚焦，同样会通知。
- * 点击行为：带 openPath（agent 生成的成果文件/目录）时，通知附带「打开文件」按钮，
- * 点击按钮或通知主体均用系统默认程序打开目标；否则唤起并聚焦主窗口。
- * 带 openPath 时以路径作为通知 id：同一成果再次完成会替换旧通知，避免通知堆积。
- * 通知不可用/无权限时静默跳过（try/catch），不影响主流程。
+ * 发送桌面系统通知，返回发送结果。
+ * 调用场景：
+ * - agent 出错/失败（agent-manager / agent-service 兜底，fire-and-forget）
+ * - agent 主动调用 notify 工具（需 await 拿到结果反馈给 agent）
+ *
+ * 正常结束不调用此函数，不打扰用户。
+ * macOS 通知静默失败（无权限/未签名）时通过 failed 事件捕获，应用内 toast 提示用户。
  */
-export function notifyAgentFinished(input: {
+export async function notifyAgentFinished(input: {
   title: string
   body: string
   /** 点击通知后要打开的文件或目录路径（如刚生成的 PDF/Word、下载输出目录）。 */
   openPath?: string
-}): void {
+}): Promise<{ success: boolean; error?: string }> {
   try {
-    if (!Notification.isSupported()) return
-    const win = getMainWindow()
-    if (win && win.isFocused()) return
+    if (!Notification.isSupported()) {
+      return { success: false, error: '系统不支持通知' }
+    }
+    // 用户在设置中关闭了通知开关，静默跳过
+    if (db.getSetting<boolean>(SETTING_NOTIFICATIONS_ENABLED) === false) {
+      return { success: false, error: '通知已被用户关闭' }
+    }
     const body =
       input.body.length > MAX_BODY_CHARS ? `${input.body.slice(0, MAX_BODY_CHARS)}…` : input.body
     const n = new Notification({
       title: input.title,
       body,
       icon,
-      // 同一成果路径只保留最新通知（同 id 的旧通知被替换）；无成果时走随机 UUID 默认行为
       ...(input.openPath
         ? {
             id: input.openPath,
@@ -55,18 +86,35 @@ export function notifyAgentFinished(input: {
       if (input.openPath) openTarget(input.openPath)
       else ensureMainWindow()
     })
-    // 「打开文件」按钮（darwin/win32）；actionIndex 对应 actions 数组下标
     n.on('action', (_event, actionIndex) => {
       if (actionIndex === 0 && input.openPath) openTarget(input.openPath)
     })
-    n.show()
-    log.debug('已发送桌面通知', {
-      title: input.title,
-      body: input.body.slice(0, 60),
-      openPath: input.openPath
+
+    // macOS：监听 failed 事件判断是否发送成功；非 macOS 直接视为成功
+    const result = await new Promise<{ success: boolean; error?: string }>((resolve) => {
+      if (process.platform === 'darwin') {
+        n.on('failed', (_event, errorMsg) => {
+          resolve({ success: false, error: handleMacFailure(errorMsg) })
+        })
+        // 无 failed 事件则在超时后视为成功
+        setTimeout(() => resolve({ success: true }), FAILED_WAIT_MS)
+      } else {
+        resolve({ success: true })
+      }
+      n.show()
     })
+
+    if (result.success) {
+      log.debug('已发送桌面通知', {
+        title: input.title,
+        body: input.body.slice(0, 60),
+        openPath: input.openPath
+      })
+    }
+    return result
   } catch (err) {
-    // 通知授权被拒/系统不支持等：静默降级，不打断 agent 流程
-    log.warn('发送桌面通知失败', { error: err instanceof Error ? err.message : String(err) })
+    const errorMsg = err instanceof Error ? err.message : String(err)
+    log.warn('发送桌面通知失败', { error: errorMsg })
+    return { success: false, error: errorMsg }
   }
 }

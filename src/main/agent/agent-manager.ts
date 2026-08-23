@@ -13,7 +13,6 @@ import { clearPlanMode } from './tools/plan-mode'
 import { getModelsInstance, resolveModel, completeText } from './models'
 import { resolveAgentWorkdir } from './workdir'
 import { createLogger } from '../utils/log'
-import { extractMessageText } from '../utils/message-text'
 import { notifyAgentFinished } from '../utils/notifier'
 import type { AgentEventPayload } from './types'
 import {
@@ -618,21 +617,10 @@ export class AgentManager {
             log.error('失败标记落库失败', { sessionId, error: persistErr })
           }
         }
-        // 桌面通知：run 结束（含失败）且窗口不在前台时自动弹系统通知（notifyAgentFinished 内部判断聚焦）。
-        // 中止（aborted）是用户主动操作，不打扰；超限/LRU 暂停等携带 effectiveError，仍属可通知范围。
-        if (!aborted) {
-          const lastAssistant = [...messages].reverse().find((m) => m.role === 'assistant')
-          const text = lastAssistant ? extractMessageText(lastAssistant.content).trim() : ''
-          const sessionTitle = db.getSession(sessionId)?.title
-          notifyAgentFinished({
-            title: effectiveError ? '任务出错' : '任务完成',
-            body:
-              effectiveError ??
-              (text ||
-                (sessionTitle && sessionTitle !== DEFAULT_SESSION_TITLE
-                  ? `会话「${sessionTitle}」已完成`
-                  : '任务已完成'))
-          })
+        // 桌面通知：仅失败时弹出（成功不打扰）。
+        // 中止（aborted）是用户主动操作，不通知；超限/LRU 暂停等携带 effectiveError，仍属可通知范围。
+        if (!aborted && effectiveError) {
+          void notifyAgentFinished({ title: '任务出错', body: effectiveError })
         }
         const payload: AgentEventPayload = aborted
           ? { sessionId, event }

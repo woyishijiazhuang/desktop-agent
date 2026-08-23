@@ -24,6 +24,8 @@ const SETTING_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   webSearchApiKey: (v) => typeof v === 'string',
   /** 技能搜索（find_skill）数据源：字节 Find Skill / 腾讯 SkillHub。 */
   findSkillSource: (v) => v === 'byte' || v === 'tencent',
+  /** 桌面通知开关（默认开启）。 */
+  notificationsEnabled: (v) => typeof v === 'boolean',
   /** 长期记忆开关（控制记忆读写工具是否可用；记忆注入不受此开关影响）。 */
   memoryEnabled: (v) => typeof v === 'boolean',
   /** 本地技能总开关（技能工具注入）。 */

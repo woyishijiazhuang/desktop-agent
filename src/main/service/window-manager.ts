@@ -24,7 +24,7 @@ const log = createLogger('window')
  * 同时替代 BrowserWindow 的两处静态依赖：
  * - BrowserWindow.fromWebContents() → getWindowByWebContents()（注册表反查）；
  * - electron-ipc-service 的 createIpcMainClient（遍历 BrowserWindow.getAllWindows()）
- *   → broadcastToAllViews()（遍历本窗口全部视图）。
+ *   → sendToViews()（按路由表发送到对应视图）。
  */
 
 /** 自定义标题栏高度（与 header 页面 body 高度保持一致）。 */
@@ -371,10 +371,24 @@ export function getWindowByWebContents(webContents: WebContents): BaseWindow | n
   return windowByWebContents.get(webContents.id) ?? null
 }
 
-/** 向全部视图的 webContents 广播消息（fire-and-forget，替代 createIpcMainClient）。 */
-export function broadcastToAllViews(channel: string, message: unknown): void {
-  headerView?.webContents.send(channel, message)
-  contentView?.webContents.send(channel, message)
+/** 视图广播目标。 */
+export type ViewTarget = 'all' | 'header' | 'content'
+
+/**
+ * 向指定视图的 webContents 发送消息（fire-and-forget，替代 createIpcMainClient）。
+ * 'all' 同时发给标题栏 + 内容视图；'header' / 'content' 只发给对应视图。
+ */
+export function sendToViews(
+  channel: string,
+  message: unknown,
+  target: ViewTarget = 'all'
+): void {
+  if (target === 'header' || target === 'all') {
+    headerView?.webContents.send(channel, message)
+  }
+  if (target === 'content' || target === 'all') {
+    contentView?.webContents.send(channel, message)
+  }
 }
 
 /**
