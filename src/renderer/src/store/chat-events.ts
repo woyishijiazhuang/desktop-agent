@@ -115,16 +115,29 @@ export function applyChatEvent(state: SessionChatState, event: AgentEvent, error
     }
     case 'message_update':
     case 'message_end': {
-      // 将最新版本替换到签名匹配的消息上（自尾部查找）。相较「仅替换末条同角色」
-      // 更健壮：工具调用交错（assistant → toolResult → assistant）时末条可能是不同
-      // 角色，仅比对末条会误丢更新；连续 assistant 段下按位置替换则会误盖其它消息。
-      // 流式期间同一消息的 timestamp 不变，签名稳定可精确命中。
+      // 将最新版本替换到目标消息上。
+      // 优先按 DB id 精确替换：agent 内存消息的 timestamp 与 DB 落库 timestamp 可能不一致
+      //（流式期间以 agent 时间记，落库用 Date.now()），仅按签名（role::timestamp）匹配会把
+      // 「携带 id 的权威替换」（如图表重新生成推回的更新）漏掉，导致 UI 不刷新。
+      // 普通流式事件消息不带 id，走原签名路径，行为不变。
       const msg = event.message
-      const sig = signatureOf(msg)
-      for (let i = state.messages.length - 1; i >= 0; i--) {
-        if (signatureOf(state.messages[i]) === sig) {
-          state.messages[i] = msg
-          break
+      const msgId = (msg as { id?: number }).id
+      let matched = false
+      if (msgId !== undefined) {
+        for (let i = state.messages.length - 1; i >= 0 && !matched; i--) {
+          if ((state.messages[i] as { id?: number }).id === msgId) {
+            state.messages[i] = msg
+            matched = true
+          }
+        }
+      }
+      if (!matched) {
+        const sig = signatureOf(msg)
+        for (let i = state.messages.length - 1; i >= 0; i--) {
+          if (signatureOf(state.messages[i]) === sig) {
+            state.messages[i] = msg
+            break
+          }
         }
       }
       break

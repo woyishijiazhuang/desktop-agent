@@ -349,14 +349,15 @@ function onCopyResult(): void {
 }
 .tool-card__head-main {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  /* 占据头部剩余宽度（右侧 extra 限宽），为 reason 提供弹性空间 */
+  flex: 1;
   min-width: 0;
 }
 .tool-card__title {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: 1;
   min-width: 0;
 }
 .tool-card__name {
@@ -365,17 +366,22 @@ function onCopyResult(): void {
   color: var(--text-1);
   font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
   white-space: nowrap;
+  /* 工具名不参与压缩：完整展示，由 reason 吸收宽度变化 */
+  flex-shrink: 0;
 }
-/* AI 一句话说明（reason）：与工具名区分使用普通字体、弱化颜色、可截断 */
+/* AI 一句话说明（reason）：与工具名区分使用普通字体、弱化颜色；
+   弹性占据工具名之后的剩余宽度，超出省略（min-width:0 允许收缩出省略号） */
 .tool-card__reason {
   font-size: 12px;
   color: var(--text-3);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 420px;
+  flex: 1;
+  min-width: 0;
 }
-/* 结果摘要：收起时也可见的「工具干了什么」一行文案 */
+/* 结果摘要：收起时也可见的「工具干了什么」一行文案；
+   上限 extra 限宽，超出省略 */
 .tool-card__summary {
   font-size: 12px;
   line-height: 1.4;
@@ -383,6 +389,7 @@ function onCopyResult(): void {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
 }
 .tool-card__summary--success {
   color: var(--success);
@@ -398,14 +405,22 @@ function onCopyResult(): void {
     transform: rotate(360deg);
   }
 }
+/* 头部右侧（摘要 + 状态 + 展开箭头）：整体限宽（不超过头部 45%），
+   溢出空间由内部摘要吸收省略；状态标签与箭头保持固有宽度不被压缩 */
 .tool-card__extra {
   display: inline-flex;
   align-items: center;
   gap: 4px;
   flex-shrink: 0;
+  max-width: 45%;
+  min-width: 0;
+}
+.tool-card__extra :deep(.n-tag) {
+  flex-shrink: 0;
 }
 .tool-card__chevron {
   color: var(--text-3);
+  flex-shrink: 0;
 }
 .tool-card__body {
   border-top: 1px solid var(--border-soft);

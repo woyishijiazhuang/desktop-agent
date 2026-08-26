@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, provide, ref } from 'vue'
 import { NTag, NButton, NIcon, useMessage } from 'naive-ui'
 import {
   CheckmarkCircleOutline,
@@ -32,6 +32,7 @@ import { useStickToBottomPause } from '@renderer/composables/useStickToBottomPau
 import { tryPrettyJSON, toCodeFence } from '@renderer/utils/codeBlock'
 import { summarizeToolResult } from '@renderer/utils/toolResult'
 import { mainClient } from '@renderer/utils/main-client'
+import { chatMessageContextKey } from './chatMessageContext'
 import {
   extractMessageText,
   extractUserText,
@@ -279,6 +280,12 @@ const timeText = computed(() => {
 
 /** DB 消息 id（搜索跳转滚动定位用；流式事件消息无 id 时为 undefined）。 */
 const messageId = computed<number | undefined>(() => (props.message as { id?: number }).id)
+
+/**
+ * 向子树（markstream 自定义组件，如 EChartsBlock）提供本条消息的 DB id：
+ * 图表「重新生成」需要把新配置就地替换回原消息，必须知道要改哪条消息。
+ */
+provide(chatMessageContextKey, messageId)
 </script>
 
 <template>

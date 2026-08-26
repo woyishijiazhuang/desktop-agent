@@ -29,7 +29,7 @@ import {
 import { resolvePermission, SETTING_BASH_ALLOWLIST } from './permission'
 import { resolvePlanApproval } from './tools/plan-mode'
 import { extractDocumentText } from '../utils/doc-parser'
-import { completeText } from './models'
+import { completeText, type CompleteTextResult } from './models'
 import { resolveAssistantCost } from './model-config/pricing'
 import { AgentManager } from './agent-manager'
 import { createLogger } from '../utils/log'
@@ -136,6 +136,105 @@ function truncateMiddle(text: string, maxTokens: number): string {
     t += tokenWeight(text[i])
   }
   return `${head}\n…[中间内容过长已省略]…\n${tail}`
+}
+
+/** 图表重新生成的系统提示：只输出可渲染的 echarts 配置，不解释。 */
+const CHART_REGEN_SYSTEM_PROMPT =
+  '你是数据可视化专家。根据用户提供的 ECharts 配置与渲染错误信息，修正配置使其能正常渲染。' +
+  '常见需要修正的问题：仅接受函数的字段被写成字符串（如 tooltip.valueFormatter，需移除）；' +
+  '无效的坐标系组合（geo 上使用 line 系列、series 引用了不存在的 xAxis/yAxis/geo）；JSON 语法错误（注释、尾逗号、单引号）。' +
+  '要求：只输出一个 ```echarts 代码块（内容为修正后的 JSON 配置，不写注释、不含函数或 JS 代码），不要输出任何解释；' +
+  '务必对原始配置做出实际修改，禁止原样返回。'
+
+/** 组装图表修正的用户提示；retry=true 时追加「上一轮原样返回」的更强指令。 */
+function buildFixPrompt(error: string, config: string, retry: boolean): string {
+  const lines = [
+    '以下 ECharts 配置渲染失败，请根据错误信息修正后重新输出。',
+    `错误信息：${error}`,
+    `原始配置：\n\`\`\`echarts\n${truncateMiddle(config, 4000)}\n\`\`\``
+  ]
+  if (retry) {
+    lines.push(
+      '注意：你上一轮返回了与原始配置完全相同的配置，未能解决问题。请重新分析错误信息，' +
+        '找出具体需要修改的地方（如移除仅接受函数的字段、修正无效的坐标系组合、修复 JSON 语法），输出修正后的配置。'
+    )
+  }
+  return lines.join('\n\n')
+}
+
+/** 判断模型返回的配置与原始配置是否实质相同（解析后深比较，键序无关；解析失败回退文本比较）。 */
+function isSameConfig(extracted: string, original: string): boolean {
+  try {
+    return isDeepEqual(JSON.parse(extracted), JSON.parse(original))
+  } catch {
+    return extracted.trim() === original.trim()
+  }
+}
+
+/** 深比较（对象键序无关；数组按序）。 */
+function isDeepEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (typeof a !== typeof b) return false
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => isDeepEqual(v, b[i]))
+  }
+  if (a && b && typeof a === 'object' && typeof b === 'object') {
+    const ra = a as Record<string, unknown>
+    const rb = b as Record<string, unknown>
+    const ka = Object.keys(ra).sort()
+    const kb = Object.keys(rb).sort()
+    return ka.length === kb.length && ka.every((k, i) => k === kb[i] && isDeepEqual(ra[k], rb[k]))
+  }
+  return false
+}
+
+/** 从模型回复中提取 echarts JSON 文本：优先 ```echarts 围栏，其次 ```json 围栏，最后尝试整体文本。 */
+function extractEChartsConfig(text: string): string | null {
+  const echartsFence = /```echarts\s*\n([\s\S]*?)\n```/.exec(text)
+  if (echartsFence) return echartsFence[1].trim()
+  const jsonFence = /```json\s*\n([\s\S]*?)\n```/.exec(text)
+  if (jsonFence) return jsonFence[1].trim()
+  const trimmed = text.trim()
+  return trimmed.startsWith('{') && trimmed.endsWith('}') ? trimmed : null
+}
+
+/**
+ * 在消息内容（markdown 文本或 text block 数组）中定位旧 echarts 块并替换为新配置。
+ * 以「围栏内容与旧配置一致」精确定位（多图表消息也不误伤）；内容不一致且全文仅一个
+ * echarts 块时兜底替换该块。定位不到时抛错（调用方据此报错、不改动原消息）。
+ */
+function replaceEChartsBlock(content: unknown, oldConfig: string, newConfig: string): unknown {
+  const replaceInText = (md: string): string | null => {
+    const fences = [...md.matchAll(/```echarts\s*\n([\s\S]*?)\n```/g)]
+    if (fences.length === 0) return null
+    const target =
+      fences.find((f) => f[1].trim() === oldConfig.trim()) ??
+      (fences.length === 1 ? fences[0] : undefined)
+    if (!target) return null
+    const start = target.index ?? 0
+    const end = start + target[0].length
+    return `${md.slice(0, start)}\`\`\`echarts\n${newConfig}\n\`\`\`${md.slice(end)}`
+  }
+  if (typeof content === 'string') {
+    const next = replaceInText(content)
+    if (next === null) throw new Error('未能在消息中找到对应的 echarts 代码块')
+    return next
+  }
+  if (Array.isArray(content)) {
+    let replaced = false
+    const blocks = content.map((b) => {
+      if (replaced || !b || typeof b !== 'object') return b
+      const block = b as { type?: string; text?: unknown }
+      if (block.type !== 'text' || typeof block.text !== 'string') return b
+      const next = replaceInText(block.text)
+      if (next === null) return b
+      replaced = true
+      return { ...block, text: next }
+    })
+    if (!replaced) throw new Error('未能在消息中找到对应的 echarts 代码块')
+    return blocks
+  }
+  throw new Error('消息内容格式不支持就地替换')
 }
 
 /**
@@ -340,6 +439,67 @@ export class AgentService extends IpcService {
    */
   async regenerate(sessionId: string): Promise<void> {
     await this.manager.rerunAssistant(sessionId, (id) => this.pruneLastAssistant(id))
+  }
+
+  /**
+   * 重新生成图表（EChartsBlock「重新生成」按钮）：
+   * 发起一次**独立** LLM 请求（不写入对话记录/transcript，不占用会话轮次），携带错误
+   * 信息与原始配置让模型修正；成功后把新配置**就地替换**回原消息中的 ```echarts 块
+   *（保留消息其余内容），再推 message_update 让 renderer 重新渲染。会话 agent 一并
+   * 驱逐，使后续轮次的模型上下文也能读到修正后的配置。仅此一次请求，token 消耗最小。
+   * 任一步失败抛错，由 renderer 提示（不改动原消息）。
+   */
+  async regenerateChart(
+    sessionId: string,
+    messageId: number,
+    error: string,
+    config: string
+  ): Promise<void> {
+    const model = this.manager.resolveAuxModel(sessionId)
+    if (!model) throw new Error('无可用模型，请先在设置中添加模型')
+    // 生成修正配置：模型「未输出配置」或「原样返回」都判定为未修正，带更强指令重试一次
+    //（最多两次调用，控制 token 消耗）
+    let newConfig: string | null = null
+    for (let attempt = 0; attempt < 2 && !newConfig; attempt++) {
+      const res = await completeText(
+        CHART_REGEN_SYSTEM_PROMPT,
+        buildFixPrompt(error, config, attempt > 0),
+        model
+      )
+      this.recordChartFixUsage(sessionId, res)
+      const extracted = extractEChartsConfig(res.text)
+      if (extracted && !isSameConfig(extracted, config)) newConfig = extracted
+    }
+    if (!newConfig) throw new Error('模型未能生成可用的 ECharts 配置，请重试')
+    const row = db.getMessage(messageId)
+    if (!row) throw new Error('目标消息不存在或已被删除')
+    const nextContent = replaceEChartsBlock(row.content, config, newConfig)
+    const updated = db.updateMessage(messageId, { content: nextContent })
+    // 驱逐该会话内存 agent：缓存 transcript 里的旧配置已过时，下一轮从 DB rehydrate 修正后内容
+    await this.manager.evictSession(sessionId, '图表重新生成')
+    log.info('图表已重新生成并就地替换', { sessionId, messageId })
+    rendererClient.agentEvent.onEvent({
+      sessionId,
+      event: {
+        type: 'message_end',
+        // fromMessageRow 不携带 DB id，此处补上：renderer 的 data-mid/搜索定位依赖 id
+        message: { ...fromMessageRow(updated), id: updated.id } as unknown as AgentMessage
+      }
+    })
+  }
+
+  /** 图表修正的独立补全计入 token 统计（复用 chat 口径，避免改 usage_logs 表结构）。 */
+  private recordChartFixUsage(sessionId: string, res: CompleteTextResult): void {
+    db.recordUsage({
+      sessionId,
+      kind: 'chat',
+      provider: res.provider,
+      model: res.model,
+      promptTokens: res.usage.input,
+      completionTokens: res.usage.output,
+      cost: resolveAssistantCost(res.provider, res.usage, res.timestamp, res.usage.cost.total),
+      timestamp: res.timestamp
+    })
   }
 
   /**

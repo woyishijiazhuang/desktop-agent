@@ -122,18 +122,41 @@ export function collectMapNames(option: Record<string, unknown>): string[] {
  *   此处把数据重组为单条 polyline 并保留线样式；
  * - 仅写 `geoIndex` 而未写 `coordinateSystem:'geo'`：scatter/effectScatter 默认走
  *   cartesian2d，会因找不到 xAxis 抛错，需补上 geo 坐标系声明；
- * - geo/map 系列不支持 markArea/markLine/markPoint（需要直角坐标），剥离避免渲染异常。
+ * - geo/map 系列不支持 markArea/markLine/markPoint（需要直角坐标），剥离避免渲染异常；
+ * - 仅接受函数的字段（如 tooltip.valueFormatter）被 AI 写成字符串时，ECharts 在渲染期
+ *   （tooltip 触发等）会抛 `valueFormatter is not a function`，递归剥离（见下）。
  * 仅做最小修正，其余配置原样透传。
  */
 export function normalizeEChartsOption(option: Record<string, unknown>): Record<string, unknown> {
-  const series = option.series
-  let out = option
+  const safe = stripFunctionOnlyKeys(option) as Record<string, unknown>
+  const series = safe.series
+  let out = safe
   if (Array.isArray(series)) {
-    out = { ...option, series: series.map((s) => normalizeSeries(s as Record<string, unknown>)) }
+    out = { ...safe, series: series.map((s) => normalizeSeries(s as Record<string, unknown>)) }
   } else if (series && typeof series === 'object') {
-    out = { ...option, series: normalizeSeries(series as Record<string, unknown>) }
+    out = { ...safe, series: normalizeSeries(series as Record<string, unknown>) }
   }
   return sanitizeVisualMapForLine(out)
+}
+
+/**
+ * 已知「仅接受函数」、AI 误写为字符串会在渲染期抛 TypeError 的字段。
+ * 配置来自 JSON（不可能有真函数），命中即剥离。
+ */
+const FUNCTION_ONLY_KEYS = new Set(['valueFormatter'])
+
+/** 递归剥离「仅接受函数」字段的非函数值（数组/对象内同样处理）。 */
+function stripFunctionOnlyKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripFunctionOnlyKeys)
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {}
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
+      if (FUNCTION_ONLY_KEYS.has(k) && typeof v !== 'function') continue
+      out[k] = stripFunctionOnlyKeys(v)
+    }
+    return out
+  }
+  return value
 }
 
 /**
@@ -230,4 +253,275 @@ function toGeoLines(s: Record<string, unknown>): Record<string, unknown> {
   result.polyline = true
   result.data = coords.length > 0 ? [{ name: s.name, coords }] : []
   return result
+}
+
+/**
+ * AI 输出的 ECharts 配置常带小语法问题（注释 / 尾逗号 / 单引号字符串），严格 JSON.parse
+ * 会失败。这里先试严格解析，失败再做「去注释 + 去尾逗号 + 单引号转双引号」的宽松修正后
+ * 再解析一次，避免这类可直接修复的文本直接落到「源码展示」回退。仍失败返回 null。
+ */
+export interface LooseJSONResult {
+  /** 解析得到的值 */
+  value: unknown
+  /** 是否经过宽松修正（true 表示原始文本不是标准 JSON） */
+  loose: boolean
+}
+
+export function parseLooseJSON(text: string): LooseJSONResult | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  try {
+    return { value: JSON.parse(trimmed), loose: false }
+  } catch {
+    // 继续宽松尝试
+  }
+  const strict = toStrictJSON(trimmed)
+  if (strict === '') return null
+  try {
+    return { value: JSON.parse(strict), loose: true }
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 把「近似 JSON」修正为标准 JSON：单引号字符串转双引号、剥离 // 行注释与多行块注释、
+ * 删除对象/数组末尾多余逗号。字符串字面量内的内容不受影响；遇到未闭合字符串等无法
+ * 安全处理的情况返回空串（由调用方按解析失败处理）。
+ */
+function toStrictJSON(text: string): string {
+  let out = ''
+  let i = 0
+  const n = text.length
+  while (i < n) {
+    const c = text[i]
+    if (c === '"' || c === "'") {
+      const quote = c
+      out += '"'
+      i++
+      while (i < n) {
+        const ch = text[i]
+        if (ch === '\\') {
+          const next = i + 1 < n ? text[i + 1] : ''
+          // 单引号串里的 \' 在双引号串中不是合法转义，去反斜杠转成普通撇号
+          if (quote === "'" && next === "'") out += "'"
+          else {
+            out += ch
+            out += next
+          }
+          i += 2
+          continue
+        }
+        if (ch === quote) {
+          out += '"'
+          i++
+          break
+        }
+        // 未闭合字符串：放弃本次宽松解析
+        if (ch === '\n' || ch === '\r') return ''
+        out += ch
+        i++
+      }
+      continue
+    }
+    if (c === '/' && text[i + 1] === '/') {
+      while (i < n && text[i] !== '\n') i++
+      continue
+    }
+    if (c === '/' && text[i + 1] === '*') {
+      i += 2
+      while (i < n && !(text[i] === '*' && text[i + 1] === '/')) i++
+      i += 2
+      continue
+    }
+    if (c === ',') {
+      let j = i + 1
+      while (j < n && (text[j] === ' ' || text[j] === '\t' || text[j] === '\n' || text[j] === '\r'))
+        j++
+      if (text[j] === '}' || text[j] === ']') {
+        i++
+        continue
+      }
+    }
+    out += c
+    i++
+  }
+  return out
+}
+
+/**
+ * ECharts 配置复杂，AI 生成的 option 即使 JSON 合法也可能因「无效组合」被 setOption 抛错
+ *（normalizeEChartsOption 只做最小修正，覆盖不了全部情况）。这里生成从高保真到低保真的
+ * 降级候选序列，由组件在 setOption 抛错时依次尝试：
+ * 0. 原始 option（已 normalize）——保真度最高；
+ * 1. 安全模式：只保留基本组件与受支持的系列，剥离易抛错的高阶配置；
+ * 2. 纯数据图：从首条 series 提取数据，重建为 bar/pie/line，保证能画出来。
+ * 全部失败才由组件展示错误（附原始配置复制入口）。
+ */
+export interface EChartsFallback {
+  /** 降级后的 option（相对原始配置更保守，保证能通过 setOption） */
+  option: Record<string, unknown>
+  /** 降级说明（渲染后展示给用户的提示文案） */
+  note: string
+}
+
+/** 已注册的系列类型（须与顶部 echarts.use 注册列表保持一致）。 */
+const REGISTERED_SERIES_TYPES = new Set([
+  'bar',
+  'line',
+  'lines',
+  'pie',
+  'scatter',
+  'effectScatter',
+  'map'
+])
+
+/** 依赖直角坐标系（grid + x/yAxis）的系列类型。 */
+const CARTESIAN_SERIES_TYPES = new Set(['bar', 'line', 'scatter', 'effectScatter'])
+
+export function buildEChartsFallbacks(option: Record<string, unknown>): EChartsFallback[] {
+  const out: EChartsFallback[] = []
+  const safe = buildSafeOption(option)
+  if (safe) {
+    out.push({ option: safe, note: '已自动修复：剥离不支持的配置后渲染（可能缺少部分效果）' })
+  }
+  const dataOnly = buildDataOnlyFallback(option)
+  if (dataOnly) out.push(dataOnly)
+  return out
+}
+
+/**
+ * 安全模式：只保留「基本盘」组件（title/legend/grid/xAxis/yAxis/geo/color）与受支持的
+ * 系列，自动补齐缺省直角坐标轴，并把越界的轴/坐标系索引收敛到 0。自定义 tooltip
+ *（formatter 等）易写错，退化为默认触发形式。依赖特殊坐标系（radar/polar/calendar/
+ * parallel 等）或未注册类型的系列直接丢弃；geo 坐标系系列在没有 geo 组件时丢弃
+ *（否则会抛「geo 0 not found」）。无法得到任何可用系列时返回 null。
+ */
+function buildSafeOption(option: Record<string, unknown>): Record<string, unknown> | null {
+  const next: Record<string, unknown> = {}
+  for (const k of [
+    'title',
+    'legend',
+    'grid',
+    'xAxis',
+    'yAxis',
+    'geo',
+    'color',
+    'backgroundColor'
+  ]) {
+    if (option[k] !== undefined) next[k] = option[k]
+  }
+  const tooltip = option.tooltip
+  if (tooltip && typeof tooltip === 'object') {
+    const t = tooltip as Record<string, unknown>
+    const cleaned: Record<string, unknown> = {}
+    if (typeof t.trigger === 'string') cleaned.trigger = t.trigger
+    if (t.axisPointer && typeof t.axisPointer === 'object') cleaned.axisPointer = t.axisPointer
+    next.tooltip = cleaned
+  }
+  const rawSeries = (
+    Array.isArray(option.series)
+      ? option.series
+      : option.series && typeof option.series === 'object'
+        ? [option.series]
+        : []
+  ) as Record<string, unknown>[]
+  const kept: Record<string, unknown>[] = []
+  for (const s of rawSeries) {
+    if (!s || typeof s !== 'object') continue
+    if (typeof s.type !== 'string' || !REGISTERED_SERIES_TYPES.has(s.type)) continue
+    const cs = s.coordinateSystem
+    if (typeof cs === 'string' && cs !== 'cartesian2d' && cs !== 'geo') continue
+    const clean: Record<string, unknown> = { ...s }
+    for (const k of ['markArea', 'markLine', 'markPoint']) delete clean[k]
+    // 越界的轴/坐标系索引收敛到 0（缺省轴 ECharts 会自动创建）
+    for (const k of ['xAxisIndex', 'yAxisIndex', 'gridIndex', 'geoIndex'] as const) {
+      if (typeof clean[k] === 'number' && (clean[k] as number) > 0) clean[k] = 0
+    }
+    kept.push(clean)
+  }
+  if (kept.length === 0) return null
+  const hasGeo = next.geo !== undefined
+  const usable = hasGeo ? kept : kept.filter((s) => s.coordinateSystem !== 'geo')
+  if (usable.length === 0) return null
+  next.series = usable
+  if (usable.some((s) => CARTESIAN_SERIES_TYPES.has(s.type as string))) {
+    if (next.xAxis === undefined) next.xAxis = { type: 'category' }
+    if (next.yAxis === undefined) next.yAxis = { type: 'value' }
+  }
+  return next
+}
+
+/**
+ * 纯数据图：从首条 series 提取 data，按数据类型重建为最简图（数字序列→柱状图、
+ * {name,value}→饼图、[x,y] 或 {value:[x,y]}→折线图），保证有图可看。无可用数据返回 null。
+ */
+function buildDataOnlyFallback(option: Record<string, unknown>): EChartsFallback | null {
+  const rawSeries = (
+    Array.isArray(option.series)
+      ? option.series
+      : option.series && typeof option.series === 'object'
+        ? [option.series]
+        : []
+  ) as Record<string, unknown>[]
+  const s = rawSeries.find((x) => x && typeof x === 'object' && Array.isArray(x.data))
+  if (!s) return null
+  const data = (s.data as unknown[]) ?? []
+  if (data.length === 0) return null
+  const num = (v: unknown): boolean => typeof v === 'number' && Number.isFinite(v)
+  const isPair = (d: unknown): boolean =>
+    Array.isArray(d) && d.length >= 2 && num(d[0]) && num(d[1])
+  const isValuePair = (d: unknown): boolean =>
+    !!d &&
+    typeof d === 'object' &&
+    !Array.isArray(d) &&
+    Array.isArray((d as Record<string, unknown>).value) &&
+    (d as { value: unknown[] }).value.length >= 2 &&
+    num((d as { value: unknown[] }).value[0]) &&
+    num((d as { value: unknown[] }).value[1])
+  const isNameValue = (d: unknown): boolean =>
+    !!d &&
+    typeof d === 'object' &&
+    !Array.isArray(d) &&
+    'name' in (d as Record<string, unknown>) &&
+    num((d as Record<string, unknown>).value)
+  if (data.every(num)) {
+    return {
+      option: { series: [{ type: 'bar', data: data as number[] }] },
+      note: '原始配置无法渲染，已按数据简化为柱状图'
+    }
+  }
+  if (data.every(isNameValue)) {
+    const items = (data as { name: unknown; value: unknown }[]).map((d) => ({
+      name: d.name,
+      value: d.value
+    }))
+    return {
+      option: { series: [{ type: 'pie', data: items }] },
+      note: '原始配置无法渲染，已按数据简化为饼图'
+    }
+  }
+  if (data.every(isPair)) {
+    const pts = data as [number, number][]
+    return {
+      option: {
+        xAxis: { type: 'category', data: pts.map((p) => p[0]) },
+        yAxis: { type: 'value' },
+        series: [{ type: 'line', data: pts.map((p) => p[1]) }]
+      },
+      note: '原始配置无法渲染，已按数据简化为折线图'
+    }
+  }
+  if (data.every(isValuePair)) {
+    const pts = (data as { value: [number, number] }[]).map((d) => d.value)
+    return {
+      option: {
+        xAxis: { type: 'category', data: pts.map((p) => p[0]) },
+        yAxis: { type: 'value' },
+        series: [{ type: 'line', data: pts.map((p) => p[1]) }]
+      },
+      note: '原始配置无法渲染，已按数据简化为折线图'
+    }
+  }
+  return null
 }

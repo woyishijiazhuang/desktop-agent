@@ -547,6 +547,19 @@ export const useChatStore = defineStore('chat', () => {
   }
 
   /**
+   * 重新生成图表（EChartsBlock「重新生成」按钮）：main 侧发起独立 LLM 请求（不写入对话
+   * 记录），成功后把新配置就地替换回原消息的 echarts 块，事件流自动回传刷新。
+   */
+  async function regenerateChart(
+    sessionId: string,
+    messageId: number,
+    error: string,
+    config: string
+  ): Promise<void> {
+    await mainClient.agent.regenerateChart(sessionId, messageId, error, config)
+  }
+
+  /**
    * 回收最后一条失败的用户消息：删除该消息（DB + 列表），文本回填输入框供编辑重发。
    * 仅当末尾是 user 消息时才回收（main 侧判定）；否则只 reload 同步列表。
    */
@@ -651,6 +664,7 @@ export const useChatStore = defineStore('chat', () => {
     clearError,
     retry,
     regenerate,
+    regenerateChart,
     recallLastMessage,
     forkFromMessage,
     applyEvent,
