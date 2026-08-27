@@ -19,6 +19,8 @@ import type {
   MessageMetadata,
   CreateSessionParams,
   UpdateSessionParams,
+  ListSessionsOptions,
+  ListSessionsResult,
   CreateMessageParams,
   UpdateMessageParams,
   ListMessagesOptions,
@@ -53,6 +55,8 @@ export type {
   MessageMetadata,
   CreateSessionParams,
   UpdateSessionParams,
+  ListSessionsOptions,
+  ListSessionsResult,
   CreateMessageParams,
   UpdateMessageParams,
   ListMessagesOptions,
@@ -98,6 +102,15 @@ export class DbService extends IpcService {
 
   listSessions(): Session[] {
     return db.listSessions()
+  }
+
+  listSessionsPaged(options?: ListSessionsOptions): ListSessionsResult {
+    return db.listSessionsPaged(options)
+  }
+
+  /** 标题搜索（SQL LIKE，供分页模式下前端搜索未加载的会话）。 */
+  searchSessions(query: string, limit?: number): Session[] {
+    return db.searchSessions(query, limit)
   }
 
   updateSession(id: string, params: UpdateSessionParams): Session {

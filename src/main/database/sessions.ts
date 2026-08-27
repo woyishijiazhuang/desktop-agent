@@ -1,6 +1,13 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { createLogger } from '../utils/log'
-import type { Session, SessionRow, CreateSessionParams, UpdateSessionParams } from './types'
+import type {
+  Session,
+  SessionRow,
+  CreateSessionParams,
+  UpdateSessionParams,
+  ListSessionsOptions,
+  ListSessionsResult
+} from './types'
 import { transaction, toSession } from './utils'
 
 const log = createLogger('db')
@@ -10,6 +17,10 @@ export interface SessionApi {
   createSession(params?: CreateSessionParams): Session
   getSession(id: string): Session | undefined
   listSessions(): Session[]
+  /** 分页查询会话列表（游标分页；置顶会话仅在首页返回，后续页仅含非置顶切片）。 */
+  listSessionsPaged(options?: ListSessionsOptions): ListSessionsResult
+  /** 标题搜索（SQL LIKE 模糊匹配，分页模式下前端仅持有部分数据，须走后端查询）。 */
+  searchSessions(query: string, limit?: number): Session[]
   listDeletedSessions(): Session[]
   updateSession(id: string, params: UpdateSessionParams): Session
   /** 清空全部会话的最终系统提示词快照（全局默认提示词变更后调用，使各会话下次重建时重新组装）。 */
@@ -54,6 +65,61 @@ export function createSessionsApi(db: DatabaseSync): SessionApi {
           'SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY pinned DESC, last_active_at DESC'
         )
         .all() as unknown as SessionRow[]
+      return rows.map((r) => toSession(r))
+    },
+
+    /**
+     * 分页查询会话列表（游标分页）。
+     * - 置顶会话始终全量返回且仅在首页（无游标）返回，后续页复用首页已加载的置顶项，避免重复
+     * - 非置顶会话按 (last_active_at, id) 复合游标倒序分页
+     * - 用 limit + 1 技巧判断 hasMore，避免额外 COUNT 查询
+     */
+    listSessionsPaged(options?: ListSessionsOptions): ListSessionsResult {
+      const limit = options?.limit ?? 30
+      const requestLimit = limit + 1
+
+      const pinnedRows =
+        options?.cursor === undefined
+          ? (db
+              .prepare(
+                'SELECT * FROM sessions WHERE deleted_at IS NULL AND pinned = 1 ORDER BY last_active_at DESC, id DESC'
+              )
+              .all() as unknown as SessionRow[])
+          : []
+
+      const conditions = ['deleted_at IS NULL', 'pinned = 0']
+      const values: (string | number)[] = []
+      if (options?.cursor !== undefined && options?.cursorId) {
+        // 复合游标：(last_active_at < cursor) OR (last_active_at = cursor AND id < cursorId)
+        conditions.push('(last_active_at < ? OR (last_active_at = ? AND id < ?))')
+        values.push(options.cursor, options.cursor, options.cursorId)
+      }
+      values.push(requestLimit)
+      const normalRows = db
+        .prepare(
+          `SELECT * FROM sessions WHERE ${conditions.join(' AND ')}
+           ORDER BY last_active_at DESC, id DESC LIMIT ?`
+        )
+        .all(...values) as unknown as SessionRow[]
+      const hasMore = normalRows.length > limit
+      const slicedRows = hasMore ? normalRows.slice(0, limit) : normalRows
+
+      return {
+        sessions: [...pinnedRows, ...slicedRows].map((r) => toSession(r)),
+        hasMore
+      }
+    },
+
+    /** 标题搜索（LIKE 模糊匹配，按最近活动倒序，默认最多 50 条）。 */
+    searchSessions(query: string, limit = 50): Session[] {
+      const rows = db
+        .prepare(
+          `SELECT * FROM sessions
+           WHERE deleted_at IS NULL AND title LIKE ?
+           ORDER BY last_active_at DESC, id DESC
+           LIMIT ?`
+        )
+        .all(`%${query}%`, limit) as unknown as SessionRow[]
       return rows.map((r) => toSession(r))
     },
 

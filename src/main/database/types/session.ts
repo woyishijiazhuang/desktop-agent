@@ -61,6 +61,22 @@ export interface SessionContext {
   messages: Message[]
 }
 
+/** 会话列表分页参数（游标分页：lastActiveAt + id 复合游标，首页不传游标）。 */
+export interface ListSessionsOptions {
+  /** 每页大小（默认 30） */
+  limit?: number
+  /** 游标：上一页最后一条非置顶会话的 lastActiveAt（仅在非置顶区间使用） */
+  cursor?: number
+  /** 游标辅助：cursor 对应会话的 id（同时间戳时防歧义） */
+  cursorId?: string
+}
+
+/** 会话列表分页结果。 */
+export interface ListSessionsResult {
+  sessions: Session[]
+  hasMore: boolean
+}
+
 /** 数据库行类型（内部）：sessions 表 */
 export interface SessionRow {
   id: string

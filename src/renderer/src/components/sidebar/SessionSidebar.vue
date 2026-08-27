@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, watch, nextTick, h, onUnmounted } from 'vue'
+import { ref, computed, watch, nextTick, h, onMounted, onUnmounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { NScrollbar, NButton, NIcon, NInput, NModal, useDialog, useMessage } from 'naive-ui'
 import {
@@ -49,33 +49,36 @@ const renameValue = ref('')
 const renameInputRef = ref<InstanceType<typeof NInput> | null>(null)
 
 /** 按最后用户活动时间（last_active_at）倒序的会话列表。后台流式/自动标题不更新，
- *  仅发消息等对话活动置顶（切换会话不 touch，列表在连续点击时保持稳定不跳动）。 */
+ *  仅发消息等对话活动置顶（切换会话不 touch，列表在连续点击时保持稳定不跳动）。
+ *  注意：不能直接使用 sessionStore.sessions 原始数组——main 推送 touch 更新时
+ *  仅原地替换数组项，需在此重排才能让「发消息/重命名置顶」即时生效。 */
 const sortedSessions = computed(() =>
   [...sessionStore.sessions].sort((a, b) => b.lastActiveAt - a.lastActiveAt)
 )
 
 const isSearching = computed(() => query.value.trim().length > 0)
 
-/** 按标题过滤后的会话列表（搜索模式使用）。 */
+/** 会话列表（搜索模式用后端 SQL 结果——分页模式下前端只有部分数据，纯前端 filter 无法搜到未加载部分）。 */
 const filteredSessions = computed(() => {
-  const q = query.value.trim().toLowerCase()
-  if (!q) return sortedSessions.value
-  return sortedSessions.value.filter((s) => s.title.toLowerCase().includes(q))
+  if (!isSearching.value) return sortedSessions.value
+  return sessionStore.searchResults
 })
 
 /** 全文搜索消息命中列表（防抖查询，仅搜索模式使用）。 */
 const messageHits = ref<MessageSearchHit[]>([])
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
-// 搜索词变化时防抖调用主进程全文搜索消息内容
+// 搜索词变化时防抖调用主进程：会话标题走后端 LIKE（分页模式下前端只有部分数据），消息内容走全文搜索
 watch(query, (q) => {
   clearTimeout(searchTimer)
   const trimmed = q.trim()
   if (!trimmed) {
     messageHits.value = []
+    void sessionStore.searchSessions('')
     return
   }
   searchTimer = setTimeout(async () => {
+    await sessionStore.searchSessions(trimmed)
     try {
       messageHits.value = await mainClient.db.searchMessages(trimmed)
     } catch {
@@ -84,7 +87,30 @@ watch(query, (q) => {
   }, 250)
 })
 
-onUnmounted(() => clearTimeout(searchTimer))
+/** 分页哨兵：滚动到底部自动加载下一页。常驻渲染（搜索模式下仅不触发加载）。 */
+const sentinelRef = ref<HTMLElement | null>(null)
+let sentinelObserver: IntersectionObserver | null = null
+
+onMounted(() => {
+  const sentinel = sentinelRef.value
+  if (!sentinel) return
+  // root 用 viewport：IntersectionObserver 会按祖先 overflow 容器裁剪，
+  // 哨兵滚出 NScrollbar 可视区时自然不再相交，无需依赖组件内部 DOM 结构。
+  sentinelObserver = new IntersectionObserver(
+    (entries) => {
+      if (entries.some((e) => e.isIntersecting) && !isSearching.value) {
+        void sessionStore.loadMore()
+      }
+    },
+    { root: null, rootMargin: '200px 0px 0px 0px' }
+  )
+  sentinelObserver.observe(sentinel)
+})
+
+onUnmounted(() => {
+  sentinelObserver?.disconnect()
+  clearTimeout(searchTimer)
+})
 
 interface SessionGroup {
   label: string
@@ -392,6 +418,11 @@ function isSessionFailed(id: string): boolean {
         />
       </div>
 
+      <!-- 分页哨兵：滚动到底部自动加载更多（常驻渲染，搜索模式下不触发加载） -->
+      <div ref="sentinelRef" class="sidebar__sentinel">
+        <span v-if="sessionStore.loadingMore" class="sidebar__sentinel-tip">加载更多会话...</span>
+      </div>
+
       <div
         v-if="filteredSessions.length === 0 && (!isSearching || messageHits.length === 0)"
         class="sidebar__empty"
@@ -518,6 +549,14 @@ function isSessionFailed(id: string): boolean {
   color: var(--text-3);
   font-size: 13px;
   padding: 24px 0;
+}
+.sidebar__sentinel {
+  padding: 8px 0;
+  text-align: center;
+}
+.sidebar__sentinel-tip {
+  font-size: 12px;
+  color: var(--text-3);
 }
 .sidebar__footer {
   padding: 8px 10px;

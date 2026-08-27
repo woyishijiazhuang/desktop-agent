@@ -16,13 +16,77 @@ import { useSettingsStore } from './useSettingsStore'
  * 避免导航 /settings↔/chat 往返时把用户主动进入的临时态破坏掉。
  */
 export const useSessionStore = defineStore('session', () => {
+  /** 每页会话数（无限滚动分页）。 */
+  const PAGE_SIZE = 30
+
   const sessions = ref<Session[]>([])
   const currentSessionId = ref<string | null>(null)
   /** 是否已完成首次初始化（首次启动 auto-select / 进临时态后置 true）。 */
   const hasInitialized = ref(false)
 
+  // 分页状态
+  const hasMore = ref(false)
+  const loadingMore = ref(false)
+  /** 当前已加载的非置顶会话中最旧一条的游标 (lastActiveAt, id)，用作下一页请求参数。 */
+  const oldestCursor = ref<{ lastActiveAt: number; id: string } | null>(null)
+  /** 搜索关键词（空 = 非搜索模式）。 */
+  const searchQuery = ref('')
+  /** 搜索结果（后端 SQL LIKE 查询，分页模式下前端只有部分数据，须走后端）。 */
+  const searchResults = ref<Session[]>([])
+
+  /** 首次加载：查询最近 PAGE_SIZE 条会话（含全部置顶项）。 */
   async function load(): Promise<void> {
-    sessions.value = await mainClient.db.listSessions()
+    const result = await mainClient.db.listSessionsPaged({ limit: PAGE_SIZE })
+    sessions.value = result.sessions
+    hasMore.value = result.hasMore
+    updateOldestCursor()
+  }
+
+  /** 滚动到底部时加载下一页（游标分页，loadingMore 防重入）。 */
+  async function loadMore(): Promise<void> {
+    if (loadingMore.value || !hasMore.value || !oldestCursor.value) return
+    loadingMore.value = true
+    try {
+      const result = await mainClient.db.listSessionsPaged({
+        limit: PAGE_SIZE,
+        cursor: oldestCursor.value.lastActiveAt,
+        cursorId: oldestCursor.value.id
+      })
+      sessions.value = [...sessions.value, ...result.sessions]
+      hasMore.value = result.hasMore
+      updateOldestCursor()
+    } finally {
+      loadingMore.value = false
+    }
+  }
+
+  /** 标题搜索（空关键词清空搜索结果）。 */
+  async function searchSessions(query: string): Promise<void> {
+    searchQuery.value = query
+    if (!query.trim()) {
+      searchResults.value = []
+      return
+    }
+    searchResults.value = await mainClient.db.searchSessions(query.trim())
+  }
+
+  /**
+   * 更新分页游标：取当前已加载的非置顶会话中最旧一条
+   *（lastActiveAt 最小，同值取 id 最小，与后端 (last_active_at, id) 倒序排序一致）。
+   */
+  function updateOldestCursor(): void {
+    let oldest: Session | null = null
+    for (const s of sessions.value) {
+      if (s.pinned) continue
+      if (
+        !oldest ||
+        s.lastActiveAt < oldest.lastActiveAt ||
+        (s.lastActiveAt === oldest.lastActiveAt && s.id < oldest.id)
+      ) {
+        oldest = s
+      }
+    }
+    oldestCursor.value = oldest ? { lastActiveAt: oldest.lastActiveAt, id: oldest.id } : null
   }
 
   /** 创建新会话（写库）并加入列表头部。可携带 model 等初始字段。 */
@@ -65,6 +129,8 @@ export const useSessionStore = defineStore('session', () => {
     const updated = await mainClient.db.updateSession(id, { title, touch: true })
     const idx = sessions.value.findIndex((s) => s.id === id)
     if (idx >= 0) sessions.value[idx] = updated
+    // touch 更新了 last_active_at，游标可能变化
+    updateOldestCursor()
   }
 
   /** 置顶 / 取消置顶会话（不 touch，置顶由 pinned 字段驱动排序）。 */
@@ -72,6 +138,8 @@ export const useSessionStore = defineStore('session', () => {
     const updated = await mainClient.db.updateSession(id, { pinned })
     const idx = sessions.value.findIndex((s) => s.id === id)
     if (idx >= 0) sessions.value[idx] = updated
+    // 置顶项移出非置顶区间（或反向移入），游标随之变化
+    updateOldestCursor()
   }
 
   /** 归档 / 取消归档会话（不 touch，归档会话移入「已归档」分组）。 */
@@ -79,12 +147,14 @@ export const useSessionStore = defineStore('session', () => {
     const updated = await mainClient.db.updateSession(id, { archived })
     const idx = sessions.value.findIndex((s) => s.id === id)
     if (idx >= 0) sessions.value[idx] = updated
+    updateOldestCursor()
   }
 
   /** 删除会话。若删除的是当前会话，自动切换到下一个；无下一个则进入临时空对话。 */
   async function deleteSession(id: string): Promise<void> {
     await mainClient.db.deleteSession(id)
     sessions.value = sessions.value.filter((s) => s.id !== id)
+    updateOldestCursor()
     // 清理该会话的聊天状态容器（防内存泄漏）
     useChatStore().removeSessionState(id)
     if (currentSessionId.value === id) {
@@ -104,6 +174,7 @@ export const useSessionStore = defineStore('session', () => {
     if (!updated) return
     const idx = sessions.value.findIndex((s) => s.id === id)
     if (idx >= 0) sessions.value[idx] = updated
+    updateOldestCursor()
   }
 
   /**
@@ -117,13 +188,19 @@ export const useSessionStore = defineStore('session', () => {
     } else {
       sessions.value.unshift(session)
     }
+    updateOldestCursor()
   }
 
   return {
     sessions,
     currentSessionId,
     hasInitialized,
+    hasMore,
+    loadingMore,
+    searchQuery,
+    searchResults,
     load,
+    loadMore,
     createSession,
     startNewChat,
     select,
@@ -132,6 +209,7 @@ export const useSessionStore = defineStore('session', () => {
     setArchived,
     deleteSession,
     refreshSession,
-    upsertSession
+    upsertSession,
+    searchSessions
   }
 })
