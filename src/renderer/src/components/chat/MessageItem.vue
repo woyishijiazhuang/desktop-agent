@@ -153,18 +153,29 @@ const failedMessage = computed(() => {
 })
 
 /**
- * 思考被截断提示：assistant 消息仅有思考、无正文，且因 max_tokens 上限被截断
- *（stopReason/finishReason='length'，如推理模型长思考吃光输出预算）。
- * 这类结束不是报错，run 正常收尾，若不提示用户只看到"思考没完就停了"。
- * 渲染为警告提示条，引导提高该模型「最大输出 Tokens」或降低思考级别后重新生成。
+ * 截断提示（finishReason/stopReason='length'）：这类结束不是报错、run 正常收尾，
+ * 若不提示用户只看到"回复莫名停了"。按内容形态区分原因并给出针对性指引：
+ * 1. 正文几乎为零（< 8 字符）且无思考 → 输出预算被挤压：通常是该模型「上下文窗口」
+ *    配置过小，请求层按「窗口 − 输入(对话+系统提示+工具) − 4K 安全余量」钳制 max_tokens，
+ *    极端时钳到个位数 token，模型刚开口就被 length 截断（表现为回复只有一两个字或为空）。
+ * 2. 仅思考、无正文 → 推理模型长思考吃光输出预算（max_tokens）。
+ * 3. 有正文 → 正文达到 max_tokens 上限被中途截断。
  */
-const isTruncatedThinking = computed(() => {
-  if (isUser.value || isToolResult.value) return false
-  const hasText = blocks.value.some((b) => b.kind === 'text' && b.text.trim())
-  const hasThinking = blocks.value.some((b) => b.kind === 'thinking')
-  if (hasText || !hasThinking) return false
+const truncationNotice = computed<string | null>(() => {
+  if (isUser.value || isToolResult.value) return null
   const m = props.message as { stopReason?: string; finishReason?: string }
-  return m.stopReason === 'length' || m.finishReason === 'length'
+  if (m.stopReason !== 'length' && m.finishReason !== 'length') return null
+  const textLen = blocks.value
+    .filter((b) => b.kind === 'text')
+    .reduce((n, b) => n + b.text.trim().length, 0)
+  const hasThinking = blocks.value.some((b) => b.kind === 'thinking')
+  if (textLen === 0 && hasThinking) {
+    return '思考内容已达到该模型的最大输出长度（max_tokens）而被截断，未生成回答。可在「设置 → 模型」中提高该模型的「最大输出 Tokens」，或降低思考级别后重新生成。'
+  }
+  if (textLen < 8 && !hasThinking) {
+    return '回复刚生成就被截断（仅输出了极少量内容）：该模型的「上下文窗口」配置可能过小，输出预算被输入内容挤占。请在「设置 → 模型」中调大该模型的「上下文窗口」后重试。'
+  }
+  return '回复已达到该模型的最大输出长度（max_tokens）而被截断。可在「设置 → 模型」中调大该模型的「最大输出 Tokens」后重新生成。'
 })
 
 /** toolResult 消息原始文本 */
@@ -388,12 +399,9 @@ provide(chatMessageContextKey, messageId)
             <NIcon :size="16" :color="'var(--error)'"><CloseCircleOutline /></NIcon>
             <span class="row__failed-marker__text">{{ failedMessage }}</span>
           </div>
-          <div v-if="isTruncatedThinking" class="row__truncated-tip">
+          <div v-if="truncationNotice" class="row__truncated-tip">
             <NIcon :size="16" :color="'var(--warning)'"><WarningOutline /></NIcon>
-            <span class="row__truncated-tip__text"
-              >思考内容已达到该模型的最大输出长度（max_tokens）而被截断，未生成回答。可在「设置
-              →模型」中提高该模型的「最大输出 Tokens」，或降低思考级别后重新生成。</span
-            >
+            <span class="row__truncated-tip__text">{{ truncationNotice }}</span>
           </div>
           <template v-for="(block, i) in blocks" :key="i">
             <ReasoningBlock

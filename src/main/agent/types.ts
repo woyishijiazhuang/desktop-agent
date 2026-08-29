@@ -306,8 +306,14 @@ export function maxTurnsReachedMessage(maxTurns: number): string {
  * @param workdir 显式工作目录（Agent 主进程从 settings 解析后传入）。
  *                为空时回退到 process.cwd()（渲染进程无 process.cwd 时为 ''，
  *                供设置页占位符展示使用）。
+ * @param shellKind 主进程探测到的实际持久 shell（resolveShell().kind）。传入时
+ *                  「当前环境」的 Shell 行展示确切结果（bash / PowerShell）；
+ *                  渲染进程不传，按平台给出通用描述（设置页占位符使用）。
  */
-export function buildSystemCapabilitySections(workdir?: string): string {
+export function buildSystemCapabilitySections(
+  workdir?: string,
+  shellKind?: 'bash' | 'powershell'
+): string {
   const { platform, arch } = detectPlatform()
   const cwd =
     workdir ||
@@ -319,13 +325,14 @@ export function buildSystemCapabilitySections(workdir?: string): string {
     [
       '## 当前环境',
       `- 操作系统：${platform ? `${platformName(platform)}${arch ? `（${arch}）` : ''}` : '未知'}`,
+      `- Shell：${shellKind ? shellExactName(shellKind) : shellDesc(platform)}（命令语法必须匹配该 shell，不要在 PowerShell 上用 bash 专有语法）`,
       `- 当前时间：${now.toLocaleString('zh-CN', { hour12: false })}（时区 ${tz || '未知'}）`,
       cwd ? `- 工作目录：${cwd}` : ''
     ],
     [
       '## 工作方式',
       '- 当任务需要查询文件、执行命令或获取外部信息时，优先调用对应工具，不要凭空猜测。',
-      '- bash 默认 30 秒超时；长驻命令（如 npm run dev、长测试）用 background=true 后台启动，配合 bash_output 读输出、kill_shell 终止。bash 命令在同一持久化会话中执行，cd/export 会保留。',
+      '- bash 工具默认 30 秒超时，可用其 timeout_ms 参数按命令调整；长驻命令（如 npm run dev、长测试）改用 background=true 后台启动，配合 bash_output 读输出、kill_shell 终止。交互式命令（提示确认/密码、REPL）也用 background=true 启动，用 bash_input 写入应答、bash_output 读结果；「读输入到结尾」的命令（如裸 cat/sort）用 bash_input end=true 发送 EOF。命令在同一持久化会话中执行，cd（PowerShell 为 Set-Location）/环境变量设置会保留。',
       '- 删除、覆盖、写文件、执行命令等操作可能需要用户确认，等待确认后再继续。',
       '- 工具返回大量输出时，只提取与任务相关的部分，不要原样重复给用户。'
     ],
@@ -352,11 +359,15 @@ export function buildSystemCapabilitySections(workdir?: string): string {
  * 构建内置默认系统提示词：角色定位 + 能力指引。
  * 用户未自定义（settings 为空）时的回退文本，渲染进程设置页在留空时展示其实际内容。
  * @param workdir 显式工作目录，透传给 buildSystemCapabilitySections（主进程调用时传入）。
+ * @param shellKind 实际持久 shell（主进程调用时传入，见 buildSystemCapabilitySections）。
  */
-export function buildDefaultSystemPrompt(workdir?: string): string {
+export function buildDefaultSystemPrompt(
+  workdir?: string,
+  shellKind?: 'bash' | 'powershell'
+): string {
   return [
     '你是一个运行在用户桌面上的智能助手，可以调用工具帮助用户完成文件读写、命令执行、网页搜索等任务。',
-    buildSystemCapabilitySections(workdir)
+    buildSystemCapabilitySections(workdir, shellKind)
   ].join('\n\n')
 }
 
@@ -383,6 +394,27 @@ function detectPlatform(): { platform: string; arch: string } {
     if (/Linux/.test(ua)) return { platform: 'linux', arch }
   }
   return { platform: '', arch: '' }
+}
+
+/**
+ * 当前持久化 shell 描述（与 bash-session.resolveShell 的选择逻辑对应）：
+ * - macOS/Linux：bash
+ * - Windows：PATH 有 bash（Git Bash）时为 bash，否则 PowerShell
+ * 渲染进程无 process.platform 时返回通用描述（该分支仅设置页占位符使用）。
+ */
+function shellDesc(platform: string): string {
+  if (platform === 'darwin' || platform === 'linux') return 'bash'
+  if (platform === 'win32') {
+    return typeof process !== 'undefined' && process.platform === 'win32'
+      ? `bash 或 PowerShell（以 bash 工具实际启动为准，见其返回信息）`
+      : 'bash 或 PowerShell'
+  }
+  return '未知'
+}
+
+/** resolveShell().kind → 提示词中的确切 shell 名称。 */
+function shellExactName(kind: 'bash' | 'powershell'): string {
+  return kind === 'bash' ? 'bash' : 'PowerShell'
 }
 
 /** process.platform / navigator 识别值 → 用户可读的 OS 名称。 */

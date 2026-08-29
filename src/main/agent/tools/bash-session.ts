@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { createLogger } from '../../utils/log'
 
@@ -17,15 +17,62 @@ const MAX_BACKGROUND_SESSIONS = 8
 /** SIGTERM/SIGINT 后升级 SIGKILL 的宽限期（ms）。 */
 const KILL_GRACE_MS = 3_000
 
-/** 命令完成哨兵（bash printf 输出，格式固定便于正则匹配）。 */
-const SENTINEL_RE = /^__PI_BASH_DONE_([0-9a-f-]{36})__:(-?\d+)\r?$/
-function sentinelCmd(id: string): string {
-  return `printf '__PI_BASH_DONE_${id}__:%d\\n' "$?"`
+/** 可用的持久化 shell 形态（跨平台）：macOS/Linux 用 bash；Windows 优先 bash（Git Bash
+ * 在 PATH 时），否则回落 PowerShell（Win10+ 系统自带）。 */
+export interface ShellSpec {
+  command: string
+  args: string[]
+  kind: 'bash' | 'powershell'
 }
 
-/** shell 单引号转义（cwd 参数 cd 用）。 */
-function shellQuote(s: string): string {
-  return `'${s.replace(/'/g, `'\\''`)}'`
+/** 模块级缓存：首次使用时探测一次（spawnSync 探测 bash 是否存在，约几十 ms）。 */
+let resolvedShell: ShellSpec | null = null
+export function resolveShell(): ShellSpec {
+  if (resolvedShell) return resolvedShell
+  if (process.platform !== 'win32') {
+    resolvedShell = { command: 'bash', args: ['--noprofile', '--norc', '-s'], kind: 'bash' }
+    return resolvedShell
+  }
+  // Windows：PATH 里探测 bash（Git Bash 等）；探测不到用 PowerShell
+  const probe = spawnSync('bash', ['-c', 'exit 0'], { timeout: 5_000 })
+  if (!probe.error) {
+    resolvedShell = { command: 'bash', args: ['--noprofile', '--norc', '-s'], kind: 'bash' }
+  } else {
+    // -Command -：从 stdin 逐行读取并执行脚本语句；-NonInteractive 防提示卡死
+    resolvedShell = {
+      command: 'powershell.exe',
+      args: ['-NoProfile', '-NoLogo', '-NonInteractive', '-Command', '-'],
+      kind: 'powershell'
+    }
+  }
+  log.info('已选择持久 shell', { platform: process.platform, kind: resolvedShell.kind })
+  return resolvedShell
+}
+
+/**
+ * 命令完成哨兵（固定格式便于正则匹配）：bash 用 printf；PowerShell 用 Write-Output
+ * + $LASTEXITCODE（无原生命令时 $LASTEXITCODE 可能为 $null，取 0 兜底）。
+ * 两种 shell 的输出行均以 \n 结束（正则兼容 \r）。
+ */
+const SENTINEL_RE = /^__PI_BASH_DONE_([0-9a-f-]{36})__:(-?\d+)\r?$/
+function sentinelCmd(id: string, kind: 'bash' | 'powershell'): string {
+  return kind === 'bash'
+    ? `printf '__PI_BASH_DONE_${id}__:%d\\n' "$?"`
+    : `Write-Output "__PI_BASH_DONE_${id}__:$(if ($null -ne $LASTEXITCODE) { $LASTEXITCODE } else { 0 })"`
+}
+
+/** shell 单引号转义（cwd 参数 cd 用）：bash 用 '\''，PowerShell 用 ''。 */
+function shellQuote(s: string, kind: 'bash' | 'powershell'): string {
+  return kind === 'bash'
+    ? `'${s.replace(/'/g, `'\\''`)}'`
+    : `'${s.replace(/'/g, "''")}'`
+}
+
+/** 「cd 到 cwd，失败即退出码 1」的 shell 语法。 */
+function cdCmd(cwd: string, kind: 'bash' | 'powershell'): string {
+  return kind === 'bash'
+    ? `cd ${shellQuote(cwd, kind)} || exit 1`
+    : `Set-Location -LiteralPath ${shellQuote(cwd, kind)}; if (-not $?) { exit 1 }`
 }
 
 /** 合并 stdout/stderr 为工具可见文本（超限时保留尾部 + 截断标记，错误信息通常在末尾）。 */
@@ -105,7 +152,8 @@ export class PersistentShell {
   /** 惰性启动 shell（env/cwd 仅首次/重建时生效，之后由 shell 内 cd/export 决定）。 */
   private ensureStarted(env: NodeJS.ProcessEnv, cwd: string): ChildProcess {
     if (this.child && !this.childClosed) return this.child
-    const child = spawn('bash', ['--noprofile', '--norc', '-s'], {
+    const spec = resolveShell()
+    const child = spawn(spec.command, spec.args, {
       cwd,
       env,
       // 独立进程组：超时/中止/销毁时可整体 kill 命令及其全部子进程
@@ -124,8 +172,12 @@ export class PersistentShell {
       if (this.child === child) this.onChunk('err', chunk)
     })
     child.on('error', (err) => {
-      log.error('持久 shell 启动失败', { sessionId: this.sessionId, error: err.message })
-      this.failAll(`shell 启动失败: ${err.message}`)
+      log.error('持久 shell 启动失败', {
+        sessionId: this.sessionId,
+        command: spec.command,
+        error: err.message
+      })
+      this.failAll(`shell 启动失败（${spec.command}）: ${err.message}`)
     })
     child.on('close', (code) => {
       if (this.child !== child) return // 已被新 shell 取代（超时/中止后重建），忽略旧 close
@@ -133,7 +185,7 @@ export class PersistentShell {
       log.warn('持久 shell 退出', { sessionId: this.sessionId, exitCode: code })
       this.failAll(`shell 会话已退出（exitCode=${code}），可重试或新建会话`)
     })
-    log.info('持久 shell 已启动', { sessionId: this.sessionId, cwd })
+    log.info('持久 shell 已启动', { sessionId: this.sessionId, cwd, kind: spec.kind })
     return child
   }
 
@@ -141,8 +193,9 @@ export class PersistentShell {
   async run(command: string, opts: ShellRunOptions = {}): Promise<ShellRunResult> {
     const cwd = opts.cwd ?? ''
     const child = this.ensureStarted(opts.env ?? {}, cwd)
+    const spec = resolveShell()
     // cwd 显式指定时先 cd（失败即退出码 1），保证参数权威且与旧版按 cwd 启动语义一致
-    const effective = cwd ? `cd ${shellQuote(cwd)} || exit 1\n${command}` : command
+    const effective = cwd ? `${cdCmd(cwd, spec.kind)}\n${command}` : command
     const id = randomUUID()
     const cmd: PendingCommand = {
       id,
@@ -161,7 +214,7 @@ export class PersistentShell {
       cmd.resolve = resolve
       this.queue.push(cmd)
       try {
-        child.stdin!.write(`${effective}\n${sentinelCmd(id)}\n`)
+        child.stdin!.write(`${effective}\n${sentinelCmd(id, spec.kind)}\n`)
       } catch (err) {
         // stdin 已关闭（shell 已退出）：立即失败并清空队列
         this.failAll(`shell 会话不可用: ${err instanceof Error ? err.message : String(err)}`)
@@ -283,7 +336,7 @@ export class PersistentShell {
     const merged = mergeOutput(front.outputOut, front.outputErr)
     const suffix =
       reason === 'timeout'
-        ? `\n[命令执行超时（${timeoutMs}ms），已中断；长驻命令请改用 background=true；会话已重置]`
+        ? `\n[命令执行超时（${timeoutMs}ms），已中断；会话已重置。若为长驻命令请改用 background=true；若为裸 REPL/读 stdin 的命令（如 node、python 裸调用），请改用非交互写法，如 node -e "code"、python -c "code"、python script.py]`
         : '\n[命令已中止；会话已重置]'
     this.settle(front, {
       text: merged.text + suffix,
@@ -382,7 +435,7 @@ export class PersistentShell {
   }
 }
 
-/** 单次后台命令会话：独立进程组，输出缓冲，可读取/终止。 */
+/** 单次后台命令会话：独立进程组，stdin 可写入（交互式命令应答），输出缓冲，可读取/终止。 */
 export class BackgroundShell {
   readonly sessionId: string
   private child: ChildProcess
@@ -395,7 +448,10 @@ export class BackgroundShell {
   constructor(sessionId: string, child: ChildProcess) {
     this.sessionId = sessionId
     this.child = child
-    // stdio 配置为 ['ignore', 'pipe', 'pipe']，stdout/stderr 必为可读流
+    // stdin 为 pipe（交互式命令应答通道）：吞掉 EPIPE 等写入错误，避免进程退出后的
+    // 残留写入以 unhandled error 事件崩溃进程；写入失败由 write() 的同步返回上报。
+    child.stdin?.on('error', () => {})
+    // stdio 配置为 ['pipe', 'pipe', 'pipe']，stdout/stderr 必为可读流
     const stdout = child.stdout!
     const stderr = child.stderr!
     stdout.setEncoding('utf-8')
@@ -410,6 +466,8 @@ export class BackgroundShell {
     child.on('close', (code) => {
       this.exited = true
       this.exitCode = code
+      // 进程已退出，关闭 stdin 管道：让「读 stdin 到 EOF」语义在下游（如有管道级联）正确传播
+      child.stdin?.end()
     })
   }
 
@@ -419,6 +477,39 @@ export class BackgroundShell {
       const drop = this.outputBuf.length - MAX_SESSION_OUTPUT
       this.outputBuf = this.outputBuf.slice(drop)
       this.tailOffset = Math.max(0, this.tailOffset - drop)
+    }
+  }
+
+  /**
+   * 向进程 stdin 写入内容（交互式命令应答）：agent 经 bash_input 工具调用。
+   * 进程已退出或 stdin 已关闭时返回失败（EPIPE 由 stdin error 监听吞掉，不崩进程）。
+   */
+  write(input: string): { ok: boolean; error?: string } {
+    if (this.exited) {
+      return { ok: false, error: `进程已退出（exitCode=${this.exitCode}），无法写入` }
+    }
+    const stdin = this.child.stdin
+    if (!stdin || stdin.destroyed || !stdin.writable) {
+      return { ok: false, error: 'stdin 不可写（进程可能未读 stdin 或已关闭）' }
+    }
+    try {
+      stdin.write(input)
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: `写入失败: ${err instanceof Error ? err.message : String(err)}` }
+    }
+  }
+
+  /** 关闭 stdin（发送 EOF）：供「读输入到结尾」的命令收尾（裸 cat / sort / wc 等）。 */
+  endStdin(): { ok: boolean; error?: string } {
+    if (this.exited) return { ok: true }
+    const stdin = this.child.stdin
+    if (!stdin || stdin.destroyed) return { ok: true }
+    try {
+      stdin.end()
+      return { ok: true }
+    } catch (err) {
+      return { ok: false, error: `关闭 stdin 失败: ${err instanceof Error ? err.message : String(err)}` }
     }
   }
 
@@ -513,7 +604,8 @@ class BashSessionManager {
       cwd: opts.cwd,
       env: opts.env,
       detached: true,
-      stdio: ['ignore', 'pipe', 'pipe']
+      // stdin 保持管道：交互式命令可通过 bash_input 应答（无需应答的命令不受影响）
+      stdio: ['pipe', 'pipe', 'pipe']
     })
     const shell = new BackgroundShell(id, child)
     this.backgrounds.set(id, shell)

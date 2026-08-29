@@ -5,6 +5,7 @@ import { rendererClient } from '../utils/render-client'
 import { db } from '../database'
 import { toCreateMessageParams, rowsToAgentMessages } from './convert'
 import { buildTools } from './tools'
+import { resolveShell } from './tools/bash-session'
 import { mcpManager } from './mcp'
 import { getDecryptedApiKey, ensureAllModelConfigsRegistered } from './model-config'
 import { resolveAssistantCost } from './model-config/pricing'
@@ -375,10 +376,12 @@ export class AgentManager {
         ctx.session.systemPrompt ?? db.getSetting<string>(SETTING_DEFAULT_SYSTEM_PROMPT)
       // 工作目录：settings 配置 > 环境默认（开发项目根 / 生产用户主目录）。
       // 传入能力指引使「工作目录」行展示真实值；bash 工具默认 cwd 也读同一来源。
+      // Shell：传入实际探测结果（Windows 依 PATH 有无 bash 选择），agent 语法与真实 shell 匹配。
       const workdir = resolveAgentWorkdir()
+      const shellKind = resolveShell().kind
       const systemPromptParts = [
-        customPrompt?.trim() ? customPrompt : buildDefaultSystemPrompt(workdir),
-        ...(customPrompt?.trim() ? [buildSystemCapabilitySections(workdir)] : []),
+        customPrompt?.trim() ? customPrompt : buildDefaultSystemPrompt(workdir, shellKind),
+        ...(customPrompt?.trim() ? [buildSystemCapabilitySections(workdir, shellKind)] : []),
         '## 本地技能',
         '本地可能已安装可复用的技能（Skill）。当用户任务可能与某个技能匹配时，先调用 read_skill（不传 skill 参数可查看已安装技能清单），再按其 SKILL.md 说明执行。',
         '## 本地知识库',
@@ -557,6 +560,22 @@ export class AgentManager {
               cost:
                 msg.role === 'assistant' ? (msg as AssistantMessage).usage.cost.total : undefined
             })
+            // length 截断诊断（warn 级别便于远程排查）：正常回复不该以 length 收尾；
+            // 输出个位数 token 通常意味着上下文窗口配置过小、输出预算被钳制。
+            if (msg.role === 'assistant') {
+              const a = msg as AssistantMessage
+              if (a.stopReason === 'length') {
+                log.warn('回复因达到输出上限被截断', {
+                  sessionId,
+                  model: a.model,
+                  completionTokens: a.usage.output,
+                  hint:
+                    a.usage.output <= 2
+                      ? '输出预算疑似被过小的上下文窗口挤占，请检查模型的上下文窗口配置'
+                      : '可考虑调大模型的最大输出 Tokens'
+                })
+              }
+            }
           } catch (err) {
             log.error('消息落库失败', { sessionId, role: msg.role, error: err })
           }

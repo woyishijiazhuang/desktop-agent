@@ -4,85 +4,27 @@ import { resolveAgentWorkdir } from '../workdir'
 import { db } from '../../database'
 import { getShellEnv } from '../../utils/shell-env'
 import { SETTING_AGENT_ENV } from '../types'
-import { bashSessionManager, DEFAULT_TIMEOUT } from './bash-session'
+import { bashSessionManager, DEFAULT_TIMEOUT, resolveShell } from './bash-session'
 import { createLogger } from '../../utils/log'
 
 const log = createLogger('tool:bash')
 
 /**
- * 明确交互式/持续占用终端的程序：裸调用即挂起或进入编辑器。
- * 持久化 shell 会话无法执行这类命令（无 TTY），直接拒绝。
+ * 不预检交互式/读 stdin 的命令：静态分析无法准确分辨（node -v 非交互、bash -c
+ * 非交互、node 裸调用进 REPL……白名单永远追不上真实命令形态），误报比漏放更伤害体验。
+ * 兜底链路已完备：裸 REPL/挂起命令最坏情况是吞掉哨兵直至超时（默认 30s），超时
+ * 整组 SIGTERM → SIGKILL 终止会话（下次调用自动重建），错误信息引导换非交互写法
+ * 或 background=true；长驻命令本就该用 background（stdin ignore，异步读取）。
  */
-const INTERACTIVE_PROGRAMS = new Set([
-  'vim',
-  'nvim',
-  'vi',
-  'nano',
-  'less',
-  'more',
-  'top',
-  'htop',
-  'ssh',
-  'telnet',
-  'sftp',
-  'ftp',
-  'irb',
-  'psql',
-  'mysql',
-  'sqlite3',
-  'ed',
-  'ex'
-])
-
-/** 无参数（裸调用）时会读取 stdin 的程序：会吞掉持久 shell 的后续命令，须有输入源才放行。 */
-const STDIN_READING_PROGRAMS = new Set([
-  'cat',
-  'read',
-  'bash',
-  'sh',
-  'zsh',
-  'fish',
-  'python',
-  'python2',
-  'python3',
-  'node',
-  'pip',
-  'pip3'
-])
-
-/** git commit 提供提交信息/免编辑器的标志（命中则视为非交互）。 */
-const GIT_COMMIT_MSG_RE =
-  /-m\b|-am\b|-pm\b|--message\b|--amend\b|--no-edit\b|--fixup\b|--squash\b|--file\b|-F\b/
 
 /** bash_output 的 wait_ms 上限（防单次调用阻塞过久）。 */
 const MAX_WAIT_MS = 120_000
 
-/**
- * 检测命令是否交互式/读 stdin（持久化会话中会挂起或吞掉后续命令）。
- * 命中返回交互描述，否则返回 null。误伤宁可拒绝（错误信息会引导改用非交互写法）。
- */
-function detectInteractiveCommand(command: string): string | null {
-  const trimmed = command.trim()
-  if (!trimmed) return null
-  if (/\bgit\s+rebase\b[^]*\s-i\b/.test(trimmed)) return 'git rebase -i（交互式变基编辑器）'
-  if (/\bgit\s+add\s+-p\b/.test(trimmed)) return 'git add -p（交互式暂存）'
-  if (/^\s*git\s+commit\b/.test(trimmed) && !GIT_COMMIT_MSG_RE.test(trimmed)) {
-    return 'git commit（未提供 -m/--amend 等标志，会打开编辑器）'
-  }
-  if (/\bcrontab\b($|\s+-e\b)/.test(trimmed)) return 'crontab（编辑模式）'
-  if (/^\s*sudo\b/.test(trimmed) && !/\bsudo\s+-n\b/.test(trimmed)) {
-    return 'sudo（无 -n，可能交互式提示密码）'
-  }
-  const first = trimmed.split(/\s+/)[0]
-  if (INTERACTIVE_PROGRAMS.has(first)) return first
-  if (STDIN_READING_PROGRAMS.has(first)) {
-    const rest = trimmed.slice(first.length).trim()
-    // 有非选项参数（cat file / python script.py）或有管道/重定向输入 = 有输入源，非交互
-    const hasInputArg = rest.length > 0 && !rest.startsWith('-')
-    const hasInputRedirect = /[<|]/.test(trimmed)
-    if (!hasInputArg && !hasInputRedirect) return `${first}（裸调用会读取 stdin）`
-  }
-  return null
+/** 字节数 → 人类可读（进度提示用，按字符数近似）。 */
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n}B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`
+  return `${(n / 1024 / 1024).toFixed(1)}MB`
 }
 
 const bashParams = Type.Object({
@@ -107,7 +49,7 @@ const bashParams = Type.Object({
   background: Type.Optional(
     Type.Boolean({
       description:
-        'true=后台启动并立即返回 session_id（适合 npm run dev / 长测试等长驻命令，配合 bash_output 读输出、kill_shell 终止）；false=阻塞等待命令完成（默认）'
+        'true=后台启动并立即返回 session_id（适合长驻命令、交互式命令：配合 bash_output 读输出、bash_input 写入交互应答、kill_shell 终止）；false=阻塞等待命令完成（默认）'
     })
   )
 })
@@ -144,6 +86,30 @@ const killShellParams = Type.Object({
   session_id: Type.String({ description: 'bash 以 background=true 启动时返回的会话 id' })
 })
 
+const bashInputParams = Type.Object({
+  reason: Type.Optional(
+    Type.String({
+      description:
+        '用一句话（不超过 30 字）说明本次调用的目的，会直接展示给用户浏览（例如"确认安装提示"）。请务必填写。'
+    })
+  ),
+  session_id: Type.String({ description: 'bash 以 background=true 启动时返回的会话 id' }),
+  input: Type.String({
+    description: '要写入进程 stdin 的内容（如交互提示的回答、REPL 的一行代码）'
+  }),
+  newline: Type.Optional(
+    Type.Boolean({
+      description: 'true=内容后追加换行（回车提交，默认）；false=原样写入不回车'
+    })
+  ),
+  end: Type.Optional(
+    Type.Boolean({
+      description:
+        'true=写入后关闭 stdin（发送 EOF）：适合"读输入到结尾"的命令（如裸 cat、sort、wc）；仅关闭不写内容时可传空 input'
+    })
+  )
+})
+
 export interface BashDetails {
   command: string
   exitCode: number | null
@@ -166,29 +132,39 @@ export interface KillShellDetails {
   sessionId: string
 }
 
+export interface BashInputDetails {
+  sessionId: string
+  /** 实际写入的字符数（含追加换行）。 */
+  chars: number
+  /** 是否已关闭 stdin（EOF）。 */
+  ended: boolean
+}
+
 /**
  * 按 Agent 会话构建 bash 家族工具：
  * - `bash`：在持久化 shell 会话中执行命令（cd/export 保留）；background=true 时后台启动
  * - `bash_output`：读取后台会话输出（全量 / 增量 tail）
  * - `kill_shell`：终止后台会话
+ * - `bash_input`：向后台会话进程 stdin 写入内容（交互式命令应答）/ 发送 EOF
  * 与 read_file 同理需要绑定会话，故用工厂而非单例。
  */
 export function createBashTools(sessionId: string): AgentTool[] {
+  // 描述按实际 shell 生成（Windows 依 PATH 有无 bash 选择），agent 语法与真实 shell 匹配
+  const shellKind = resolveShell().kind
+  const shellNote =
+    shellKind === 'bash'
+      ? '当前 shell 为 bash'
+      : '当前 shell 为 PowerShell（Windows 未检测到 bash）：不要用 && 链、ls -la 等 bash 专有语法，用 ; 分隔命令、Get-ChildItem 等价替代'
   const bashTool: AgentTool<typeof bashParams, BashDetails> = {
     name: 'bash',
     label: '执行命令',
-    description:
-      '在持久化 shell 会话中执行命令并返回 stdout+stderr。cd 与 export 在会话内保留。默认 30 秒超时；长驻命令（npm run dev 等）用 background=true 后台启动，再用 bash_output 读取、kill_shell 终止。危险操作需用户确认。',
+    description: `在持久化 shell 会话中执行命令并返回 stdout+stderr（${shellNote}）。cd 与环境变量设置在会话内保留。默认 30 秒超时（可用 timeout_ms 参数按命令调整）；长驻命令（npm run dev 等）用 background=true 后台启动，再用 bash_output 读取、kill_shell 终止；交互式命令（提示确认/密码、REPL）也用 background=true 启动，用 bash_input 写入应答、bash_output 读结果。危险操作需用户确认。`,
     parameters: bashParams,
     executionMode: 'sequential',
     async execute(_toolCallId, p, signal, onUpdate) {
-      // 交互式/读 stdin 命令在持久化会话中会挂起或吞掉后续命令，直接拒绝并引导非交互写法
-      const interactive = detectInteractiveCommand(p.command)
-      if (interactive) {
-        throw new Error(
-          `检测到交互式命令：${interactive}。持久化 shell 会话无法执行交互式/读 stdin 的命令（会挂起或吞掉后续命令）。请改用非交互写法，如 git commit -m "..."、cat file、python script.py、sudo -n 命令。`
-        )
-      }
+      // 不预检交互式命令（无法准确分辨，误报比漏放更烦人）：裸 REPL/读 stdin 的命令
+      // 最坏情况是吞掉哨兵直至超时（默认 30s），超时兜底会整组终止会话并在下次调用自动
+      // 重建，错误信息引导换非交互写法或 background=true。
       // 子进程环境 = 应用自身 process.env + 用户 shell 环境（.zshrc/.bashrc，自动抓取一次）
       // + 设置页手动配置的额外变量（优先级最高）。解决打包应用从 Dock 启动丢环境变量的问题。
       const shellEnv = await getShellEnv()
@@ -198,7 +174,7 @@ export function createBashTools(sessionId: string): AgentTool[] {
 
       if (p.background) {
         const shell = bashSessionManager.startBackground(p.command, { cwd, env })
-        const text = `已启动后台命令。session_id: ${shell.sessionId}\n可用 bash_output 读取输出（建议传 wait_ms 等待命令完成，避免轮询）；kill_shell 可终止。`
+        const text = `已启动后台命令。session_id: ${shell.sessionId}\n可用 bash_output 读取输出（建议传 wait_ms 等待，避免轮询）；交互式提示用 bash_input 写入应答；读输入到结尾的命令用 bash_input end=true 发送 EOF；kill_shell 可终止。`
         log.info('后台命令已启动', {
           sessionId,
           bgId: shell.sessionId,
@@ -258,7 +234,7 @@ export function createBashTools(sessionId: string): AgentTool[] {
       '读取 bash 后台命令（background=true）的输出。tail=true 只返回新增输出，tail=false 返回全部。wait_ms 可指定等待时长：进程退出或到时立即返回（避免反复轮询）。进程仍在运行时结果带 [进程运行中] 标记，退出后带退出码。',
     parameters: bashOutputParams,
     executionMode: 'parallel',
-    async execute(_toolCallId, p, signal) {
+    async execute(_toolCallId, p, signal, onUpdate) {
       const shell = bashSessionManager.getBackground(p.session_id)
       if (!shell) {
         throw new Error(`后台会话不存在（可能已退出清理）：${p.session_id}`)
@@ -266,7 +242,39 @@ export function createBashTools(sessionId: string): AgentTool[] {
       // wait_ms：阻塞等待进程退出（或到时 / abort 先到先返回），一次调用拿终态，避免轮询
       const waitMs = p.wait_ms ? Math.min(Math.max(0, Math.floor(p.wait_ms)), MAX_WAIT_MS) : 0
       if (waitMs > 0 && !shell.exited) {
-        await shell.waitExit(waitMs, signal)
+        // 等待期间每秒推送倒计时快照（剩余秒数 + 已捕获输出量），前端经流式通道实时展示
+        if (onUpdate) {
+          const start = Date.now()
+          const totalSec = Math.round(waitMs / 1000)
+          const emitProgress = (): void => {
+            const elapsedMs = Date.now() - start
+            const elapsedSec = Math.round(elapsedMs / 1000)
+            const captured = shell.read(false).text.length
+            onUpdate({
+              content: [
+                {
+                  type: 'text',
+                  text: `等待后台命令完成… ${elapsedSec}s / ${totalSec}s（已捕获 ${formatBytes(captured)} 输出，进程结束或到时即返回）`
+                }
+              ],
+              details: {
+                sessionId: p.session_id,
+                tail: p.tail !== false,
+                exited: false,
+                exitCode: null
+              }
+            })
+          }
+          emitProgress()
+          const timer = setInterval(emitProgress, 1_000)
+          try {
+            await shell.waitExit(waitMs, signal)
+          } finally {
+            clearInterval(timer)
+          }
+        } else {
+          await shell.waitExit(waitMs, signal)
+        }
       }
       const { text: output, exited, exitCode, errorMessage } = shell.read(p.tail ?? true)
       let head: string
@@ -309,5 +317,52 @@ export function createBashTools(sessionId: string): AgentTool[] {
     }
   }
 
-  return [bashTool, bashOutputTool, killShellTool]
+  const bashInputTool: AgentTool<typeof bashInputParams, BashInputDetails> = {
+    name: 'bash_input',
+    label: '向后台命令写入输入',
+    description:
+      '向 bash 后台命令（background=true）的进程 stdin 写入内容：应答交互式提示（如确认 y/n、输入密码、REPL 逐行执行）。写入后用 bash_output 读取新输出。end=true 可在写入后关闭 stdin（发送 EOF，用于「读输入到结尾」的命令如裸 cat/sort/wc）。',
+    parameters: bashInputParams,
+    executionMode: 'sequential',
+    async execute(_toolCallId, p) {
+      const shell = bashSessionManager.getBackground(p.session_id)
+      if (!shell) {
+        throw new Error(`后台会话不存在（可能已退出清理）：${p.session_id}`)
+      }
+      // 空内容 + 仅关闭：直接发 EOF
+      const data = p.input + (p.newline === false ? '' : '\n')
+      let text: string
+      let chars = 0
+      if (p.input.length > 0) {
+        const r = shell.write(data)
+        if (!r.ok) throw new Error(r.error)
+        chars = data.length
+        text = `已写入 ${chars} 字符。请用 bash_output 读取新输出。`
+      } else {
+        text = '未写入内容。'
+      }
+      let ended = false
+      if (p.end) {
+        const r = shell.endStdin()
+        if (!r.ok) throw new Error(r.error)
+        ended = true
+        text += ' stdin 已关闭（EOF）。'
+      }
+      if (chars === 0 && !ended) {
+        throw new Error('input 为空且未指定 end=true，没有任何操作')
+      }
+      log.info('写入后台命令输入', {
+        sessionId,
+        bgId: p.session_id,
+        chars,
+        ended
+      })
+      return {
+        content: [{ type: 'text', text }],
+        details: { sessionId: p.session_id, chars, ended }
+      }
+    }
+  }
+
+  return [bashTool, bashOutputTool, killShellTool, bashInputTool]
 }

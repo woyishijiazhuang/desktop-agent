@@ -15,6 +15,11 @@ export interface ToolStatus {
    * 仅 running 期间有值；tool_execution_end 覆盖 status 时随旧对象一起丢弃，由终态结果接管。
    */
   stream?: string
+  /**
+   * 真实下载进度（download 工具流式推送）：已下载 / 总字节数。
+   * 仅按字节计量的工具（下载）携带；total 为 0（无 Content-Length）时卡片退化为不确定光带。
+   */
+  progress?: { downloaded: number; total: number }
 }
 
 /**
@@ -157,7 +162,9 @@ export function applyChatEvent(state: SessionChatState, event: AgentEvent, error
       state.toolStatus[event.toolCallId] = {
         status: cur?.status ?? 'running',
         toolName: cur?.toolName ?? event.toolName,
-        stream: text
+        stream: text,
+        // 下载进度（download 工具）：跟随最新一次 update，避免残留
+        progress: extractToolProgress(event.partialResult)
       }
       break
     }
@@ -204,4 +211,18 @@ function extractToolPartialText(partial: unknown): string {
     )
     .map((b) => b.text)
     .join('')
+}
+
+/** 从 partialResult.details 提取下载进度（download 工具流式推送 downloaded/total 字节）。 */
+function extractToolProgress(partial: unknown): { downloaded: number; total: number } | undefined {
+  if (!partial || typeof partial !== 'object') return undefined
+  const details = (partial as { details?: unknown }).details
+  if (!details || typeof details !== 'object') return undefined
+  const progress = (details as { progress?: unknown }).progress
+  if (!progress || typeof progress !== 'object') return undefined
+  const { downloaded, total } = progress as Record<string, unknown>
+  if (typeof downloaded === 'number' && typeof total === 'number' && total > 0) {
+    return { downloaded, total }
+  }
+  return undefined
 }

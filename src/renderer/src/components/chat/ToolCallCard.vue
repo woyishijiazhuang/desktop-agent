@@ -138,6 +138,30 @@ const statusIconColor = computed(() => {
 
 const spinning = computed(() => !!props.status && props.status.status === 'running')
 
+/**
+ * 确定时长进度（bash_output 的 wait_ms）：总时长在工具参数里已知，进度条用本地
+ * CSS 动画 0→100% 匀速跑满总时长（不依赖后端逐秒推送，后端每秒推只用于倒计时文字）。
+ */
+const waitTotalMs = computed<number | null>(() => {
+  if (!spinning.value) return null
+  const w = props.toolCall.arguments?.wait_ms
+  return typeof w === 'number' && Number.isFinite(w) && w > 0 ? w : null
+})
+/** 真实下载进度（download 工具推送 downloaded/total 字节）：填充比例 = 已下载/总量。 */
+const byteProgressPct = computed<number | null>(() => {
+  if (!spinning.value || !props.status?.progress) return null
+  const { downloaded, total } = props.status.progress
+  return Math.min(100, Math.max(0, (downloaded / total) * 100))
+})
+/** 头部进度条是否展示：字节进度（download）或 wait_ms 本地动画任一成立。 */
+const barActive = computed(() => byteProgressPct.value !== null || waitTotalMs.value !== null)
+/** 填充条样式：字节进度 → 内联宽度（后端推送）；wait_ms → 本地动画时长。 */
+const fillStyle = computed((): Record<string, string> | undefined => {
+  if (byteProgressPct.value !== null) return { width: `${byteProgressPct.value}%` }
+  if (waitTotalMs.value !== null) return { animationDuration: `${waitTotalMs.value}ms` }
+  return undefined
+})
+
 /** 详情默认折叠（仅保留头部意图 + 结果摘要），点击头部展开「参数 / 结果」。 */
 const expanded = ref(false)
 /** 代码是否已渲染过：首次展开前不渲染代码块（懒渲染），
@@ -188,10 +212,13 @@ function onCopyResult(): void {
 </script>
 
 <template>
-  <div class="tool-card">
+  <div class="tool-card" :class="{ 'tool-card--running': spinning }">
     <div
       class="tool-card__head"
-      :class="{ 'tool-card__head--clickable': canExpand }"
+      :class="{
+        'tool-card__head--clickable': canExpand,
+        'tool-card__head--progress': barActive
+      }"
       @click="toggleExpand"
     >
       <div class="tool-card__head-main">
@@ -217,6 +244,16 @@ function onCopyResult(): void {
           <ChevronDownOutline v-else />
         </NIcon>
       </span>
+      <!-- 确定时长进度：bash_output wait_ms → 本地动画 0→100%；download → 字节进度宽度。
+           填充层内扫光位移范围恰为填充宽度（起点 → 进度前缘），ease-out 减速在到达点"停住" -->
+      <div
+        v-if="barActive"
+        class="tool-card__progress-fill"
+        :class="{ 'tool-card__progress-fill--byte': byteProgressPct !== null }"
+        :style="fillStyle"
+      >
+        <i class="tool-card__progress-sweep" />
+      </div>
     </div>
 
     <div
@@ -335,6 +372,128 @@ function onCopyResult(): void {
   max-width: var(--msg-max-width);
   /* width: fit-content; */
   /* min-width: 200px; */
+}
+/* 执行中：头部背景一条光带从左往右循环流动（ambient 活动指示，参考 GitHub Actions /
+ * Telegram 加载条），扫一眼即知「活动中」——等待型工具（如 bash_output 的 wait_ms）
+ * 期间卡片不再像卡死。仅 running 期间显示，终态自动消失。 */
+.tool-card--running .tool-card__head {
+  position: relative;
+  overflow: hidden;
+}
+.tool-card--running .tool-card__head::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  /* 半透明主题色光带（头尾渐隐），滑过头部背景；峰值色由 primary 混透明得到 */
+  background: linear-gradient(
+    100deg,
+    transparent 20%,
+    color-mix(in srgb, var(--primary) 14%, transparent) 45%,
+    color-mix(in srgb, var(--primary) 26%, transparent) 50%,
+    color-mix(in srgb, var(--primary) 14%, transparent) 55%,
+    transparent 80%
+  );
+  transform: translateX(-100%);
+  animation: tool-card-shimmer 2.2s ease-in-out infinite;
+  pointer-events: none;
+  /* 光带铺在背景层，不遮挡头部内容 */
+  z-index: 0;
+}
+.tool-card--running .tool-card__head > *:not(.tool-card__progress-fill) {
+  /* 头部内容抬到光带/填充层之上（填充层自身保持在背景层，不遮挡内容） */
+  position: relative;
+  z-index: 1;
+}
+/* 有确定时长进度时：隐藏不确定时长的循环光带（::before 仅保留给无进度数据的 running） */
+.tool-card--running .tool-card__head--progress::before {
+  display: none;
+}
+/* 确定时长进度（如 bash_output 的 wait_ms）：填充层本地 CSS 动画 0→100% 匀速跑满
+ * 总等待时长（动画时长经内联 animationDuration 设置），不依赖后端逐秒推送；
+ * 右缘圆角与头部一致；内部扫光位移范围恰为填充宽度（起点 → 进度前缘），
+ * ease-out 减速在到达点"停住"。替代不确定时长的循环光带。 */
+.tool-card__progress-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--primary) 12%, transparent) 0%,
+    color-mix(in srgb, var(--primary) 30%, transparent) 100%
+  );
+  /* 本地动画：0%→100% 匀速（linear），跑完停在 100%（forwards）。
+   * 进程提前退出时由 tool_execution_end 直接结束卡片，条在中途消失即可。 */
+  animation-name: tool-card-progress-fill;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+@keyframes tool-card-progress-fill {
+  from {
+    width: 0%;
+  }
+  to {
+    width: 100%;
+  }
+}
+/* 字节进度（download 工具）：宽度由后端推送驱动，0.2s linear 过渡与 200ms 推送节拍
+ * 匹配 → 连续匀速（同 wait_ms 的 1s linear 思路，避免逐级台阶/猛冲）。 */
+.tool-card__progress-fill--byte {
+  animation: none;
+  transition: width 0.2s linear;
+}
+.tool-card__progress-sweep {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    100deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.55) 45%,
+    rgba(255, 255, 255, 0) 55%
+  );
+  animation: tool-card-progress-sweep 1.8s cubic-bezier(0.22, 1, 0.36, 1) infinite;
+  pointer-events: none;
+}
+@keyframes tool-card-progress-sweep {
+  0% {
+    transform: translateX(-100%);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
+@keyframes tool-card-shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(100%);
+  }
+}
+/* 尊重系统减少动态偏好：关闭流光/扫光（转圈图标保留） */
+@media (prefers-reduced-motion: reduce) {
+  .tool-card--running .tool-card__head::before {
+    animation: none;
+    background: color-mix(in srgb, var(--primary) 8%, transparent);
+    transform: none;
+  }
+  .tool-card__progress-fill {
+    /* 关闭本地填充动画/宽度过渡（wait_ms 动画宽度随之归零隐藏，进度改由文字传达） */
+    animation: none;
+    transition: none;
+  }
+  .tool-card__progress-sweep {
+    /* 扫光关闭并隐藏，避免静态光带残留 */
+    animation: none;
+    opacity: 0;
+  }
 }
 .tool-card__head {
   display: flex;

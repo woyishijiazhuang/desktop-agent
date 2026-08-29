@@ -535,7 +535,7 @@ function onThemeChange(mode: ThemeMode): void {
               <div class="model-list__meta">
                 <span>{{ c.modelId }}</span>
                 <span>· {{ formatContextWindow(c.contextWindow) }} 上下文</span>
-                <span>· {{ c.maxTokens }} 输出</span>
+                <span>· {{ formatContextWindow(c.maxTokens) }} 输出</span>
                 <NTag :type="c.hasApiKey ? 'success' : 'warning'" size="tiny" round>
                   {{ c.hasApiKey ? '已配置 Key' : '未配置 Key' }}
                 </NTag>

@@ -90,10 +90,16 @@ function periodsToForm(
   }))
 }
 
-/** 最大输出 Tokens 默认值：非推理模型 4096；推理模型的思考 tokens 计入输出上限，默认给足预算，
- * 避免长思考在 max_tokens 处被截断（finish_reason='length'、正文为空，表现为"思考没完就停了"）。 */
-const DEFAULT_MAX_TOKENS = 4096
-const REASONING_MAX_TOKENS = 16384
+/**
+ * 默认值：上下文窗口 128K、非推理模型输出 8K。
+ * 上下文窗口过小会被 pi-ai 按「窗口 - 输入(对话+系统提示+工具) - 4K 安全余量」钳制输出预算，
+ * 极端时输出被钳到个位数 token，表现为回复只有一两个字（finish_reason='length'）。
+ * 推理模型的思考 tokens 计入输出上限，默认给足预算，避免长思考在 max_tokens 处被截断
+ * （finish_reason='length'、正文为空，表现为"思考没完就停了"）。
+ */
+const DEFAULT_CONTEXT_WINDOW = 131072
+const DEFAULT_MAX_TOKENS = 8192
+const REASONING_MAX_TOKENS = 32768
 
 const form = reactive<FormState>({
   mode: 'preset',
@@ -104,8 +110,8 @@ const form = reactive<FormState>({
   baseUrl: '',
   apiKey: '',
   displayName: '',
-  contextWindow: 8192,
-  maxTokens: 4096,
+  contextWindow: DEFAULT_CONTEXT_WINDOW,
+  maxTokens: DEFAULT_MAX_TOKENS,
   multimodal: false,
   reasoning: false,
   pricingEnabled: false,
@@ -122,6 +128,63 @@ const refreshing = ref(false)
 const saving = ref(false)
 const testing = ref(false)
 const testResult = ref<{ ok: boolean; error?: string } | null>(null)
+
+/* ===== 上下文窗口 / 输出上限：档位选择 + 自定义 ===== */
+/** 上下文窗口档位（1024 换算）：32K ~ 2M 覆盖主流模型；不在档位上的值按「自定义」展示。 */
+const CONTEXT_TIERS = [32768, 65536, 131072, 262144, 524288, 1048576, 2097152]
+/** 输出上限档位（1024 换算）：4K ~ 128K。 */
+const MAX_TOKEN_TIERS = [4096, 8192, 16384, 32768, 65536, 131072]
+/** 「自定义」哨兵值：选中时展开数字输入框。 */
+const TIER_CUSTOM = -1
+
+/** 档位标签：32768→32K、1048576→1M。 */
+function tierLabel(v: number): string {
+  return v >= 1_048_576 ? `${v / 1_048_576}M` : `${v / 1024}K`
+}
+
+const contextTierOptions = [
+  ...CONTEXT_TIERS.map((v) => ({ label: tierLabel(v), value: v })),
+  { label: '自定义', value: TIER_CUSTOM }
+]
+const maxTokenTierOptions = [
+  ...MAX_TOKEN_TIERS.map((v) => ({ label: tierLabel(v), value: v })),
+  { label: '自定义', value: TIER_CUSTOM }
+]
+
+/** 「自定义」输入模式标记：点选「自定义」后置位，输入框常驻直到重新选档位。 */
+const contextCustom = ref(false)
+const maxTokensCustom = ref(false)
+
+/** 档位选择器代理：当前值在档位上且未进入自定义模式则选中该档，否则选中「自定义」。
+ *  切到「自定义」置位标记（不改值，输入框展示当前值供继续编辑）；选档位则写值并退出自定义模式。 */
+const contextWindowSelect = computed<number>({
+  get: () =>
+    !contextCustom.value && CONTEXT_TIERS.includes(form.contextWindow)
+      ? form.contextWindow
+      : TIER_CUSTOM,
+  set: (v) => {
+    if (v === TIER_CUSTOM) {
+      contextCustom.value = true
+    } else {
+      contextCustom.value = false
+      form.contextWindow = v
+    }
+  }
+})
+const maxTokensSelect = computed<number>({
+  get: () =>
+    !maxTokensCustom.value && MAX_TOKEN_TIERS.includes(form.maxTokens)
+      ? form.maxTokens
+      : TIER_CUSTOM,
+  set: (v) => {
+    if (v === TIER_CUSTOM) {
+      maxTokensCustom.value = true
+    } else {
+      maxTokensCustom.value = false
+      form.maxTokens = v
+    }
+  }
+})
 
 const dialogTitle = computed(() => (isEdit.value ? '编辑模型' : '添加模型'))
 
@@ -181,6 +244,8 @@ const canSave = computed(() => {
 function initForm(): void {
   testResult.value = null
   onlineModels.value = []
+  contextCustom.value = false
+  maxTokensCustom.value = false
   if (props.editing) {
     const e = props.editing
     form.mode = e.source
@@ -206,8 +271,8 @@ function initForm(): void {
     form.baseUrl = ''
     form.apiKey = ''
     form.displayName = ''
-    form.contextWindow = 8192
-    form.maxTokens = 4096
+    form.contextWindow = DEFAULT_CONTEXT_WINDOW
+    form.maxTokens = DEFAULT_MAX_TOKENS
     form.multimodal = false
     form.reasoning = false
     form.pricingEnabled = false
@@ -284,7 +349,10 @@ watch(
     if (form.mode !== 'preset' || form.modelSelectMode !== 'catalog') return
     const m = onlineModels.value.find((x) => x.id === id)
     if (!m) return
-    if (m.contextWindow) form.contextWindow = m.contextWindow
+    if (m.contextWindow) {
+      form.contextWindow = m.contextWindow
+      contextCustom.value = false
+    }
     if (m.multimodal) form.multimodal = true
     if (m.reasoning) form.reasoning = true
     if (!form.displayName.trim()) form.displayName = m.name
@@ -575,11 +643,30 @@ async function openGetKey(): Promise<void> {
         <div class="add-model__row">
           <div class="add-model__field add-model__field--half">
             <label class="add-model__label">上下文窗口</label>
-            <NInputNumber v-model:value="form.contextWindow" :min="1024" :step="1024" />
+            <NSelect v-model:value="contextWindowSelect" :options="contextTierOptions" />
+            <NInputNumber
+              v-if="contextWindowSelect === TIER_CUSTOM"
+              v-model:value="form.contextWindow"
+              :min="1024"
+              :step="1024"
+              size="small"
+              placeholder="填 token 数"
+            />
+            <span class="add-model__hint">
+              对话 + 系统提示 + 工具定义共享的输入空间；过小会挤压输出，回复被截断。
+            </span>
           </div>
           <div class="add-model__field add-model__field--half">
             <label class="add-model__label">最大输出 Tokens</label>
-            <NInputNumber v-model:value="form.maxTokens" :min="1" :step="256" />
+            <NSelect v-model:value="maxTokensSelect" :options="maxTokenTierOptions" />
+            <NInputNumber
+              v-if="maxTokensSelect === TIER_CUSTOM"
+              v-model:value="form.maxTokens"
+              :min="1"
+              :step="256"
+              size="small"
+              placeholder="填 token 数"
+            />
           </div>
         </div>
         <div class="add-model__row">

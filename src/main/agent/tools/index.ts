@@ -8,6 +8,7 @@ import { editFileTool } from './edit-file'
 import { createBashTools } from './bash'
 import { webSearchTool } from './web-search'
 import { webFetchTool } from './web-fetch'
+import { downloadTool } from './download'
 import { findSkillTool } from './find-skill'
 import { installSkillTool } from './install-skill'
 import { readSkillTool } from './read-skill'
@@ -51,8 +52,8 @@ function single(tool: AgentTool, defaultEnabled = true): ToolRegistryEntry {
   }
 }
 
-/** bash 家族元数据（bash / bash_output / kill_shell），build 时按 Agent 会话重建。 */
-const [bashMeta, bashOutputMeta, killShellMeta] = createBashTools('')
+/** bash 家族元数据（bash / bash_output / kill_shell / bash_input），build 时按 Agent 会话重建。 */
+const [bashMeta, bashOutputMeta, killShellMeta, bashInputMeta] = createBashTools('')
 
 /** Plan Mode 家族元数据（enter_plan_mode / exit_plan_mode），build 时按 Agent 会话重建。 */
 const [enterPlanMeta, exitPlanMeta] = createPlanModeTools('')
@@ -92,6 +93,13 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
     build: ({ sessionId }) => createBashTools(sessionId).filter((t) => t.name === 'kill_shell')
   },
   {
+    name: bashInputMeta.name,
+    label: bashInputMeta.label,
+    description: bashInputMeta.description,
+    defaultEnabled: true,
+    build: ({ sessionId }) => createBashTools(sessionId).filter((t) => t.name === 'bash_input')
+  },
+  {
     name: enterPlanMeta.name,
     label: enterPlanMeta.label,
     description: enterPlanMeta.description,
@@ -109,6 +117,7 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
   },
   single(webSearchTool, false),
   single(webFetchTool),
+  single(downloadTool),
   single(findSkillTool),
   single(installSkillTool),
   single(readSkillTool),
@@ -127,7 +136,7 @@ const MEMORY_TOOLS = new Set(['list_memories', 'add_memory', 'update_memory', 'd
 /** 知识库域工具：受「知识库」总开关（kbEnabled）控制。 */
 const KB_TOOLS = new Set(['search_knowledge'])
 /** bash 辅助工具：随 bash 一起启停（单独关闭 bash 时一并移除）。 */
-const BASH_AUX_TOOLS = new Set(['bash_output', 'kill_shell'])
+const BASH_AUX_TOOLS = new Set(['bash_output', 'kill_shell', 'bash_input'])
 
 /** 读取持久化的工具启用覆盖（toolName → 是否启用）。 */
 function readOverrides(): Record<string, boolean> {
