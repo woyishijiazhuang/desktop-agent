@@ -109,6 +109,37 @@ async function onNotificationsChange(value: boolean): Promise<void> {
   message.success(value ? '已开启桌面通知' : '已关闭桌面通知')
 }
 
+// ---- 工具确认 ----
+/** 切换「跳过工具确认」：main 侧实时读取，下一次工具调用立即生效。 */
+async function onPermissionAutoApproveChange(value: boolean): Promise<void> {
+  await settings.savePermissionAutoApprove(value)
+  message.success(
+    value ? '已开启：危险工具免确认执行（破坏性命令除外）' : '已关闭：危险工具恢复逐次确认'
+  )
+}
+
+/** 确认超时草稿（秒，0 = 一直等待）：失焦时才提交保存。 */
+const permTimeoutDraft = ref<number | null>(settings.permissionTimeoutSec)
+
+watch(
+  () => settings.permissionTimeoutSec,
+  (v) => {
+    permTimeoutDraft.value = v
+  }
+)
+
+async function onPermTimeoutBlur(): Promise<void> {
+  const v = Math.floor(Number(permTimeoutDraft.value) || 0)
+  // 非法值（空/负数）：还原为已保存值
+  if (!Number.isInteger(v) || v < 0) {
+    permTimeoutDraft.value = settings.permissionTimeoutSec
+    return
+  }
+  if (v === settings.permissionTimeoutSec) return
+  await settings.savePermissionTimeoutSec(v)
+  message.success(v === 0 ? '已设为一直等待，不自动拒绝' : `确认超时已设为 ${v} 秒`)
+}
+
 const testingNotification = ref(false)
 async function onTestNotification(): Promise<void> {
   testingNotification.value = true
@@ -370,6 +401,37 @@ function onThemeChange(mode: ThemeMode): void {
                 测试
               </NButton>
             </NSpace>
+          </div>
+          <div class="data-row data-row--gap">
+            <div class="data-row__info">
+              <span class="data-row__label">跳过工具确认</span>
+              <span class="data-row__hint">
+                AI 执行写文件、命令等危险操作时不再逐次确认；破坏性命令（如 rm
+                -rf、强制推送）始终需要人工确认
+              </span>
+            </div>
+            <NSwitch
+              :value="settings.permissionAutoApprove"
+              @update:value="onPermissionAutoApproveChange"
+            />
+          </div>
+          <div class="data-row data-row--gap">
+            <div class="data-row__info">
+              <span class="data-row__label">工具确认超时</span>
+              <span class="data-row__hint">
+                等待确认的最长时间，超时未响应将自动拒绝；设为 0 表示一直等待
+              </span>
+            </div>
+            <NInputNumber
+              v-model:value="permTimeoutDraft"
+              :min="0"
+              :max="3600"
+              :step="10"
+              style="width: 120px"
+              @blur="onPermTimeoutBlur"
+            >
+              <template #suffix>秒</template>
+            </NInputNumber>
           </div>
           <div class="data-row data-row--gap">
             <div class="data-row__info">

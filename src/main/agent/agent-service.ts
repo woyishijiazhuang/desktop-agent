@@ -51,6 +51,8 @@ import {
 import { resolveAgentWorkdir } from './workdir'
 import { refreshShellEnv } from '../utils/shell-env'
 import { notifyAgentFinished } from '../utils/notifier'
+import { isDeepEqual } from '../utils/deep-equal'
+import { estimateTokens, truncateMiddle } from '../utils/token'
 
 const log = createLogger('agent')
 
@@ -98,46 +100,6 @@ const WELCOME_SUGGEST_SYSTEM_PROMPT =
   '你是一个对话开场建议生成助手。根据给定的用户环境信息，生成 4 条简短、具体、可直接开始的中文提问或任务建议，用于 AI 助手欢迎页的快捷入口。' +
   '要求：每条不超过 25 字；每条独立成行；不要编号；不要引号；不要空行；不要任何解释或前后缀。'
 
-/**
- * 无 tokenizer 的粗估 token 数（CJK 1 字 ≈ 1 token，其余约 3.5 字符/token）。
- * 仅用于自动压缩阈值判断：宁高勿低，提前压缩比溢出窗口安全。
- */
-const CJK_RE = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]/
-function tokenWeight(ch: string): number {
-  return CJK_RE.test(ch) ? 1 : 1 / 3.5
-}
-function estimateTokens(text: string): number {
-  let tokens = 0
-  for (const ch of text) tokens += tokenWeight(ch)
-  return Math.ceil(tokens)
-}
-
-/**
- * 按 token 预算把长文本截断为「头部 + 尾部」：保留开头与结尾，省略中间，
- * 避免单条超大消息 / 超大摘要直接把压缩调用或模型上下文撑爆。
- */
-function truncateMiddle(text: string, maxTokens: number): string {
-  if (maxTokens <= 0) return ''
-  if (estimateTokens(text) <= maxTokens) return text
-  const headTokens = Math.max(1, Math.floor(maxTokens * 0.45))
-  const tailTokens = Math.max(1, maxTokens - headTokens)
-  let head = ''
-  let t = 0
-  for (const ch of text) {
-    if (t >= headTokens) break
-    head += ch
-    t += tokenWeight(ch)
-  }
-  let tail = ''
-  t = 0
-  for (let i = text.length - 1; i >= 0; i--) {
-    if (t >= tailTokens) break
-    tail = text[i] + tail
-    t += tokenWeight(text[i])
-  }
-  return `${head}\n…[中间内容过长已省略]…\n${tail}`
-}
-
 /** 图表重新生成的系统提示：只输出可渲染的 echarts 配置，不解释。 */
 const CHART_REGEN_SYSTEM_PROMPT =
   '你是数据可视化专家。根据用户提供的 ECharts 配置与渲染错误信息，修正配置使其能正常渲染。' +
@@ -169,23 +131,6 @@ function isSameConfig(extracted: string, original: string): boolean {
   } catch {
     return extracted.trim() === original.trim()
   }
-}
-
-/** 深比较（对象键序无关；数组按序）。 */
-function isDeepEqual(a: unknown, b: unknown): boolean {
-  if (a === b) return true
-  if (typeof a !== typeof b) return false
-  if (Array.isArray(a) && Array.isArray(b)) {
-    return a.length === b.length && a.every((v, i) => isDeepEqual(v, b[i]))
-  }
-  if (a && b && typeof a === 'object' && typeof b === 'object') {
-    const ra = a as Record<string, unknown>
-    const rb = b as Record<string, unknown>
-    const ka = Object.keys(ra).sort()
-    const kb = Object.keys(rb).sort()
-    return ka.length === kb.length && ka.every((k, i) => k === kb[i] && isDeepEqual(ra[k], rb[k]))
-  }
-  return false
 }
 
 /** 从模型回复中提取 echarts JSON 文本：优先 ```echarts 围栏，其次 ```json 围栏，最后尝试整体文本。 */

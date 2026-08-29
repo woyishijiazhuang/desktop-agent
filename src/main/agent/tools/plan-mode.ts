@@ -3,7 +3,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { randomUUID } from 'node:crypto'
 import { rendererClient } from '../../utils/render-client'
 import { createLogger } from '../../utils/log'
-import { PERMISSION_TIMEOUT_MS } from '../types'
+import { DEFAULT_PERMISSION_TIMEOUT_SEC } from '../types'
 import type { PlanApprovalRequest } from '../types'
 
 const log = createLogger('tool:plan_mode')
@@ -147,7 +147,7 @@ export function createPlanModeTools(sessionId: string): AgentTool[] {
             ],
             details: { approved: false, requestId }
           })
-        }, PERMISSION_TIMEOUT_MS)
+        }, DEFAULT_PERMISSION_TIMEOUT_SEC * 1000)
         pending.set(requestId, {
           sessionId,
           resolve: (approved, feedback) => {

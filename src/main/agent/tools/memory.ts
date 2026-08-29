@@ -36,7 +36,7 @@ const listParams = Type.Object({
 const addParams = Type.Object({
   content: Type.String({
     description:
-      '记忆内容（简明、客观、第三人称，如「用户是后端开发者，偏好 Python」）。不超过 200 字。'
+      '记忆内容（简明、客观、第三人称，如「用户是后端开发者，偏好 Python」）。不超过 500 字。'
   }),
   category: Type.Optional(
     Type.Union(

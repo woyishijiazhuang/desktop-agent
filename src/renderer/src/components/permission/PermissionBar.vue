@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { NButton, NIcon, NTag } from 'naive-ui'
-import { HelpCircleOutline } from '@vicons/ionicons5'
+import { HelpCircleOutline, TimerOutline } from '@vicons/ionicons5'
 import { usePermissionStore } from '@renderer/store/usePermissionStore'
 import { useChatStore } from '@renderer/store/useChatStore'
 
@@ -41,6 +41,31 @@ function onAllow(): void {
   permissionStore.respondAll(currentSessionId.value, true, batchLen.value > 1 ? 'batch' : 'once')
 }
 
+/* ===== 倒计时：按请求携带的 expiresAt（0 = 一直等待）显示剩余秒数 ===== */
+/** 每秒刷新一次的当前时间（仅存在待确认请求时走表）。 */
+const now = ref(Date.now())
+let tickTimer: number | undefined
+
+watch(count, (c) => {
+  if (c > 0 && tickTimer === undefined) {
+    tickTimer = window.setInterval(() => (now.value = Date.now()), 1000)
+  } else if (c === 0 && tickTimer !== undefined) {
+    window.clearInterval(tickTimer)
+    tickTimer = undefined
+  }
+})
+
+onBeforeUnmount(() => {
+  if (tickTimer !== undefined) window.clearInterval(tickTimer)
+})
+
+/** 剩余秒数（向上取整）；一直等待（expiresAt = 0）时为 null，不显示倒计时。 */
+const remainingSec = computed<number | null>(() => {
+  const expiresAt = current.value?.expiresAt ?? 0
+  if (expiresAt <= 0) return null
+  return Math.max(0, Math.ceil((expiresAt - now.value) / 1000))
+})
+
 /** 拒绝（批 >1 时拒绝整批；单条按本次拒绝）。 */
 function onReject(): void {
   permissionStore.respondAll(currentSessionId.value, false, batchLen.value > 1 ? 'batch' : 'once')
@@ -74,6 +99,11 @@ function onAllowAlways(): void {
           AI 请求执行以下 {{ batchLen }} 个操作
         </span>
         <span v-if="hasDenyHit" class="perm-bar__hint">含破坏性命令，需仔细确认</span>
+        <!-- 倒计时：超时到点自动拒绝；一直等待（未设超时）时不显示 -->
+        <span v-if="remainingSec !== null" class="perm-bar__countdown" title="到点未确认将自动拒绝">
+          <NIcon :size="13"><TimerOutline /></NIcon>
+          {{ remainingSec }}s 后自动拒绝
+        </span>
       </div>
 
       <!-- 整批操作列表：决策前一次列全命令/路径 -->
@@ -177,6 +207,17 @@ function onAllowAlways(): void {
 .perm-bar__hint {
   font-size: 12px;
   color: var(--warning);
+}
+/* 倒计时（超时自动拒绝提示）：弱化展示在头部右侧 */
+.perm-bar__countdown {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--text-3);
+  font-variant-numeric: tabular-nums;
 }
 .perm-bar__list {
   display: flex;

@@ -22,7 +22,7 @@ const MEMORY_CATEGORIES: readonly MemoryCategory[] = ['general', 'preference', '
  */
 export const MEMORY_MAX_ITEMS = 30
 export const MEMORY_MAX_TOTAL_CHARS = 3000
-export const MEMORY_MAX_ENTRY_CHARS = 200
+export const MEMORY_MAX_ENTRY_CHARS = 500
 
 function isCategory(v: unknown): v is MemoryCategory {
   return typeof v === 'string' && (MEMORY_CATEGORIES as readonly string[]).includes(v)

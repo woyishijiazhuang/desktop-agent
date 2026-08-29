@@ -49,8 +49,8 @@ const editTarget = ref<Memory | null>(null)
 const editContent = ref('')
 const editCategory = ref<MemoryCategory>('general')
 
-/** 单条记忆字数上限（须与 main 侧 MEMORY_MAX_ENTRY_CHARS=200 一致；配合 NInput show-count 展示计数）。 */
-const MAX_MEMORY_CHARS = 200
+/** 单条记忆字数上限（须与 main 侧 MEMORY_MAX_ENTRY_CHARS=500 一致；配合 NInput show-count 展示计数）。 */
+const MAX_MEMORY_CHARS = 500
 
 async function load(): Promise<void> {
   loading.value = true

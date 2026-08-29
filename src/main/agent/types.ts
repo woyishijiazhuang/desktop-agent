@@ -93,10 +93,28 @@ export interface PermissionRequest {
    * beforeToolCall 串行逐个到达，但批量条据此一次展示整批的命令/路径，供一次性决策。
    */
   batch: PermissionBatchItem[]
+  /**
+   * 超时截止时间（epoch ms）：到点 main 侧自动拒绝；0 = 一直等待（不超时）。
+   * renderer 据此在批量条上显示倒计时，并同步清理本地队列。
+   */
+  expiresAt: number
 }
 
-/** 权限确认超时（ms）：main 侧无人响应时自动拒绝，避免 Agent 永久挂起。renderer 用同一常量清理本地队列。 */
-export const PERMISSION_TIMEOUT_MS = 60_000
+/**
+ * settings 表中存储的「跳过工具确认」开关 key（boolean，默认 false）。
+ * 开启后危险工具（write_file / edit_file / bash / install_skill）免确认直接放行；
+ * 破坏性命令（deny 兜底）不受覆盖，始终人工确认。permission 钩子实时读取，改后下一轮立即生效。
+ */
+export const SETTING_PERMISSION_AUTO_APPROVE = 'permission.autoApprove'
+
+/**
+ * settings 表中存储的「工具确认超时」key（秒，默认 60）。
+ * 等待用户确认的最长时间，超时自动拒绝；0 = 一直等待。permission 钩子实时读取。
+ */
+export const SETTING_PERMISSION_TIMEOUT_SEC = 'permission.timeoutSec'
+
+/** 工具确认超时默认值（秒）。 */
+export const DEFAULT_PERMISSION_TIMEOUT_SEC = 60
 
 /**
  * 计划审批请求（exit_plan_mode 提交计划后 main 推给 renderer 展示）。

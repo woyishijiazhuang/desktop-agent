@@ -9,7 +9,11 @@ import { db } from '../database'
 import { createLogger } from '../utils/log'
 import { isPlanMode } from './tools/plan-mode'
 import type { PermissionRequest, PermissionBatchItem, PermissionScope } from './types'
-import { PERMISSION_TIMEOUT_MS } from './types'
+import {
+  SETTING_PERMISSION_AUTO_APPROVE,
+  SETTING_PERMISSION_TIMEOUT_SEC,
+  DEFAULT_PERMISSION_TIMEOUT_SEC
+} from './types'
 
 const log = createLogger('permission')
 
@@ -21,7 +25,8 @@ const log = createLogger('permission')
  * 3. 命中持久白名单（用户点过「总是允许」）→ 直接放行；
  * 4. 命中本会话放行（用户点过「本次会话允许」）→ 直接放行；
  * 5. 命中本回合自动放行（用户点过「允许本回合全部」，未命中破坏性模式）→ 直接放行；
- * 6. 其余 → 推送 renderer，在对应的工具卡片上等待人工确认。
+ * 6. 设置开启「跳过工具确认」（且未命中破坏性模式）→ 直接放行；
+ * 7. 其余 → 推送 renderer，在对应的工具卡片上等待人工确认。
  * write_file / edit_file 无持久白名单（路径型放行意义有限），仅支持「本次会话放行」。
  * install_skill 会从外部平台下载并落盘不可信代码，同样需要人工确认。
  */
@@ -174,6 +179,12 @@ export function createBeforeToolCallHook(
       decision = evaluateFile(sessionId, path)
     }
     if (decision === 'allow') return undefined
+    // 全局「跳过工具确认」开关：开启时危险工具免确认直接放行；
+    // 破坏性命令（deny 兜底）不可被覆盖，始终人工确认。实时读取，改后下一轮立即生效。
+    if (!denyHit && db.getSetting<boolean>(SETTING_PERMISSION_AUTO_APPROVE)) {
+      log.info('跳过工具确认设置生效，自动放行', { sessionId, toolName: toolCall.name })
+      return undefined
+    }
     // 批标记只作用于同一条 assistant 消息：引用不同说明已进入新一批，旧标记失效。
     const batchRef = sessionBatchAutoAllow.get(sessionId)
     const denyRef = sessionBatchDeny.get(sessionId)
@@ -207,6 +218,9 @@ export function createBeforeToolCallHook(
           ? (ctx.args as { command?: string }).command?.slice(0, 200)
           : undefined
     })
+    // 超时实时读取设置（秒 → ms）：0 = 一直等待，不设超时兜底。
+    const timeoutSec = getPermissionTimeoutSec()
+    const expiresAt = timeoutSec > 0 ? Date.now() + timeoutSec * 1000 : 0
     const payload: PermissionRequest = {
       requestId,
       sessionId,
@@ -214,21 +228,26 @@ export function createBeforeToolCallHook(
       toolCallId: toolCall.id,
       args: ctx.args,
       denyHit,
-      batch
+      batch,
+      expiresAt
     }
     rendererClient.agentEvent.onPermissionRequest(payload)
 
     return new Promise<BeforeToolCallResult | undefined>((resolve) => {
       // 超时兜底：确认卡片无人响应（如用户在设置页、窗口被重建、应用失焦）时自动拒绝，
-      // 避免 Agent 因 pending Promise 永久挂起。renderer 侧队列用同一常量同步清理。
-      const timer = setTimeout(() => {
-        pending.delete(requestId)
-        log.warn('权限请求超时，自动拒绝', { sessionId, toolName: toolCall.name })
-        resolve({ block: true, reason: '权限确认超时，已自动拒绝' })
-      }, PERMISSION_TIMEOUT_MS)
+      // 避免 Agent 因 pending Promise 永久挂起。一直等待（timeoutSec = 0）时不设兜底。
+      // renderer 侧依据 payload.expiresAt 同步显示倒计时并清理本地队列。
+      const timer =
+        timeoutSec > 0
+          ? setTimeout(() => {
+              pending.delete(requestId)
+              log.warn('权限请求超时，自动拒绝', { sessionId, toolName: toolCall.name })
+              resolve({ block: true, reason: '权限确认超时，已自动拒绝' })
+            }, timeoutSec * 1000)
+          : null
       // 支持 abort：agent.abort 时取消等待
       const finish = (result?: BeforeToolCallResult): void => {
-        clearTimeout(timer)
+        if (timer) clearTimeout(timer)
         pending.delete(requestId)
         resolve(result)
       }
@@ -302,6 +321,14 @@ function summarizeBatchArgs(toolName: string, args: unknown): string {
     default:
       return str('path') || ''
   }
+}
+
+/** 读取「工具确认超时」设置（秒）：非法/未配置回退默认 60；0 = 一直等待。 */
+function getPermissionTimeoutSec(): number {
+  const v = db.getSetting<number>(SETTING_PERMISSION_TIMEOUT_SEC)
+  return typeof v === 'number' && Number.isFinite(v) && v >= 0
+    ? Math.floor(v)
+    : DEFAULT_PERMISSION_TIMEOUT_SEC
 }
 
 /** bash 命令判定：deny 优先，其次只读命令，再次持久白名单，最后会话放行。 */

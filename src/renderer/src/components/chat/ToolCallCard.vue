@@ -152,11 +152,13 @@ const streamText = computed(() =>
 )
 const isStreaming = computed(() => !!streamText.value)
 
-/** 流式输出到达：自动展开卡片并跟随滚动到底部，让用户实时看到命令输出。 */
+/** 流式输出到达：自动展开卡片并跟随滚动到底部，让用户实时看到命令输出。
+ *  注意不要在此解除粘底（pauseStick）：用户贴底确认工具后若解除跟随，
+ *  后续输出/新内容增长时视口会脱离底部、不再自动滚底（用户正在底部时本就应继续跟随；
+ *  不在底部时 stick 已为 false，展开不会把视口拉回底部）。 */
 watch(streamText, () => {
   if (!streamText.value) return
   if (!expanded.value) {
-    pauseStick?.()
     expanded.value = true
     codeRendered.value = true
   }

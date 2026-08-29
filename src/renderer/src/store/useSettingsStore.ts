@@ -23,10 +23,13 @@ import {
   SETTING_CLOSE_TO_TRAY,
   SETTING_TITLE_BAR_MODE,
   SETTING_AGENT_ENV,
+  SETTING_PERMISSION_AUTO_APPROVE,
+  SETTING_PERMISSION_TIMEOUT_SEC,
   DEFAULT_MAX_TURNS_PER_RUN,
   DEFAULT_FIND_SKILL_SOURCE,
   DEFAULT_AUTO_COMPRESS_ENABLED,
-  DEFAULT_AUTO_COMPRESS_THRESHOLD
+  DEFAULT_AUTO_COMPRESS_THRESHOLD,
+  DEFAULT_PERMISSION_TIMEOUT_SEC
 } from '@main/agent/types'
 
 /** 思考级别可选项（renderer 选择器用）。须与 @main/agent/types 的 ThinkingLevel 一一对应。 */
@@ -72,6 +75,10 @@ export const useSettingsStore = defineStore('settings', () => {
   const autoCompressThreshold = ref<number>(DEFAULT_AUTO_COMPRESS_THRESHOLD)
   /** 桌面通知开关（默认开启；关闭后不弹系统通知）。 */
   const notificationsEnabled = ref(true)
+  /** 跳过工具确认（默认关闭；开启后危险工具免确认，破坏性命令除外）。 */
+  const permissionAutoApprove = ref(false)
+  /** 工具确认超时（秒；0 = 一直等待，默认 60）。 */
+  const permissionTimeoutSec = ref(DEFAULT_PERMISSION_TIMEOUT_SEC)
   /** 关闭窗口时最小化到托盘（默认关闭：关窗即退出/关闭窗口）。 */
   const closeToTray = ref(false)
   /** 标题栏模式（默认 native：优先当前平台原生窗口栏）。 */
@@ -106,7 +113,9 @@ export const useSettingsStore = defineStore('settings', () => {
       closeToTrayVal,
       titleBarModeVal,
       workdirVal,
-      agentEnvVal
+      agentEnvVal,
+      permissionAutoApproveVal,
+      permissionTimeoutSecVal
     ] = await Promise.all([
       mainClient.db.getSetting(SETTING_DEFAULT_SYSTEM_PROMPT),
       mainClient.db.getSetting(SETTING_DEFAULT_THINKING_LEVEL),
@@ -124,7 +133,9 @@ export const useSettingsStore = defineStore('settings', () => {
       mainClient.db.getSetting(SETTING_CLOSE_TO_TRAY),
       mainClient.db.getSetting(SETTING_TITLE_BAR_MODE),
       mainClient.agent.getWorkdir(),
-      mainClient.db.getSetting(SETTING_AGENT_ENV)
+      mainClient.db.getSetting(SETTING_AGENT_ENV),
+      mainClient.db.getSetting(SETTING_PERMISSION_AUTO_APPROVE),
+      mainClient.db.getSetting(SETTING_PERMISSION_TIMEOUT_SEC)
     ])
     tools.value = toolList
     installedSkills.value = skills
@@ -139,6 +150,12 @@ export const useSettingsStore = defineStore('settings', () => {
     webSearchKeyConfigured.value = webSearchConfig.hasKey
     findSkillSource.value = findSkillConfig.source
     notificationsEnabled.value = (notificationsEnabledVal as boolean | undefined) ?? true
+    permissionAutoApprove.value = (permissionAutoApproveVal as boolean | undefined) ?? false
+    const permTimeout = permissionTimeoutSecVal as number | undefined
+    permissionTimeoutSec.value =
+      typeof permTimeout === 'number' && Number.isFinite(permTimeout) && permTimeout >= 0
+        ? Math.floor(permTimeout)
+        : DEFAULT_PERMISSION_TIMEOUT_SEC
     memoryEnabled.value = (memoryEnabledVal as boolean | undefined) ?? true
     skillsEnabled.value = (skillsEnabledVal as boolean | undefined) ?? true
     kbEnabled.value = (kbEnabledVal as boolean | undefined) ?? true
@@ -243,6 +260,27 @@ export const useSettingsStore = defineStore('settings', () => {
   async function saveNotificationsEnabled(v: boolean): Promise<void> {
     await mainClient.db.setSetting(SETTING_NOTIFICATIONS_ENABLED, v)
     notificationsEnabled.value = v
+  }
+
+  /**
+   * 切换「跳过工具确认」。无需驱逐 Agent：main 侧 permission 钩子实时读取，
+   * 修改后下一次工具调用立即生效；破坏性命令不受覆盖，始终人工确认。
+   */
+  async function savePermissionAutoApprove(v: boolean): Promise<void> {
+    await mainClient.db.setSetting(SETTING_PERMISSION_AUTO_APPROVE, v)
+    permissionAutoApprove.value = v
+  }
+
+  /**
+   * 保存「工具确认超时」（秒）。仅接受非负整数（0 = 一直等待），非法值拒绝写库。
+   * 无需驱逐 Agent：main 侧每次权限请求实时读取；已在等待中的请求按其入队时的
+   * expiresAt 生效，新请求按新值生效。
+   */
+  async function savePermissionTimeoutSec(n: number): Promise<void> {
+    const v = Math.floor(n)
+    if (!Number.isInteger(v) || v < 0) return
+    await mainClient.db.setSetting(SETTING_PERMISSION_TIMEOUT_SEC, v)
+    permissionTimeoutSec.value = v
   }
 
   /**
@@ -366,11 +404,15 @@ export const useSettingsStore = defineStore('settings', () => {
     titleBarMode,
     workdir,
     agentEnv,
+    permissionAutoApprove,
+    permissionTimeoutSec,
     loadSettings,
     saveDefaultSystemPrompt,
     setLastUsedThinkingLevel,
     saveMaxTurnsPerRun,
     saveNotificationsEnabled,
+    savePermissionAutoApprove,
+    savePermissionTimeoutSec,
     saveMemoryEnabled,
     saveSkillsEnabled,
     saveKbEnabled,
