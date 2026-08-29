@@ -25,6 +25,8 @@ export interface Session {
   pinned: boolean
   /** 归档：从常规分组移入「已归档」组，不再参与置顶排序 */
   archived: boolean
+  /** 当前计划（exit_plan_mode 批准后写入；null = 无计划）。 */
+  plan: string | null
   /** unix ms 时间戳，与 messages.timestamp 统一格式。 */
   createdAt: number
   updatedAt: number
@@ -48,6 +50,8 @@ export interface UpdateSessionParams {
   systemPrompt?: string
   /** 写入/清空（null）最终系统提示词快照。自定义提示词变更时由 updateSession 内部自动清空。 */
   resolvedSystemPrompt?: string | null
+  /** 写入/清空（null）当前计划（exit_plan_mode 批准后由 main 写入）。 */
+  plan?: string | null
   pinned?: boolean
   archived?: boolean
   /** 用户主动操作：为 true 时同步刷新 last_active_at（置顶会话列表） */
@@ -93,6 +97,7 @@ export interface SessionRow {
   deleted_at: number | null
   pinned: number
   archived: number
+  plan: string | null
   created_at: number
   updated_at: number
   last_active_at: number

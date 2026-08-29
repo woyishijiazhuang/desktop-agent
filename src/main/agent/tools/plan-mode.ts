@@ -2,6 +2,7 @@ import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { randomUUID } from 'node:crypto'
 import { rendererClient } from '../../utils/render-client'
+import { db } from '../../database'
 import { createLogger } from '../../utils/log'
 import { DEFAULT_PERMISSION_TIMEOUT_SEC } from '../types'
 import type { PlanApprovalRequest } from '../types'
@@ -15,6 +16,13 @@ const log = createLogger('tool:plan_mode')
  */
 const sessionPlanMode = new Map<string, boolean>()
 
+/**
+ * 计划批准后本 run 内免确认的 bash 命令（词级前缀匹配，逻辑同持久白名单）。
+ * 仅在计划批准时写入（exit_plan_mode），agent_start 时随计划模式一并清除；
+ * 破坏性命令（deny 兜底）不受预批准覆盖，始终人工确认。
+ */
+const sessionPlanAllowedCommands = new Map<string, string[]>()
+
 export function setPlanMode(sessionId: string, on: boolean): void {
   if (on) sessionPlanMode.set(sessionId, true)
   else sessionPlanMode.delete(sessionId)
@@ -24,9 +32,31 @@ export function isPlanMode(sessionId: string): boolean {
   return sessionPlanMode.has(sessionId)
 }
 
-/** 新一轮 run 开始时清除（计划模式按 run 生效，避免跨轮残留拦截）。 */
+/** 新一轮 run 开始时清除（计划模式与预批准命令均按 run 生效，避免跨轮残留拦截）。 */
 export function clearPlanMode(sessionId: string): void {
   sessionPlanMode.delete(sessionId)
+  sessionPlanAllowedCommands.delete(sessionId)
+}
+
+/** 记录计划批准时预登记的免确认 bash 命令（覆盖式）。 */
+function setPlanAllowedPrompts(sessionId: string, commands: string[]): void {
+  const clean = commands.map((c) => c.trim()).filter(Boolean)
+  if (clean.length > 0) sessionPlanAllowedCommands.set(sessionId, clean)
+}
+
+/** 计划批准后本 run 内：命令是否命中预登记的免确认命令（词级前缀匹配）。 */
+export function isPlanAllowedCommand(sessionId: string, command: string): boolean {
+  const rules = sessionPlanAllowedCommands.get(sessionId)
+  if (!rules || !command) return false
+  const cmdWords = command.split(/\s+/).filter(Boolean)
+  return rules.some((rule) => {
+    const ruleWords = rule.split(/\s+/).filter(Boolean)
+    if (cmdWords.length < ruleWords.length) return false
+    for (let i = 0; i < ruleWords.length; i++) {
+      if (cmdWords[i] !== ruleWords[i]) return false
+    }
+    return true
+  })
 }
 
 /** 待审批计划：requestId → 决议回调。 */
@@ -70,7 +100,19 @@ const exitParams = Type.Object({
   plan: Type.String({
     description:
       '完整计划文本：分步骤、可执行（含涉及的关键文件/命令）、标明每步产出，供用户审阅后批准'
-  })
+  }),
+  allowedPrompts: Type.Optional(
+    Type.Array(
+      Type.String({
+        description:
+          '计划中预登记、批准后执行阶段免确认的 bash 命令（完整命令或前缀，如 "pnpm test"）。'
+      }),
+      {
+        description:
+          '计划中预登记的 bash 命令（可选）：批准后本 run 执行阶段直接放行，减少重复确认；破坏性命令不受影响，仍需人工确认。'
+      }
+    )
+  )
 })
 
 export interface EnterPlanDetails {
@@ -121,18 +163,21 @@ export function createPlanModeTools(sessionId: string): AgentTool[] {
     executionMode: 'sequential',
     async execute(_toolCallId, p) {
       const requestId = randomUUID()
+      const allowedPrompts = p.allowedPrompts ?? []
       const payload: PlanApprovalRequest = {
         requestId,
         sessionId,
         title: p.title?.trim() || '计划',
-        plan: p.plan
+        plan: p.plan,
+        allowedPrompts
       }
       rendererClient.agentEvent.onPlanRequest(payload)
       log.info('提交计划待审批', {
         sessionId,
         requestId,
         title: payload.title,
-        planLength: p.plan.length
+        planLength: p.plan.length,
+        allowedPromptsCount: allowedPrompts.length
       })
       return new Promise((resolve) => {
         const timer = setTimeout(() => {
@@ -154,9 +199,23 @@ export function createPlanModeTools(sessionId: string): AgentTool[] {
             clearTimeout(timer)
             pending.delete(requestId)
             if (approved) {
-              // 批准：退出计划模式，放行后续执行
+              // 批准：退出计划模式，放行后续执行；计划落库供回看/跨会话复用；
+              // 预登记命令在本 run 内免确认（agent_start 时随计划模式一并清除）。
               setPlanMode(sessionId, false)
-              log.info('计划已批准，退出计划模式', { sessionId, requestId })
+              setPlanAllowedPrompts(sessionId, allowedPrompts)
+              if (p.plan.trim()) {
+                try {
+                  const updated = db.updateSession(sessionId, { plan: p.plan.trim() })
+                  rendererClient.agentEvent.onSessionUpdate(updated)
+                } catch (err) {
+                  log.error('计划落库失败', { sessionId, error: err })
+                }
+              }
+              log.info('计划已批准，退出计划模式', {
+                sessionId,
+                requestId,
+                allowedPromptsCount: allowedPrompts.length
+              })
               resolve({
                 content: [{ type: 'text', text: '计划已获用户批准，现在开始按计划执行。' }],
                 details: { approved: true, requestId }

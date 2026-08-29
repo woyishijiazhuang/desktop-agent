@@ -28,6 +28,7 @@ import {
 } from './tools/web-search-config'
 import { resolvePermission, SETTING_BASH_ALLOWLIST } from './permission'
 import { resolvePlanApproval } from './tools/plan-mode'
+import { resolveAskUser } from './tools/ask-user'
 import { extractDocumentText } from '../utils/doc-parser'
 import { completeText, type CompleteTextResult } from './models'
 import { resolveAssistantCost } from './model-config/pricing'
@@ -933,6 +934,14 @@ export class AgentService extends IpcService {
   /** 回传计划审批结果（renderer 计划卡片「批准/拒绝」后调用，feedback 在拒绝时携带）。 */
   respondPlan(requestId: string, approved: boolean, feedback?: string): void {
     resolvePlanApproval(requestId, approved, feedback?.trim() ?? '')
+  }
+
+  /**
+   * 回传 ask_user 提问的答案（renderer 问答卡片作答后调用）。
+   * value：单选/输入为字符串，多选为字符串数组；用户跳过时为 null。
+   */
+  respondAskUser(requestId: string, value: string | string[] | null): void {
+    resolveAskUser(requestId, value)
   }
 
   /** 当前 bash 持久白名单（权限弹窗点「总是允许」累积的命令列表）。 */

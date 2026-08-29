@@ -3,10 +3,16 @@ import type { AgentEvent } from '@earendil-works/pi-agent-core'
 import { useChatStore } from '../store/useChatStore'
 import { usePermissionStore } from '../store/usePermissionStore'
 import { usePlanStore } from '../store/usePlanStore'
+import { useAskUserStore } from '../store/useAskUserStore'
 import { useSessionStore } from '../store/useSessionStore'
 import { useBackgroundStore } from '../store/useBackgroundStore'
 import type { Session } from '@main/service/db-service'
-import type { AgentEventPayload, PermissionRequest, PlanApprovalRequest } from '@main/agent/types'
+import type {
+  AgentEventPayload,
+  PermissionRequest,
+  PlanApprovalRequest,
+  AskUserRequest
+} from '@main/agent/types'
 import type { BackgroundSessionInfo } from '@main/agent/tools/bash-session'
 
 /**
@@ -47,6 +53,7 @@ export class AgentEventService extends IpcService {
     if (payload.event.type === 'agent_end') {
       usePermissionStore().clearSession(payload.sessionId)
       usePlanStore().clearSession(payload.sessionId)
+      useAskUserStore().clearSession(payload.sessionId)
     }
     // 流式工具输出：当前会话走 rAF 缓冲（每帧最多应用一次，防高频 IPC 逐条触发渲染）；
     // 后台会话直接应用（不触发渲染，与 message_update 处理一致）。
@@ -135,6 +142,11 @@ export class AgentEventService extends IpcService {
   /** 计划审批请求（exit_plan_mode 提交计划后推送）：入队，PlanApprovalBar 据此展示。 */
   onPlanRequest(req: PlanApprovalRequest): void {
     usePlanStore().enqueue(req)
+  }
+
+  /** 澄清问题请求（ask_user 工具调用后推送）：入队，AskUserBar 据此展示。 */
+  onAskUserRequest(req: AskUserRequest): void {
+    useAskUserStore().enqueue(req)
   }
 
   /**

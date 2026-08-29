@@ -25,6 +25,8 @@ export function initSchema(db: DatabaseSync): void {
       deleted_at INTEGER,
       pinned INTEGER NOT NULL DEFAULT 0,
       archived INTEGER NOT NULL DEFAULT 0,
+      -- 当前计划（exit_plan_mode 批准后写入，供审阅/回看/跨会话复用；null = 无计划）。
+      plan TEXT,
       created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
       last_active_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
@@ -216,5 +218,9 @@ export function initSchema(db: DatabaseSync): void {
   ).map((c) => c.name)
   if (!sessionCols.includes('resolved_system_prompt')) {
     db.exec('ALTER TABLE sessions ADD COLUMN resolved_system_prompt TEXT')
+  }
+  // 轻量列补齐：老库 sessions 无 plan 列时补列（可空列，保留既有会话）。
+  if (!sessionCols.includes('plan')) {
+    db.exec('ALTER TABLE sessions ADD COLUMN plan TEXT')
   }
 }

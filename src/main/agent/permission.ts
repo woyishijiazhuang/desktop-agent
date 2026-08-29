@@ -7,7 +7,7 @@ import type {
 import { rendererClient } from '../utils/render-client'
 import { db } from '../database'
 import { createLogger } from '../utils/log'
-import { isPlanMode } from './tools/plan-mode'
+import { isPlanMode, isPlanAllowedCommand } from './tools/plan-mode'
 import type { PermissionRequest, PermissionBatchItem, PermissionScope } from './types'
 import {
   SETTING_PERMISSION_AUTO_APPROVE,
@@ -159,8 +159,13 @@ export function createBeforeToolCallHook(
     const { toolCall } = ctx
     if (!DANGEROUS_TOOLS.has(toolCall.name)) return undefined
 
-    // 计划模式：危险工具一律拦截，引导先提交计划（exit_plan_mode 审批）
+    // 计划模式：危险工具一律拦截，引导先提交计划（exit_plan_mode 审批）。
+    // 例外：bash 的只读简单命令（ls / git status 等）在规划期放行，便于探索代码库。
     if (isPlanMode(sessionId)) {
+      if (toolCall.name === 'bash') {
+        const command = (ctx.args as { command?: string }).command?.trim() ?? ''
+        if (evaluateReadonlyBash(command)) return undefined
+      }
       log.info('计划模式拦截危险工具', { sessionId, toolName: toolCall.name })
       return {
         block: true,
@@ -331,7 +336,13 @@ function getPermissionTimeoutSec(): number {
     : DEFAULT_PERMISSION_TIMEOUT_SEC
 }
 
-/** bash 命令判定：deny 优先，其次只读命令，再次持久白名单，最后会话放行。 */
+/** 是否为只读安全命令（简单命令 + 命中只读白名单）：计划模式与只读子代理的 bash 放行判定。 */
+export function evaluateReadonlyBash(command: string): boolean {
+  if (!command) return false
+  return isSimpleCommand(command) && READONLY_COMMANDS.some((rule) => matchesRule(command, rule))
+}
+
+/** bash 命令判定：deny 优先，其次只读命令，再次计划预批准，再次持久白名单，最后会话放行。 */
 function evaluateBash(
   sessionId: string,
   command: string
@@ -340,7 +351,11 @@ function evaluateBash(
   if (DENY_PATTERNS.some((re) => re.test(command))) {
     return { decision: 'ask', denyHit: true }
   }
-  if (isSimpleCommand(command) && READONLY_COMMANDS.some((rule) => matchesRule(command, rule))) {
+  if (evaluateReadonlyBash(command)) {
+    return { decision: 'allow', denyHit: false }
+  }
+  // 计划批准时预登记的免确认命令（词级前缀匹配；deny 兜底已先行拦截）
+  if (isPlanAllowedCommand(sessionId, command)) {
     return { decision: 'allow', denyHit: false }
   }
   const allowlist = db.getSetting<string[]>(SETTING_BASH_ALLOWLIST) ?? []

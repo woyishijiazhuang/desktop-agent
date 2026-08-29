@@ -127,6 +127,36 @@ export interface PlanApprovalRequest {
   title: string
   /** 完整计划文本（分步、可执行，供用户审阅）。 */
   plan: string
+  /**
+   * 计划中预登记的 bash 命令（词级前缀匹配）：批准后本 run 内执行期免确认。
+   * 破坏性命令（deny 兜底）始终人工确认，不受预批准覆盖。
+   */
+  allowedPrompts: string[]
+}
+
+/** 结构化问题的一个选项。 */
+export interface AskUserOption {
+  label: string
+  value: string
+}
+
+/**
+ * ask_user 提问请求（工具调用后 main 推给 renderer 展示）。
+ * renderer 在问答卡片上作答后调 agent.respondAskUser 回传；超时（expiresAt）自动按「跳过」处理。
+ */
+export interface AskUserRequest {
+  requestId: string
+  sessionId: string
+  /** 问题文本（必填）。 */
+  question: string
+  /** 预置选项（可选）：UI 以选项卡片展示，用户点选或自由输入。 */
+  options: AskUserOption[]
+  /** 是否允许多选（仅对选项生效；自由输入总是单值）。 */
+  multiSelect: boolean
+  /** 是否必答：为 true 时用户不能跳过（只能选择/输入后提交）。 */
+  required: boolean
+  /** 超时截止时间（epoch ms）：到点 main 侧自动按「跳过」处理；0 = 一直等待。 */
+  expiresAt: number
 }
 
 /**

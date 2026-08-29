@@ -26,19 +26,24 @@ export class BashService extends IpcService {
     return bashSessionManager.listBackground()
   }
 
-  /** 终止后台会话（面板「终止」按钮）。进程组 SIGTERM → 宽限期 → SIGKILL。 */
+  /** 终止后台任务（面板「终止」按钮）：shell 进程组 SIGTERM → 宽限期 → SIGKILL；下载任务 abort。 */
   killBackground(id: string): { ok: boolean; error?: string } {
-    const shell = bashSessionManager.getBackground(id)
-    if (!shell) return { ok: false, error: '后台会话不存在（可能已退出）' }
-    log.info('面板终止后台会话', { id, command: shell.command.slice(0, 120) })
-    shell.kill()
+    const task = bashSessionManager.getBackground(id)
+    if (!task) return { ok: false, error: '后台任务不存在（可能已退出）' }
+    log.info('面板终止后台任务', { id, command: task.command.slice(0, 120) })
+    task.kill()
     return { ok: true }
   }
 
-  /** 读取后台会话输出（tail=false 返回全量缓冲，供面板展示尾部输出；不影响 agent 增量游标）。 */
+  /** 读取后台任务输出（tail=false 返回全量缓冲，供面板展示尾部输出；不影响 agent 增量游标）。 */
   readBackgroundOutput(id: string): { text: string; exited: boolean; exitCode: number | null } {
-    const shell = bashSessionManager.getBackground(id)
-    if (!shell) return { text: '', exited: true, exitCode: null }
-    return shell.read(false)
+    const task = bashSessionManager.getBackground(id)
+    if (!task) return { text: '', exited: true, exitCode: null }
+    return task.read(false)
+  }
+
+  /** 移除已退出的后台任务（面板「×」按钮；运行中的任务请先终止）。 */
+  removeBackground(id: string): { ok: boolean; error?: string } {
+    return bashSessionManager.removeBackground(id)
   }
 }

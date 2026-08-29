@@ -32,6 +32,8 @@
 | 20 | `update_memory` | 更新记忆 | 记忆管理 | parallel | 是 | 否 |
 | 21 | `delete_memory` | 删除记忆 | 记忆管理 | parallel | 是 | 否 |
 | 22 | `notify` | 桌面通知 | 工具 | sequential | 是 | 否 |
+| 23 | `ask_user` | 询问用户 | 澄清 | sequential | 是 | 否 |
+| 24 | `task` | 委派子任务 | 子代理 | sequential | 是 | 否 |
 
 另支持 MCP 协议动态接入外部工具（stdio / streamable HTTP）。
 
@@ -50,7 +52,7 @@
 | 执行命令 | `bash` | `Bash` | Terminal | Terminal |
 | 网页搜索 | `web_search` | `WebSearch` | `WebSearch` | Cascade 内置 |
 | URL 内容抓取 | `web_fetch` | `WebFetch` | 有 | Cascade 内置 |
-| 任务/子 Agent | 无 | `Task`（多种子 agent） | Multi-Agent | Cascade |
+| 任务/子 Agent | `task`（plan / general 子代理，见第十批实现记录） | `Task`（多种子 agent） | Multi-Agent | Cascade |
 
 ---
 
@@ -194,7 +196,7 @@
 
 **核心搜索三件套已补齐**：`grep`（内容搜索）、`glob`（文件模式匹配）、`web_fetch`（URL 抓取）。「找到所有使用了 `createUser` 函数的文件」现在只需 1 次 `grep` 调用即可完成，且作为只读工具直接放行、无需权限确认。
 
-**当前最大缺口**：子 Agent / Task 系统（并行任务）。这是与 Claude Code / Cursor 差距最明显的一项——复杂任务无法并行化，上下文窗口容易被大量搜索结果撑爆。P1 剩余缺口仅此一项（Notebook 编辑属 P1），P2 剩 TodoWrite 任务管理。
+**当前最大缺口**：~~子 Agent / Task 系统（并行任务）~~ 已补齐（第十批：`task` 工具 + plan / general 子代理，见文末实现记录）。剩余方向：子代理**后台化并行执行**（主 Agent 不等待、侧边栏展示后台任务，见第十批「未来方向」）、Notebook 编辑、TodoWrite 任务管理、代码库索引 / 语义搜索。
 
 ---
 
@@ -340,3 +342,48 @@
   - `bash_output` 新增 `wait_ms` 参数（上限 120s）：传入后阻塞等待「进程退出 或 到时」，一次调用即可拿到终态输出，无需轮询；进程仍运行时照旧返回 `[进程运行中]`+部分输出，agent 可加大 wait_ms 再等
   - `bash` 后台返回指引文本补充「建议传 wait_ms 等待命令完成」
 - 验证：`pnpm typecheck`（node+web）通过；改动文件 eslint 0 问题
+
+### 2026-08-30（第十批）：Plan Mode 增强 + ask_user + 子代理系统
+
+对标 Claude Code 补齐规划闭环与 Task 子代理（落地前一版分析的 5 个差距点）：
+
+**计划持久化（sessions 表）**
+
+- `schema.ts`：sessions 表新增 `plan TEXT` 列（含老库轻量补列）；`Session`/`SessionRow`/`UpdateSessionParams`/`toSession` 全链路打通
+- `plan-mode.ts`：`exit_plan_mode` 批准时将计划写入会话字段并推送 `onSessionUpdate`（供回看/跨会话复用）
+
+**ask_user（澄清问题，对标 AskUserQuestion）**
+
+- 新增 `src/main/agent/tools/ask-user.ts`：`ask_user` 工具，结构化参数（`question` 必填 + `options` 选项数组 + `multiSelect` + `required`），Promise 挂起等用户作答，复用权限超时配置（0 = 一直等待），支持 abort，agent_end 清理挂起
+- 渲染进程：`AskUserBar.vue` + `useAskUserStore.ts`（选项胶囊 / 自由输入 / 跳过），挂载于 ChatView 输入框上方；`agent-service.ts` 新增 `respondAskUser` IPC
+
+**预批准命令（allowedPrompts）**
+
+- `exit_plan_mode` 新增 `allowedPrompts` 参数：批准后本 run 内按词级前缀匹配免确认（`sessionPlanAllowedCommands`，agent_start 随计划模式一并清除）；破坏性命令 deny 兜底不可绕过
+- `permission.ts` 的 `evaluateBash` 判定链增加「计划预批准」层（只读 → 预批准 → 持久白名单 → 会话放行）
+
+**计划模式软引导 + 只读 bash 放行**
+
+- `permission.ts`：计划模式下只读简单命令（ls / git status 等）放行，规划期可探索代码库
+- `agent-manager.ts`：`transformContext` 在计划模式下每轮注入系统提醒（不失效前缀缓存），与 beforeToolCall 硬拦截构成双重防线
+
+**子代理系统（对标 Claude Code Task / Plan Agent）**
+
+- 新增 `src/main/agent/subagent.ts`：宿主注册/注销（`registerSubagentHost` / `unregisterSubagentHost`，随主 Agent 生命周期管理）+ `runSubagent`
+- 新增 `src/main/agent/tools/task.ts`：`task` 工具（`subagentType: 'plan' | 'general'`）
+  - **plan**：只读工具集（按 `PLAN_READONLY_TOOLS` 白名单过滤）+ 只读 bash 钩子 + 专属规划系统提示词，输出 Markdown 分步计划
+  - **general**：完整工具集 + 复用主会话 `createBeforeToolCallHook`（危险工具仍弹用户确认，autoApprove/白名单/批量条全部生效）
+- 子代理复用主会话模型 / streamFn / API Key（宿主注入，避免 `subagent → tools → task → subagent` 循环依赖）；独立 context，不占主上下文
+- 用量：子代理 LLM 调用计入 `usage_logs`（kind='chat'，归属主会话）；流式进度经 task 卡片展示
+- 验证：`npm run typecheck`（node+web）通过；改动文件 eslint 0 问题
+
+**已知边界**：子代理内权限请求的 toolCallId 不在主 transcript，聊天区无对应「等待确认」卡片，但 PermissionBar 批量条仍可正常批准/拒绝。
+
+**未来方向：子代理后台化并行执行**（本次不做，作为可行方向记录）
+
+- **现状**：`task` 工具为同步前台执行——主 Agent `await` 子代理完成后才继续；子代理不注册进 `bash-session.ts` 的 `backgrounds` map，侧边栏后台任务面板不展示
+- **可行方案**：
+  1. `task` 改为 fire-and-forget：启动子代理后立即返回（携带任务 id），主 Agent 不等待；子代理完成后结果经 `steer()` / followUp 注入回主上下文，主 Agent 可并行推进其他工作
+  2. 侧边栏展示：扩展 `BackgroundSessionInfo` 新增 `kind: 'subagent'`，运行中的子代理作为后台任务注册进 `backgrounds` map，经 `onBackgroundSessions` 推送快照（复用现有面板的查看输出/终止能力）
+  3. 并发控制：当前子代理并发无单独闸门（受主 Agent 单轮并行 tool 调用数限制），后台化后需补充并发上限
+- **前置依赖**：主 Agent 的 turn 循环需支持「未完成任务 + 完成后注入」的恢复语义（非阻塞 task 结果回填），改动面较大，建议独立立项

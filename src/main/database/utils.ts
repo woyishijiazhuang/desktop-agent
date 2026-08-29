@@ -53,6 +53,7 @@ export function toSession(row: SessionRow): Session {
     deletedAt: row.deleted_at,
     pinned: !!row.pinned,
     archived: !!row.archived,
+    plan: row.plan,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     lastActiveAt: row.last_active_at

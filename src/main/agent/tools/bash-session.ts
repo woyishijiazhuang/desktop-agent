@@ -1,4 +1,5 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { createWriteStream } from 'node:fs'
 import { randomUUID } from 'node:crypto'
 import { createLogger } from '../../utils/log'
 
@@ -16,6 +17,22 @@ const MAX_SESSION_OUTPUT = 100_000
 const MAX_BACKGROUND_SESSIONS = 8
 /** SIGTERM/SIGINT 后升级 SIGKILL 的宽限期（ms）。 */
 const KILL_GRACE_MS = 3_000
+/** 后台下载进度推送节流间隔（ms）。 */
+const PROGRESS_INTERVAL_MS = 200
+/** 后台下载连接建立后长时间无新数据（读不到字节）视为挂死，强制中止（防死链无限拖）。 */
+const STALL_TIMEOUT_MS = 30_000
+
+/** 字节数 → 人类可读（后台任务进度/结果提示用）。 */
+export function formatBytes(n: number): string {
+  if (n < 1024) return `${n}B`
+  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`
+  if (n < 1024 * 1024 * 1024) return `${(n / 1024 / 1024).toFixed(1)}MB`
+  return `${(n / 1024 / 1024 / 1024).toFixed(2)}GB`
+}
+
+function formatSpeed(bytesPerSec: number): string {
+  return `${formatBytes(bytesPerSec)}/s`
+}
 
 /** 可用的持久化 shell 形态（跨平台）：macOS/Linux 用 bash；Windows 优先 bash（Git Bash
  * 在 PATH 时），否则回落 PowerShell（Win10+ 系统自带）。 */
@@ -442,6 +459,8 @@ export class BackgroundShell {
   readonly startedAt: number
   /** 进程 pid（面板展示/排查用）。 */
   readonly pid: number | undefined
+  /** 任务类型（统一后台任务注册表判别用）。 */
+  readonly kind = 'shell' as const
   private child: ChildProcess
   private outputBuf = ''
   private tailOffset = 0
@@ -480,7 +499,9 @@ export class BackgroundShell {
     child.on('close', (code) => {
       this.exited = true
       this.exitedAt = Date.now()
-      this.exitCode = code
+      // spawn 失败时先发 'error'（exitCode=-1）再必然发一次 'close'（code=null），
+      // 保留首个有效退出码，避免失败终态被覆盖成 null
+      if (this.exitCode === null) this.exitCode = code
       // 进程已退出，关闭 stdin 管道：让「读 stdin 到 EOF」语义在下游（如有管道级联）正确传播
       child.stdin?.end()
       this.onStateChange?.()
@@ -497,7 +518,8 @@ export class BackgroundShell {
       exited: this.exited,
       exitCode: this.exitCode,
       exitedAt: this.exitedAt,
-      outputBytes: this.outputBuf.length
+      outputBytes: this.outputBuf.length,
+      kind: 'shell'
     }
   }
 
@@ -613,6 +635,227 @@ export class BackgroundShell {
   }
 }
 
+/** 后台下载进度快照（前台模式经 onProgress 转发为 tool_execution_update）。 */
+interface DownloadProgressInfo {
+  text: string
+  bytes: number
+  total: number | null
+  durationMs: number
+}
+
+/** 后台下载任务：HTTP 流式下载，进度逐行写入输出缓冲，可终止（abort）、可等待终态。
+ *  与 BackgroundShell 共用「输出缓冲 + 状态字段 + kill/waitExit」形态，由统一注册表管理，
+ *  供 bash_output 读进度 / kill_shell 终止 / 侧栏面板展示；前台模式经 onProgress 转发流式进度。 */
+class BackgroundDownload {
+  readonly sessionId: string
+  /** 面板展示用标签：URL。 */
+  readonly command: string
+  readonly startedAt: number
+  readonly kind = 'download' as const
+  /** 最终保存路径（结果提示用）。 */
+  readonly dest: string
+  exited = false
+  exitCode: number | null = null
+  exitedAt: number | null = null
+  errorMessage?: string
+  /** 已下载字节数（前台终态/面板读取用）。 */
+  downloadedBytes = 0
+  /** 总字节数（Content-Length 缺失时 null）。 */
+  totalBytes: number | null = null
+  private outputBuf = ''
+  private tailOffset = 0
+  private controller = new AbortController()
+  private waiters = new Set<() => void>()
+  private onStateChange?: () => void
+  private onProgress?: (info: DownloadProgressInfo) => void
+  private lastEmit = 0
+
+  constructor(
+    sessionId: string,
+    url: string,
+    dest: string,
+    opts: { onStateChange?: () => void; onProgress?: (info: DownloadProgressInfo) => void }
+  ) {
+    this.sessionId = sessionId
+    this.command = url
+    this.dest = dest
+    this.startedAt = Date.now()
+    this.onStateChange = opts.onStateChange
+    this.onProgress = opts.onProgress
+    void this.#run(url)
+  }
+
+  /** 面板展示用的任务快照。 */
+  info(): BackgroundSessionInfo {
+    return {
+      id: this.sessionId,
+      command: this.command,
+      startedAt: this.startedAt,
+      pid: undefined,
+      exited: this.exited,
+      exitCode: this.exitCode,
+      exitedAt: this.exitedAt,
+      outputBytes: this.outputBuf.length,
+      kind: 'download'
+    }
+  }
+
+  /** 读取输出（进度日志 / 终态提示）：tail=true 仅返回新增；false 返回全部。 */
+  read(tail: boolean): {
+    text: string
+    exited: boolean
+    exitCode: number | null
+    errorMessage?: string
+  } {
+    let text: string
+    if (tail) {
+      text = this.outputBuf.slice(this.tailOffset)
+      this.tailOffset = this.outputBuf.length
+    } else {
+      text = this.outputBuf
+    }
+    return { text, exited: this.exited, exitCode: this.exitCode, errorMessage: this.errorMessage }
+  }
+
+  /** 终止下载（abort 底层 fetch 流）：结束后 exited 翻转并通知面板。 */
+  kill(): void {
+    this.controller.abort()
+  }
+
+  /** 等待下载结束，最多等 timeoutMs 毫秒（结束 / 超时 / abort 先到先返回）。 */
+  waitExit(timeoutMs: number, signal?: AbortSignal): Promise<boolean> {
+    if (this.exited) return Promise.resolve(true)
+    return new Promise((resolve) => {
+      let done = false
+      const finish = (ok: boolean): void => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        this.waiters.delete(onFinish)
+        if (signal) signal.removeEventListener('abort', onAbort)
+        resolve(ok)
+      }
+      const onFinish = (): void => finish(true)
+      const onAbort = (): void => finish(false)
+      const timer = setTimeout(() => finish(false), timeoutMs)
+      this.waiters.add(onFinish)
+      if (signal) {
+        if (signal.aborted) finish(false)
+        else signal.addEventListener('abort', onAbort, { once: true })
+      }
+    })
+  }
+
+  private append(line: string): void {
+    this.outputBuf += line
+    if (this.outputBuf.length > MAX_SESSION_OUTPUT) {
+      const drop = this.outputBuf.length - MAX_SESSION_OUTPUT
+      this.outputBuf = this.outputBuf.slice(drop)
+      this.tailOffset = Math.max(0, this.tailOffset - drop)
+    }
+  }
+
+  /** 终态落定：翻转状态字段 + 唤醒等待者 + 通知面板。 */
+  private finish(exitCode: number, errorMessage?: string): void {
+    this.exited = true
+    this.exitCode = exitCode
+    this.exitedAt = Date.now()
+    this.errorMessage = errorMessage
+    const waiters = [...this.waiters]
+    this.waiters.clear()
+    for (const w of waiters) w()
+    this.onStateChange?.()
+  }
+
+  async #run(url: string): Promise<void> {
+    const start = Date.now()
+    let stallTimer: ReturnType<typeof setInterval> | undefined
+    try {
+      const res = await fetch(url, {
+        headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) desktop-agent' },
+        redirect: 'follow',
+        signal: this.controller.signal
+      })
+      if (!res.ok) {
+        this.append(`下载失败：HTTP ${res.status} ${res.statusText}\n`)
+        this.finish(-1, `HTTP ${res.status} ${res.statusText}`)
+        return
+      }
+      if (!res.body) {
+        this.append('下载失败：响应无数据流（服务器未返回可下载内容）\n')
+        this.finish(-1, '响应无数据流（服务器未返回可下载内容）')
+        return
+      }
+      const declared = Number(res.headers.get('content-length') ?? NaN)
+      this.totalBytes = Number.isFinite(declared) && declared > 0 ? declared : null
+      const fileStream = createWriteStream(this.dest)
+      let streamErr: Error | null = null
+      fileStream.on('error', (e: Error) => {
+        streamErr = e
+      })
+      const reader = res.body.getReader()
+      let lastChunkAt = Date.now()
+      let speed = 0 // bytes/sec（指数移动平均）
+      // 进度快照：200ms 节流写入缓冲 + 转发前台流式通道（下载中… X / Y（速度, pct%））
+      const emit = (force = false): void => {
+        const now = Date.now()
+        if (!force && now - this.lastEmit < PROGRESS_INTERVAL_MS) return
+        this.lastEmit = now
+        const pct =
+          this.totalBytes && this.downloadedBytes > 0
+            ? `，${Math.round((this.downloadedBytes / this.totalBytes) * 100)}%`
+            : ''
+        const text = `下载中… ${formatBytes(this.downloadedBytes)} / ${
+          this.totalBytes ? formatBytes(this.totalBytes) : '未知'
+        }（${formatSpeed(speed)}${pct}）`
+        this.append(`${text}\n`)
+        this.onProgress?.({
+          text,
+          bytes: this.downloadedBytes,
+          total: this.totalBytes,
+          durationMs: Date.now() - start
+        })
+      }
+      // 挂死检测：连接建立后长时间读不到新字节视为死链，强制中止
+      stallTimer = setInterval(() => {
+        if (Date.now() - lastChunkAt > STALL_TIMEOUT_MS) this.controller.abort()
+      }, 5_000)
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        if (streamErr) throw streamErr
+        if (!value || value.byteLength === 0) continue
+        fileStream.write(value)
+        const now = Date.now()
+        const inst = (value.byteLength / Math.max(1, now - lastChunkAt)) * 1000
+        speed = speed === 0 ? inst : speed * 0.6 + inst * 0.4
+        lastChunkAt = now
+        this.downloadedBytes += value.byteLength
+        emit()
+      }
+      await new Promise<void>((resolve, reject) => {
+        fileStream.end((err) => (err ? reject(err) : resolve()))
+      })
+      if (streamErr) throw streamErr
+      const pct = this.totalBytes
+        ? `，${Math.round((this.downloadedBytes / this.totalBytes) * 100)}%`
+        : ''
+      this.append(`下载完成：${this.dest}（${formatBytes(this.downloadedBytes)}${pct}）\n`)
+      this.finish(0)
+    } catch (err) {
+      const msg = this.controller.signal.aborted
+        ? '已终止'
+        : err instanceof Error
+          ? err.message
+          : '未知错误'
+      this.append(`下载失败：${msg}\n`)
+      this.finish(-1, msg)
+    } finally {
+      if (stallTimer) clearInterval(stallTimer)
+    }
+  }
+}
+
 /** 后台会话的只读快照（renderer「后台命令面板」展示用）。 */
 export interface BackgroundSessionInfo {
   id: string
@@ -625,14 +868,16 @@ export interface BackgroundSessionInfo {
   exitedAt: number | null
   /** 已捕获输出字节数（UTF-8 字符数近似）。 */
   outputBytes: number
+  /** 任务类型：shell 命令 / 后台下载（面板展示与 bash_output 状态头区分）。 */
+  kind: 'shell' | 'download'
 }
 
-/** 会话注册表：默认持久会话（按 Agent 会话）+ 后台会话（LRU 淘汰）+ 全局清理。 */
+/** 会话注册表：默认持久会话（按 Agent 会话）+ 后台任务（shell/下载，LRU 淘汰）+ 全局清理。 */
 class BashSessionManager {
   private defaults = new Map<string, PersistentShell>()
-  private backgrounds = new Map<string, BackgroundShell>()
+  private backgrounds = new Map<string, BackgroundShell | BackgroundDownload>()
   private bgLru: string[] = []
-  /** 变更订阅（后台会话 启动/退出/终止 时回调），renderer 面板据此刷新。 */
+  /** 变更订阅（后台任务 启动/退出/终止 时回调），renderer 面板据此刷新。 */
   private listeners = new Set<() => void>()
 
   /** 获取/创建 Agent 会话的持久化 shell。 */
@@ -658,26 +903,66 @@ class BashSessionManager {
     })
     // 退出/错误时回调：面板据状态变更刷新（startedAt 由 shell 内部记录）
     const shell = new BackgroundShell(id, child, command, () => this.#notify())
-    this.backgrounds.set(id, shell)
+    this.#addBackground(shell)
+    return shell
+  }
+
+  /** 启动一个后台下载任务，返回任务（含随机 sessionId）。onProgress 供前台模式转发流式进度。 */
+  startDownload(
+    url: string,
+    dest: string,
+    opts: { onProgress?: (info: DownloadProgressInfo) => void } = {}
+  ): BackgroundDownload {
+    const id = randomUUID()
+    const task = new BackgroundDownload(id, url, dest, {
+      onStateChange: () => this.#notify(),
+      onProgress: opts.onProgress
+    })
+    this.#addBackground(task)
+    return task
+  }
+
+  /** 注册后台任务：入表 + LRU 上限兜底（优先淘汰已退出的最久未读任务）+ 通知面板。 */
+  #addBackground(task: BackgroundShell | BackgroundDownload): void {
+    const id = task.sessionId
+    this.backgrounds.set(id, task)
     this.bgLru.push(id)
-    // 上限兜底：优先淘汰已退出的最久未读会话
+    // 上限兜底：优先淘汰已退出的最久未读任务（全在运行时不动，避免杀用户长驻任务）
     if (this.backgrounds.size > MAX_BACKGROUND_SESSIONS) {
       for (const oldId of this.bgLru) {
         if (oldId === id) continue
         const old = this.backgrounds.get(oldId)
         if (old?.exited) {
           this.backgrounds.delete(oldId)
+          this.bgLru.splice(this.bgLru.indexOf(oldId), 1)
           old.kill()
           break
         }
       }
     }
     this.#notify()
-    return shell
   }
 
-  getBackground(id: string): BackgroundShell | undefined {
+  getBackground(id: string): BackgroundShell | BackgroundDownload | undefined {
     return this.backgrounds.get(id)
+  }
+
+  /** 后台 shell 会话（bash_input 写 stdin 用；下载任务无 stdin，返回 undefined）。 */
+  getBackgroundShell(id: string): BackgroundShell | undefined {
+    const task = this.backgrounds.get(id)
+    return task?.kind === 'shell' ? task : undefined
+  }
+
+  /** 移除后台任务（仅已退出的任务可移除；运行中的请先终止）。 */
+  removeBackground(id: string): { ok: boolean; error?: string } {
+    const task = this.backgrounds.get(id)
+    if (!task) return { ok: false, error: '后台任务不存在（可能已移除）' }
+    if (!task.exited) return { ok: false, error: '任务仍在运行，请先终止再移除' }
+    this.backgrounds.delete(id)
+    const idx = this.bgLru.indexOf(id)
+    if (idx >= 0) this.bgLru.splice(idx, 1)
+    this.#notify()
+    return { ok: true }
   }
 
   /** 订阅后台会话变更（返回取消订阅函数）。 */

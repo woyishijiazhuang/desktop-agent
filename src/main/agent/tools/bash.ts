@@ -4,7 +4,7 @@ import { resolveAgentWorkdir } from '../workdir'
 import { db } from '../../database'
 import { getShellEnv } from '../../utils/shell-env'
 import { SETTING_AGENT_ENV } from '../types'
-import { bashSessionManager, DEFAULT_TIMEOUT, resolveShell } from './bash-session'
+import { bashSessionManager, DEFAULT_TIMEOUT, formatBytes, resolveShell } from './bash-session'
 import { createLogger } from '../../utils/log'
 
 const log = createLogger('tool:bash')
@@ -19,13 +19,6 @@ const log = createLogger('tool:bash')
 
 /** bash_output 的 wait_ms 上限（防单次调用阻塞过久）。 */
 const MAX_WAIT_MS = 120_000
-
-/** 字节数 → 人类可读（进度提示用，按字符数近似）。 */
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n}B`
-  if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)}KB`
-  return `${(n / 1024 / 1024).toFixed(1)}MB`
-}
 
 const bashParams = Type.Object({
   reason: Type.Optional(
@@ -61,7 +54,10 @@ const bashOutputParams = Type.Object({
         '用一句话（不超过 30 字）说明本次调用的目的，会直接展示给用户浏览（例如"查看构建日志"）。请务必填写。'
     })
   ),
-  session_id: Type.String({ description: 'bash 以 background=true 启动时返回的会话 id' }),
+  session_id: Type.String({
+    description:
+      'bash 以 background=true 启动返回的会话 id；后台下载（download background=true）返回的 download_id 同样用它读进度/终止'
+  }),
   tail: Type.Optional(
     Type.Boolean({
       description:
@@ -83,7 +79,10 @@ const killShellParams = Type.Object({
         '用一句话（不超过 30 字）说明本次调用的目的，会直接展示给用户浏览（例如"关闭开发服务器"）。请务必填写。'
     })
   ),
-  session_id: Type.String({ description: 'bash 以 background=true 启动时返回的会话 id' })
+  session_id: Type.String({
+    description:
+      'bash 以 background=true 启动返回的会话 id，或 download background=true 返回的 download_id'
+  })
 })
 
 const bashInputParams = Type.Object({
@@ -231,30 +230,32 @@ export function createBashTools(sessionId: string): AgentTool[] {
     name: 'bash_output',
     label: '读取后台输出',
     description:
-      '读取 bash 后台命令（background=true）的输出。tail=true 只返回新增输出，tail=false 返回全部。wait_ms 可指定等待时长：进程退出或到时立即返回（避免反复轮询）。进程仍在运行时结果带 [进程运行中] 标记，退出后带退出码。',
+      '读取后台任务（bash 以 background=true 启动，或 download 以 background=true 后台下载）的输出/进度。tail=true 只返回新增输出，tail=false 返回全部。wait_ms 可指定等待时长：任务结束或到时立即返回（避免反复轮询）。shell 会话带 [进程运行中/已退出] 标记，下载任务带 [下载中/完成/失败] 标记。',
     parameters: bashOutputParams,
     executionMode: 'parallel',
     async execute(_toolCallId, p, signal, onUpdate) {
-      const shell = bashSessionManager.getBackground(p.session_id)
-      if (!shell) {
-        throw new Error(`后台会话不存在（可能已退出清理）：${p.session_id}`)
+      const task = bashSessionManager.getBackground(p.session_id)
+      if (!task) {
+        throw new Error(`后台任务不存在（可能已退出清理）：${p.session_id}`)
       }
-      // wait_ms：阻塞等待进程退出（或到时 / abort 先到先返回），一次调用拿终态，避免轮询
+      const kind = task.kind
+      // wait_ms：阻塞等待任务结束（或到时 / abort 先到先返回），一次调用拿终态，避免轮询
       const waitMs = p.wait_ms ? Math.min(Math.max(0, Math.floor(p.wait_ms)), MAX_WAIT_MS) : 0
-      if (waitMs > 0 && !shell.exited) {
+      if (waitMs > 0 && !task.exited) {
         // 等待期间每秒推送倒计时快照（剩余秒数 + 已捕获输出量），前端经流式通道实时展示
         if (onUpdate) {
           const start = Date.now()
           const totalSec = Math.round(waitMs / 1000)
+          const waitLabel = kind === 'download' ? '等待下载完成' : '等待后台命令完成'
           const emitProgress = (): void => {
             const elapsedMs = Date.now() - start
             const elapsedSec = Math.round(elapsedMs / 1000)
-            const captured = shell.read(false).text.length
+            const captured = task.read(false).text.length
             onUpdate({
               content: [
                 {
                   type: 'text',
-                  text: `等待后台命令完成… ${elapsedSec}s / ${totalSec}s（已捕获 ${formatBytes(captured)} 输出，进程结束或到时即返回）`
+                  text: `${waitLabel}… ${elapsedSec}s / ${totalSec}s（已捕获 ${formatBytes(captured)} 输出，任务结束或到时即返回）`
                 }
               ],
               details: {
@@ -268,19 +269,25 @@ export function createBashTools(sessionId: string): AgentTool[] {
           emitProgress()
           const timer = setInterval(emitProgress, 1_000)
           try {
-            await shell.waitExit(waitMs, signal)
+            await task.waitExit(waitMs, signal)
           } finally {
             clearInterval(timer)
           }
         } else {
-          await shell.waitExit(waitMs, signal)
+          await task.waitExit(waitMs, signal)
         }
       }
-      const { text: output, exited, exitCode, errorMessage } = shell.read(p.tail ?? true)
+      const { text: output, exited, exitCode, errorMessage } = task.read(p.tail ?? true)
       let head: string
-      if (errorMessage) head = `[启动失败] ${errorMessage}\n`
-      else if (exited) head = `[进程已退出，exitCode=${exitCode}]\n`
-      else head = '[进程运行中]\n'
+      if (kind === 'download') {
+        if (errorMessage) head = `[下载失败] ${errorMessage}\n`
+        else if (exited) head = exitCode === 0 ? '[下载完成]\n' : '[下载失败]\n'
+        else head = '[下载中]\n'
+      } else {
+        if (errorMessage) head = `[启动失败] ${errorMessage}\n`
+        else if (exited) head = `[进程已退出，exitCode=${exitCode}]\n`
+        else head = '[进程运行中]\n'
+      }
       const body = output || (p.tail === false ? '(暂无输出)' : '(无新增输出)')
       log.debug('读取后台输出', {
         sessionId,
@@ -298,20 +305,20 @@ export function createBashTools(sessionId: string): AgentTool[] {
 
   const killShellTool: AgentTool<typeof killShellParams, KillShellDetails> = {
     name: 'kill_shell',
-    label: '终止后台命令',
+    label: '终止后台任务',
     description:
-      '终止一个 bash 后台会话（background=true 启动）。进程组整体终止（SIGTERM → SIGKILL），含其派生的全部子进程。',
+      '终止一个后台任务：bash 后台会话（background=true 启动）进程组整体终止（SIGTERM → SIGKILL），含其派生的全部子进程；后台下载（download background=true）则中止下载（文件不完整）。',
     parameters: killShellParams,
     executionMode: 'sequential',
     async execute(_toolCallId, p) {
-      const shell = bashSessionManager.getBackground(p.session_id)
-      if (!shell) {
-        throw new Error(`后台会话不存在（可能已退出清理）：${p.session_id}`)
+      const task = bashSessionManager.getBackground(p.session_id)
+      if (!task) {
+        throw new Error(`后台任务不存在（可能已退出清理）：${p.session_id}`)
       }
-      shell.kill()
-      log.info('已终止后台命令', { sessionId, bgId: p.session_id })
+      task.kill()
+      log.info('已终止后台任务', { sessionId, bgId: p.session_id })
       return {
-        content: [{ type: 'text', text: `已终止后台命令 ${p.session_id}` }],
+        content: [{ type: 'text', text: `已终止后台任务 ${p.session_id}` }],
         details: { sessionId: p.session_id }
       }
     }
@@ -325,9 +332,9 @@ export function createBashTools(sessionId: string): AgentTool[] {
     parameters: bashInputParams,
     executionMode: 'sequential',
     async execute(_toolCallId, p) {
-      const shell = bashSessionManager.getBackground(p.session_id)
+      const shell = bashSessionManager.getBackgroundShell(p.session_id)
       if (!shell) {
-        throw new Error(`后台会话不存在（可能已退出清理）：${p.session_id}`)
+        throw new Error(`后台会话不存在或不是 shell 命令（后台下载不支持写入输入）：${p.session_id}`)
       }
       // 空内容 + 仅关闭：直接发 EOF
       const data = p.input + (p.newline === false ? '' : '\n')

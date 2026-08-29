@@ -10,7 +10,9 @@ import { mcpManager } from './mcp'
 import { getDecryptedApiKey, ensureAllModelConfigsRegistered } from './model-config'
 import { resolveAssistantCost } from './model-config/pricing'
 import { createBeforeToolCallHook, clearRunAutoAllow } from './permission'
-import { clearPlanMode } from './tools/plan-mode'
+import { clearPlanMode, isPlanMode } from './tools/plan-mode'
+import { clearAskUserRequests } from './tools/ask-user'
+import { registerSubagentHost, unregisterSubagentHost, PLAN_READONLY_TOOLS } from './subagent'
 import { getModelsInstance, resolveModel, completeText } from './models'
 import { resolveAgentWorkdir } from './workdir'
 import { createLogger } from '../utils/log'
@@ -288,6 +290,8 @@ export class AgentManager {
     this.turnCounts.delete(sessionId)
     this.maxTurnsReached.delete(sessionId)
     this.endedRuns.delete(sessionId)
+    // 子代理宿主随 Agent 一并注销，防悬挂引用
+    unregisterSubagentHost(sessionId)
     if (a.signal) {
       log.info('驱逐运行中的 Agent', { sessionId })
       a.abort()
@@ -408,6 +412,26 @@ export class AgentManager {
       ...(await mcpManager.getTools())
     ]
 
+    // 子代理宿主注册：task 工具运行子代理时复用本会话的模型/流式函数/API Key。
+    // 宿主随 Agent 生命周期管理：evictAgentLocked 注销（防悬挂引用）。
+    // plan 子代理只读工具集从同一 buildTools 结果按白名单过滤（不含 MCP 工具）。
+    registerSubagentHost({
+      sessionId,
+      model,
+      thinkingLevel,
+      streamFn: (m, context, options) => getModelsInstance().streamSimple(m, context, options),
+      getApiKey: async (provider) => {
+        try {
+          return getDecryptedApiKey(provider)
+        } catch (err) {
+          log.error('getApiKey 失败', { sessionId, provider, error: err })
+          return undefined
+        }
+      },
+      planTools: tools.filter((t) => PLAN_READONLY_TOOLS.has(t.name)),
+      generalTools: buildTools({ supportsImages: model.input.includes('image'), sessionId })
+    })
+
     const agent = new Agent({
       initialState: {
         systemPrompt,
@@ -428,21 +452,34 @@ export class AgentManager {
       toolExecution: 'parallel',
       beforeToolCall: createBeforeToolCallHook(sessionId),
       transformContext: async (messages) => {
-        // 压缩摘要作为 role=user 的标记块前置注入（不修改 systemPrompt）：
-        // 1) 不覆盖/干扰用户自定义系统提示词；
-        // 2) 摘要变化只影响其后缀块，不改变 systemPrompt 前缀，不失效 LLM 前缀缓存。
-        // 长期记忆不再走此钩子：已在 createAgent 时随系统提示词全量注入且会话内固定。
+        // 动态上下文注入（不修改 systemPrompt，不失效 LLM 前缀缓存）：
+        // 1) 压缩摘要前置为 role=user 标记块；
+        // 2) 计划模式软引导：模型调用 enter_plan_mode 后每轮提醒约束与可用工具。
+        // 与 plan-mode.ts 的硬拦截（beforeToolCall）构成双重防线。
         try {
           const ctx = db.getSessionContext(sessionId)
-          if (!ctx.compressSummary) return messages
-          return [
-            {
+          const blocks: AgentMessage[] = []
+          if (ctx.compressSummary) {
+            blocks.push({
               role: 'user',
               content: [{ type: 'text', text: `[之前的对话摘要]\n${ctx.compressSummary}` }],
               timestamp: 0
-            },
-            ...messages
-          ]
+            })
+          }
+          if (isPlanMode(sessionId)) {
+            blocks.push({
+              role: 'user',
+              content: [
+                {
+                  type: 'text',
+                  text: '[系统提醒] 当前处于计划模式（规划阶段）：bash（只读命令除外）/ write_file / edit_file 等操作会被拦截。规划期间请：1) 用 ask_user 澄清需求中的不确定性；2) 用 task(subagentType="plan") 委派只读规划子代理探索代码库并产出实施计划；3) 完成规划后用 exit_plan_mode 提交计划等待用户批准。'
+                }
+              ],
+              timestamp: 0
+            })
+          }
+          if (blocks.length === 0) return messages
+          return [...blocks, ...messages]
         } catch (err) {
           log.error('transformContext 失败', { sessionId, error: err })
           return messages
@@ -590,6 +627,8 @@ export class AgentManager {
         this.endedRuns.add(sessionId)
         // 释放本批自动放行（配合 agent_start 重置，双保险防泄漏）。
         clearRunAutoAllow(sessionId)
+        // 清理该会话残留的挂起提问（中止/结束时未获回答的 ask_user 挂起 Promise）
+        clearAskUserRequests(sessionId)
         const err = agent.state.errorMessage
         // 超限自动终止：以明确错误提示代替静默的 aborted，告知用户已达上限。
         const limitHitValue = this.maxTurnsReached.get(sessionId)

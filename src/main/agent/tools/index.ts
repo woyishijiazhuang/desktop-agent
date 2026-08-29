@@ -16,6 +16,8 @@ import { listMemoriesTool, addMemoryTool, updateMemoryTool, deleteMemoryTool } f
 import { searchKnowledgeTool } from './knowledge'
 import { notifyTool } from './notify'
 import { createPlanModeTools } from './plan-mode'
+import { createAskUserTool } from './ask-user'
+import { createTaskTool } from './task'
 import { db } from '../../database'
 import {
   SETTING_ENABLED_TOOLS,
@@ -114,6 +116,20 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
     defaultEnabled: true,
     build: ({ sessionId }) =>
       createPlanModeTools(sessionId).filter((t) => t.name === 'exit_plan_mode')
+  },
+  {
+    name: 'ask_user',
+    label: '询问用户',
+    description: '向用户提问以澄清需求或确认关键决策（结构化选项，规划期常用）。',
+    defaultEnabled: true,
+    build: ({ sessionId }) => [createAskUserTool(sessionId)]
+  },
+  {
+    name: 'task',
+    label: '委派子任务',
+    description: '委派独立上下文的子代理执行子任务（plan 只读规划 / general 通用执行）。',
+    defaultEnabled: true,
+    build: ({ sessionId }) => [createTaskTool(sessionId)]
   },
   single(webSearchTool, false),
   single(webFetchTool),

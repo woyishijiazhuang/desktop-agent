@@ -162,6 +162,10 @@ export function createSessionsApi(db: DatabaseSync): SessionApi {
         sets.push('resolved_system_prompt = ?')
         values.push(params.resolvedSystemPrompt)
       }
+      if (params.plan !== undefined) {
+        sets.push('plan = ?')
+        values.push(params.plan)
+      }
       if (params.pinned !== undefined) {
         sets.push('pinned = ?')
         values.push(params.pinned ? 1 : 0)

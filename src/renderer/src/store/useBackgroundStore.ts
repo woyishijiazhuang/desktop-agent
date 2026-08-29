@@ -28,6 +28,11 @@ export const useBackgroundStore = defineStore('background', () => {
     await mainClient.bash.killBackground(id)
   }
 
+  /** 移除已退出的后台任务（面板「×」按钮）；移除成功会推送新快照。 */
+  async function remove(id: string): Promise<void> {
+    await mainClient.bash.removeBackground(id)
+  }
+
   /** 读取会话输出（面板「查看输出」用；tail=false 全量，不改动 agent 增量游标）。 */
   function readOutput(
     id: string
@@ -35,5 +40,5 @@ export const useBackgroundStore = defineStore('background', () => {
     return mainClient.bash.readBackgroundOutput(id)
   }
 
-  return { sessions, loaded, setSessions, refresh, kill, readOutput }
+  return { sessions, loaded, setSessions, refresh, kill, remove, readOutput }
 })

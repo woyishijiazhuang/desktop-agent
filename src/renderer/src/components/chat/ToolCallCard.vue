@@ -15,6 +15,7 @@ import {
 import type { ToolCall, ToolResultMessage } from '@earendil-works/pi-ai'
 import type { ToolStatus } from '@renderer/store/useChatStore'
 import { useThemeStore } from '@renderer/store/useThemeStore'
+import { useBackgroundStore } from '@renderer/store/useBackgroundStore'
 import { useCopy } from '@renderer/composables/useCopy'
 import { useStickToBottomPause } from '@renderer/composables/useStickToBottomPause'
 import { tryPrettyJSON, toCodeFence } from '@renderer/utils/codeBlock'
@@ -84,6 +85,10 @@ const resultRenderer = computed<'monaco' | 'pre'>(() =>
 )
 
 const themeStore = useThemeStore()
+const bgStore = useBackgroundStore()
+// 后台会话实际状态由 store 驱动（main 推送 + 面板挂载时拉取）；未加载过则补拉一次，
+// 避免应用重启后凭历史消息的 background 标记误判「后台运行中」
+if (!bgStore.loaded) void bgStore.refresh()
 /**
  * edit_file 的标准 unified diff（来自 details.diff，历史消息同样有）：
  * 用 markstream 的 diff 渲染器（Monaco DiffEditor，+/- 着色、hunk 信息）。
@@ -97,13 +102,16 @@ const editDiffContent = computed(() => {
 /** 结果摘要：卡片收起时也可见的一行文案（含失败信息）。 */
 const resultSummary = computed(() => (props.result ? summarizeToolResult(props.result) : null))
 
-/** bash background=true：结果虽为 completed，但命令仍在后台运行，展示「后台运行中」而非「已完成」。 */
-const backgroundRunning = computed(
-  () =>
-    props.status?.status === 'completed' &&
-    props.toolCall.name === 'bash' &&
-    (props.result?.details as { background?: boolean } | undefined)?.background === true
-)
+/** bash/download background=true：任务仍在后台运行（以真实会话状态为准，而非历史消息标记）。 */
+const backgroundRunning = computed(() => {
+  if (props.status?.status !== 'completed') return false
+  if (props.toolCall.name !== 'bash' && props.toolCall.name !== 'download') return false
+  const d = props.result?.details as { background?: boolean; sessionId?: string } | undefined
+  if (!d?.background) return false
+  const session = d.sessionId ? bgStore.sessions.find((s) => s.id === d.sessionId) : undefined
+  // 会话已退出 / 已被应用重启或淘汰清空：视为已结束
+  return session ? !session.exited : false
+})
 
 const statusLabel = computed(() => {
   if (!props.status) return '待执行'

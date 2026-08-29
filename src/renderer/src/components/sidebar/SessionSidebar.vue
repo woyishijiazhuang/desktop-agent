@@ -10,7 +10,9 @@ import {
   ArchiveOutline,
   SearchOutline,
   SunnyOutline,
-  MoonOutline
+  MoonOutline,
+  ChevronDownOutline,
+  ChevronForwardOutline
 } from '@vicons/ionicons5'
 import { formatContextWindow, formatTokens } from '@renderer/utils/format'
 import { useSessionStore } from '@renderer/store/useSessionStore'
@@ -167,6 +169,20 @@ const groupedSessions = computed<SessionGroup[]>(() => {
 const noSearchResult = computed(
   () => filteredSessions.value.length === 0 && messageHits.value.length === 0
 )
+
+/** 分组折叠状态：label → 是否收起。默认全部展开，用户手动点击分组头切换。 */
+const collapsedGroups = ref<Set<string>>(new Set())
+
+function isGroupCollapsed(label: string): boolean {
+  return collapsedGroups.value.has(label)
+}
+
+function toggleGroup(label: string): void {
+  const next = new Set(collapsedGroups.value)
+  if (next.has(label)) next.delete(label)
+  else next.add(label)
+  collapsedGroups.value = next
+}
 
 /** 当前会话是否可压缩：存在当前会话且不在压缩中（对话进行中仅静默忽略点击，不改外观）。 */
 const canCompress = computed(() => !!sessionStore.currentSessionId && !compressing.value)
@@ -406,17 +422,29 @@ function isSessionFailed(id: string): boolean {
       </div>
 
       <div v-for="group in groupedSessions" :key="group.label" class="sidebar__group">
-        <div class="sidebar__group-label">{{ group.label }}</div>
-        <SessionItem
-          v-for="session in group.items"
-          :key="session.id"
-          :session="session"
-          :active="session.id === sessionStore.currentSessionId"
-          :busy="isSessionBusy(session.id)"
-          :failed="isSessionFailed(session.id)"
-          @select="onSelect(session)"
-          @action="(key: string) => onMenu(key, session)"
-        />
+        <div
+          class="sidebar__group-label sidebar__group-label--toggle"
+          :title="isGroupCollapsed(group.label) ? '展开' : '收起'"
+          @click="toggleGroup(group.label)"
+        >
+          <NIcon :size="12" class="sidebar__group-chevron">
+            <ChevronDownOutline v-if="!isGroupCollapsed(group.label)" />
+            <ChevronForwardOutline v-else />
+          </NIcon>
+          <span>{{ group.label }}</span>
+        </div>
+        <template v-if="!isGroupCollapsed(group.label)">
+          <SessionItem
+            v-for="session in group.items"
+            :key="session.id"
+            :session="session"
+            :active="session.id === sessionStore.currentSessionId"
+            :busy="isSessionBusy(session.id)"
+            :failed="isSessionFailed(session.id)"
+            @select="onSelect(session)"
+            @action="(key: string) => onMenu(key, session)"
+          />
+        </template>
       </div>
 
       <!-- 分页哨兵：滚动到底部自动加载更多（常驻渲染，搜索模式下不触发加载） -->
@@ -547,6 +575,23 @@ function isSessionFailed(id: string): boolean {
   color: var(--text-3);
   padding: 10px 10px 4px;
   letter-spacing: 0.02em;
+}
+/* 可折叠分组头：chevron + 名称，点击切换展开/收起 */
+.sidebar__group-label--toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px 10px 4px;
+  cursor: pointer;
+  user-select: none;
+}
+.sidebar__group-label--toggle:hover {
+  color: var(--text-1);
+}
+.sidebar__group-chevron {
+  color: var(--text-4);
+  flex-shrink: 0;
+  transition: color 0.15s;
 }
 .sidebar__empty {
   text-align: center;

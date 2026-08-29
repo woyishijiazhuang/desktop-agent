@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
-import { NButton, NIcon, NPopconfirm } from 'naive-ui'
-import { ChevronDownOutline, ChevronUpOutline } from '@vicons/ionicons5'
+import { NButton, NIcon, NPopconfirm, NScrollbar } from 'naive-ui'
+import { ChevronDownOutline, ChevronUpOutline, CloseOutline } from '@vicons/ionicons5'
 import { useBackgroundStore } from '@renderer/store/useBackgroundStore'
 import type { BackgroundSessionInfo } from '@main/agent/tools/bash-session'
 
 /**
- * 侧栏「后台命令」面板：展示所有后台运行的命令（全局，与当前会话无关），
- * 支持查看输出 / 终止。状态由 main 推送快照驱动（启动/退出/终止时全量更新）。
+ * 侧栏「后台任务」面板：展示所有后台命令与后台下载（全局，与当前会话无关），
+ * 支持查看输出 / 终止运行中任务 / 移除已退出任务。状态由 main 推送快照驱动。
  */
 const store = useBackgroundStore()
 
 /** 面板展开/收起。 */
 const expanded = ref(true)
+/** 拖拽后的固定高度（px）；null=按内容自适应（上限 60%），重启恢复默认。 */
+const panelHeight = ref<number | null>(null)
 /** 当前展开查看输出的会话 id（一次一个）。 */
 const outputFor = ref<string | null>(null)
 const outputText = ref('')
@@ -30,6 +32,29 @@ onMounted(() => {
 onUnmounted(() => {
   clearInterval(tickTimer)
 })
+
+/** 顶部把手拖拽调整面板高度（向上拖变大；120px ~ 75% 窗口高）。 */
+function startResize(e: MouseEvent): void {
+  e.preventDefault()
+  const startY = e.clientY
+  const panelEl = (e.currentTarget as HTMLElement).parentElement
+  const startH = panelHeight.value ?? panelEl?.offsetHeight ?? 240
+  const minH = 120
+  const maxH = window.innerHeight * 0.45
+  const onMove = (ev: MouseEvent): void => {
+    panelHeight.value = Math.round(Math.min(maxH, Math.max(minH, startH + (startY - ev.clientY))))
+  }
+  const onUp = (): void => {
+    window.removeEventListener('mousemove', onMove)
+    window.removeEventListener('mouseup', onUp)
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+  }
+  window.addEventListener('mousemove', onMove)
+  window.addEventListener('mouseup', onUp)
+  document.body.style.cursor = 'ns-resize'
+  document.body.style.userSelect = 'none'
+}
 
 const runningCount = computed(() => store.sessions.filter((s) => !s.exited).length)
 
@@ -49,9 +74,12 @@ function formatElapsed(ms: number): string {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
 }
 
-/** 状态提示文案。 */
+/** 状态提示文案：下载任务与 shell 会话文案区分。 */
 function stateText(s: BackgroundSessionInfo): string {
-  if (!s.exited) return `运行中 · ${elapsed(s)}`
+  if (!s.exited) return s.kind === 'download' ? `下载中 · ${elapsed(s)}` : `运行中 · ${elapsed(s)}`
+  if (s.kind === 'download') {
+    return s.exitCode === 0 ? `已完成 · ${elapsed(s)}` : `已失败 · ${elapsed(s)}`
+  }
   return `已退出 · ${elapsed(s)}（exit ${s.exitCode}）`
 }
 
@@ -75,13 +103,27 @@ async function toggleOutput(s: BackgroundSessionInfo): Promise<void> {
 function onKill(s: BackgroundSessionInfo): void {
   void store.kill(s.id)
 }
+
+function onRemove(s: BackgroundSessionInfo): void {
+  if (outputFor.value === s.id) {
+    outputFor.value = null
+    outputText.value = ''
+  }
+  void store.remove(s.id)
+}
 </script>
 
 <template>
-  <div v-if="store.sessions.length > 0" class="bg-panel">
+  <div
+    v-if="store.sessions.length > 0"
+    class="bg-panel"
+    :class="{ 'bg-panel--fixed': panelHeight !== null }"
+    :style="panelHeight !== null ? { height: `${panelHeight}px` } : undefined"
+  >
+    <div class="bg-panel__grip" title="拖拽调整高度" @mousedown="startResize" />
     <div class="bg-panel__head" @click="expanded = !expanded">
       <span class="bg-panel__title">
-        后台命令
+        后台任务
         <span v-if="runningCount > 0" class="bg-panel__count">{{ runningCount }}</span>
       </span>
       <NIcon :size="13" class="bg-panel__chevron">
@@ -90,48 +132,63 @@ function onKill(s: BackgroundSessionInfo): void {
       </NIcon>
     </div>
 
+    <!-- v-show 放在真实元素上：直接放 NScrollbar 上会因组件链（vueuc ResizeObserver）
+         渲染 Fragment 根节点导致运行时指令失效并告警，收起/展开也无法隐藏列表 -->
     <div v-show="expanded" class="bg-panel__list">
-      <div v-for="s in store.sessions" :key="s.id" class="bg-item">
-        <div class="bg-item__row">
-          <span
-            class="bg-item__dot"
-            :class="s.exited ? 'bg-item__dot--done' : 'bg-item__dot--run'"
-          />
-          <span class="bg-item__cmd" :title="s.command">{{ s.command }}</span>
-        </div>
-        <div class="bg-item__meta">
-          <span class="bg-item__state">{{ stateText(s) }}</span>
-          <div class="bg-item__actions">
-            <NButton quaternary size="tiny" :focusable="false" @click="toggleOutput(s)">
-              {{ outputFor === s.id ? '收起' : '输出' }}
-            </NButton>
-            <NPopconfirm
-              :disabled="s.exited"
-              positive-text="终止"
-              negative-text="取消"
-              @positive-click="onKill(s)"
-            >
-              <template #trigger>
+      <NScrollbar
+        :content-style="{ padding: '0 8px 8px', display: 'flex', flexDirection: 'column', gap: '6px' }"
+      >
+        <div v-for="s in store.sessions" :key="s.id" class="bg-item">
+          <div class="bg-item__row">
+            <span
+              class="bg-item__dot"
+              :class="s.exited ? 'bg-item__dot--done' : 'bg-item__dot--run'"
+            />
+            <span class="bg-item__cmd" :title="s.command">{{ s.command }}</span>
+          </div>
+          <div class="bg-item__meta">
+            <span class="bg-item__state">{{ stateText(s) }}</span>
+            <div class="bg-item__actions">
+              <NButton quaternary size="tiny" :focusable="false" @click="toggleOutput(s)">
+                {{ outputFor === s.id ? '收起' : '输出' }}
+              </NButton>
+              <template v-if="s.exited">
                 <NButton
                   quaternary
+                  circle
                   size="tiny"
                   :focusable="false"
-                  :disabled="s.exited"
-                  type="error"
+                  class="bg-item__rm"
+                  title="移除"
+                  @click="onRemove(s)"
                 >
-                  终止
+                  <template #icon>
+                    <NIcon><CloseOutline /></NIcon>
+                  </template>
                 </NButton>
               </template>
-              <template #default>
-                终止「{{ s.command.slice(0, 30) }}」？进程组将被强制结束。
-              </template>
-            </NPopconfirm>
+              <NPopconfirm
+                v-else
+                positive-text="终止"
+                negative-text="取消"
+                @positive-click="onKill(s)"
+              >
+                <template #trigger>
+                  <NButton quaternary size="tiny" :focusable="false" type="error">
+                    终止
+                  </NButton>
+                </template>
+                <template #default>
+                  终止「{{ s.command.slice(0, 30) }}」？进程组将被强制结束。
+                </template>
+              </NPopconfirm>
+            </div>
           </div>
+          <pre v-if="outputFor === s.id" class="bg-item__output">{{
+            outputLoading ? '加载中…' : outputText
+          }}</pre>
         </div>
-        <pre v-if="outputFor === s.id" class="bg-item__output">{{
-          outputLoading ? '加载中…' : outputText
-        }}</pre>
-      </div>
+      </NScrollbar>
     </div>
   </div>
 </template>
@@ -139,10 +196,36 @@ function onKill(s: BackgroundSessionInfo): void {
 <style scoped>
 .bg-panel {
   border-top: 1px solid var(--border);
-  max-height: 40%;
+  /* 默认至少容纳约 2~3 个任务项；窗口过矮时受 60% 上限约束不溢出。
+     flex-shrink:0 保证面板不被会话列表挤压（列表可滚动，空间让给面板）。 */
+  min-height: min(180px, 10%);
+  flex-shrink: 0;
   display: flex;
   flex-direction: column;
+}
+/* 拖拽固定高度后不受上限与默认最小高度约束（上限由拖拽钳制到 45% 窗口高） */
+.bg-panel--fixed {
+  max-height: none;
   min-height: 0;
+}
+.bg-panel__grip {
+  height: 5px;
+  flex-shrink: 0;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bg-panel__grip::after {
+  content: '';
+  width: 36px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--border);
+  transition: background 0.15s;
+}
+.bg-panel__grip:hover::after {
+  background: var(--text-3);
 }
 .bg-panel__head {
   display: flex;
@@ -180,13 +263,16 @@ function onKill(s: BackgroundSessionInfo): void {
 .bg-panel__chevron {
   color: var(--text-3);
 }
+/* 列表用 NScrollbar（与侧栏会话列表一致）：滚动条悬浮不占布局宽度，出现/消失内容宽度不变。
+   v-show 挂在外层包装 div 上（NScrollbar 自身作为组件根是 Fragment 链，指令无法生效） */
 .bg-panel__list {
-  overflow: auto;
-  padding: 0 8px 8px;
+  flex: 1 1 auto;
+  min-height: 0;
   display: flex;
-  flex-direction: column;
-  gap: 6px;
-  scrollbar-gutter: stable;
+}
+.bg-panel__list :deep(.n-scrollbar) {
+  flex: 1;
+  min-width: 0;
 }
 .bg-item {
   border: 1px solid var(--border-soft);
@@ -256,6 +342,13 @@ function onKill(s: BackgroundSessionInfo): void {
   font-size: 11px;
   --n-height: 22px;
 }
+/* 移除（×）按钮：默认弱化，悬停变红 */
+.bg-item__rm {
+  color: var(--text-3);
+}
+.bg-item__rm:hover {
+  color: var(--error);
+}
 .bg-item__output {
   margin: 6px 0 0;
   padding: 6px 8px;
@@ -267,7 +360,7 @@ function onKill(s: BackgroundSessionInfo): void {
   color: var(--text-2);
   white-space: pre-wrap;
   word-break: break-all;
-  max-height: 160px;
+  max-height: 240px;
   overflow: auto;
 }
 </style>
