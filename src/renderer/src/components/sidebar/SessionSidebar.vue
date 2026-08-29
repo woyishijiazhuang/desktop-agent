@@ -19,6 +19,7 @@ import { useThemeStore } from '@renderer/store/useThemeStore'
 import { mainClient } from '@renderer/utils/main-client'
 import AboutDialog from '@renderer/components/AboutDialog.vue'
 import SessionItem from './SessionItem.vue'
+import BackgroundSessionsPanel from './BackgroundSessionsPanel.vue'
 import type { Session, MessageSearchHit, SessionExportFormat } from '@main/service/db-service'
 
 /**
@@ -430,6 +431,9 @@ function isSessionFailed(id: string): boolean {
         {{ isSearching ? (noSearchResult ? '未找到相关会话或消息' : '无匹配会话') : '无会话' }}
       </div>
     </NScrollbar>
+
+    <!-- 后台命令面板：全局展示运行中的后台命令（与当前会话无关） -->
+    <BackgroundSessionsPanel />
 
     <!-- 底部：主题 / 压缩历史 / 设置 / 关于 -->
     <div class="sidebar__footer">

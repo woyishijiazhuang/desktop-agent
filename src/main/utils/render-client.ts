@@ -26,7 +26,8 @@ const VIEW_ROUTES: Record<string, ViewTarget> = {
   'agentEvent.onEvent': 'content',
   'agentEvent.onSessionUpdate': 'content',
   'agentEvent.onPermissionRequest': 'content',
-  'agentEvent.onPlanRequest': 'content'
+  'agentEvent.onPlanRequest': 'content',
+  'agentEvent.onBackgroundSessions': 'content'
 }
 
 function resolveViewTarget(service: string, method: string): ViewTarget {

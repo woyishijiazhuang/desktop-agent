@@ -7,6 +7,7 @@ import { AgentService } from '../agent/agent-service'
 import { McpService } from '../agent/mcp/service'
 import { ModelConfigService } from '../agent/model-config-service'
 import { KnowledgeService } from './knowledge-service'
+import { BashService } from './bash-service'
 import { createLogger } from '../utils/log'
 
 const log = createLogger('service')
@@ -20,11 +21,12 @@ export const ipcMainServices = initializeIpcMainServices([
   AgentService,
   McpService,
   ModelConfigService,
-  KnowledgeService
+  KnowledgeService,
+  BashService
 ])
 void ipcMainServices
 log.debug('IPC services 已注册', {
-  namespaces: ['app', 'db', 'window', 'theme', 'agent', 'mcp', 'modelConfig', 'knowledge']
+  namespaces: ['app', 'db', 'window', 'theme', 'agent', 'mcp', 'modelConfig', 'knowledge', 'bash']
 })
 
 // MCP 配置变更（增删改/启停）后驱逐全部内存 Agent：下一轮创建时重新拉取 MCP 工具集。

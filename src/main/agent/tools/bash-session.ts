@@ -63,9 +63,7 @@ function sentinelCmd(id: string, kind: 'bash' | 'powershell'): string {
 
 /** shell 单引号转义（cwd 参数 cd 用）：bash 用 '\''，PowerShell 用 ''。 */
 function shellQuote(s: string, kind: 'bash' | 'powershell'): string {
-  return kind === 'bash'
-    ? `'${s.replace(/'/g, `'\\''`)}'`
-    : `'${s.replace(/'/g, "''")}'`
+  return kind === 'bash' ? `'${s.replace(/'/g, `'\\''`)}'` : `'${s.replace(/'/g, "''")}'`
 }
 
 /** 「cd 到 cwd，失败即退出码 1」的 shell 语法。 */
@@ -438,16 +436,30 @@ export class PersistentShell {
 /** 单次后台命令会话：独立进程组，stdin 可写入（交互式命令应答），输出缓冲，可读取/终止。 */
 export class BackgroundShell {
   readonly sessionId: string
+  /** 启动时执行的命令原文（面板展示用）。 */
+  readonly command: string
+  /** 进程启动时间（面板展示已运行时长用）。 */
+  readonly startedAt: number
+  /** 进程 pid（面板展示/排查用）。 */
+  readonly pid: number | undefined
   private child: ChildProcess
   private outputBuf = ''
   private tailOffset = 0
   exited = false
   exitCode: number | null = null
+  /** 退出时刻（面板展示"运行时长"用；未退出为 null）。 */
+  exitedAt: number | null = null
   errorMessage?: string
+  /** 状态变更（退出/错误）通知：Manager 据此推送 renderer 面板刷新。 */
+  private onStateChange?: () => void
 
-  constructor(sessionId: string, child: ChildProcess) {
+  constructor(sessionId: string, child: ChildProcess, command: string, onStateChange?: () => void) {
     this.sessionId = sessionId
+    this.command = command
+    this.startedAt = Date.now()
+    this.pid = child.pid
     this.child = child
+    this.onStateChange = onStateChange
     // stdin 为 pipe（交互式命令应答通道）：吞掉 EPIPE 等写入错误，避免进程退出后的
     // 残留写入以 unhandled error 事件崩溃进程；写入失败由 write() 的同步返回上报。
     child.stdin?.on('error', () => {})
@@ -461,14 +473,32 @@ export class BackgroundShell {
     child.on('error', (err) => {
       this.errorMessage = err.message
       this.exited = true
+      this.exitedAt = Date.now()
       this.exitCode = -1
+      this.onStateChange?.()
     })
     child.on('close', (code) => {
       this.exited = true
+      this.exitedAt = Date.now()
       this.exitCode = code
       // 进程已退出，关闭 stdin 管道：让「读 stdin 到 EOF」语义在下游（如有管道级联）正确传播
       child.stdin?.end()
+      this.onStateChange?.()
     })
+  }
+
+  /** 面板展示用的会话快照。 */
+  info(): BackgroundSessionInfo {
+    return {
+      id: this.sessionId,
+      command: this.command,
+      startedAt: this.startedAt,
+      pid: this.pid,
+      exited: this.exited,
+      exitCode: this.exitCode,
+      exitedAt: this.exitedAt,
+      outputBytes: this.outputBuf.length
+    }
   }
 
   private append(chunk: string): void {
@@ -509,7 +539,10 @@ export class BackgroundShell {
       stdin.end()
       return { ok: true }
     } catch (err) {
-      return { ok: false, error: `关闭 stdin 失败: ${err instanceof Error ? err.message : String(err)}` }
+      return {
+        ok: false,
+        error: `关闭 stdin 失败: ${err instanceof Error ? err.message : String(err)}`
+      }
     }
   }
 
@@ -580,11 +613,27 @@ export class BackgroundShell {
   }
 }
 
+/** 后台会话的只读快照（renderer「后台命令面板」展示用）。 */
+export interface BackgroundSessionInfo {
+  id: string
+  command: string
+  startedAt: number
+  pid: number | undefined
+  exited: boolean
+  exitCode: number | null
+  /** 退出时刻（未退出为 null）。 */
+  exitedAt: number | null
+  /** 已捕获输出字节数（UTF-8 字符数近似）。 */
+  outputBytes: number
+}
+
 /** 会话注册表：默认持久会话（按 Agent 会话）+ 后台会话（LRU 淘汰）+ 全局清理。 */
 class BashSessionManager {
   private defaults = new Map<string, PersistentShell>()
   private backgrounds = new Map<string, BackgroundShell>()
   private bgLru: string[] = []
+  /** 变更订阅（后台会话 启动/退出/终止 时回调），renderer 面板据此刷新。 */
+  private listeners = new Set<() => void>()
 
   /** 获取/创建 Agent 会话的持久化 shell。 */
   getOrCreateDefault(sessionId: string): PersistentShell {
@@ -607,7 +656,8 @@ class BashSessionManager {
       // stdin 保持管道：交互式命令可通过 bash_input 应答（无需应答的命令不受影响）
       stdio: ['pipe', 'pipe', 'pipe']
     })
-    const shell = new BackgroundShell(id, child)
+    // 退出/错误时回调：面板据状态变更刷新（startedAt 由 shell 内部记录）
+    const shell = new BackgroundShell(id, child, command, () => this.#notify())
     this.backgrounds.set(id, shell)
     this.bgLru.push(id)
     // 上限兜底：优先淘汰已退出的最久未读会话
@@ -622,11 +672,27 @@ class BashSessionManager {
         }
       }
     }
+    this.#notify()
     return shell
   }
 
   getBackground(id: string): BackgroundShell | undefined {
     return this.backgrounds.get(id)
+  }
+
+  /** 订阅后台会话变更（返回取消订阅函数）。 */
+  subscribe(listener: () => void): () => void {
+    this.listeners.add(listener)
+    return () => this.listeners.delete(listener)
+  }
+
+  /** 全部后台会话快照（renderer 面板初始化/刷新用）。 */
+  listBackground(): BackgroundSessionInfo[] {
+    return [...this.backgrounds.values()].map((s) => s.info())
+  }
+
+  #notify(): void {
+    for (const listener of this.listeners) listener()
   }
 
   /** 应用退出：回收全部 shell 与后台进程。 */

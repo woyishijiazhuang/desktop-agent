@@ -97,8 +97,17 @@ const editDiffContent = computed(() => {
 /** 结果摘要：卡片收起时也可见的一行文案（含失败信息）。 */
 const resultSummary = computed(() => (props.result ? summarizeToolResult(props.result) : null))
 
+/** bash background=true：结果虽为 completed，但命令仍在后台运行，展示「后台运行中」而非「已完成」。 */
+const backgroundRunning = computed(
+  () =>
+    props.status?.status === 'completed' &&
+    props.toolCall.name === 'bash' &&
+    (props.result?.details as { background?: boolean } | undefined)?.background === true
+)
+
 const statusLabel = computed(() => {
   if (!props.status) return '待执行'
+  if (backgroundRunning.value) return '后台运行中'
   const map: Record<ToolStatus['status'], string> = {
     pending: '等待确认',
     running: '执行中…',
@@ -110,6 +119,7 @@ const statusLabel = computed(() => {
 
 const statusType = computed<'default' | 'warning' | 'success' | 'error'>(() => {
   if (!props.status) return 'default'
+  if (backgroundRunning.value) return 'warning'
   const map: Record<ToolStatus['status'], 'default' | 'warning' | 'success' | 'error'> = {
     pending: 'warning',
     running: 'warning',
@@ -121,6 +131,7 @@ const statusType = computed<'default' | 'warning' | 'success' | 'error'>(() => {
 
 /** 头部状态图标：pending 问号、running 转圈、completed 完成、error 出错、待执行 用工具图标。 */
 const statusIcon = computed(() => {
+  if (backgroundRunning.value) return SyncOutline
   if (!props.status) return CodeSlashOutline
   if (props.status.status === 'pending') return HelpCircleOutline
   if (props.status.status === 'running') return SyncOutline
@@ -129,6 +140,7 @@ const statusIcon = computed(() => {
 })
 
 const statusIconColor = computed(() => {
+  if (backgroundRunning.value) return 'var(--warning)'
   if (!props.status) return 'var(--text-3)'
   if (props.status.status === 'pending') return 'var(--warning)'
   if (props.status.status === 'running') return 'var(--warning)'

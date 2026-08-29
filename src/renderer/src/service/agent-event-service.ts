@@ -4,8 +4,10 @@ import { useChatStore } from '../store/useChatStore'
 import { usePermissionStore } from '../store/usePermissionStore'
 import { usePlanStore } from '../store/usePlanStore'
 import { useSessionStore } from '../store/useSessionStore'
+import { useBackgroundStore } from '../store/useBackgroundStore'
 import type { Session } from '@main/service/db-service'
 import type { AgentEventPayload, PermissionRequest, PlanApprovalRequest } from '@main/agent/types'
+import type { BackgroundSessionInfo } from '@main/agent/tools/bash-session'
 
 /**
  * Agent 事件接收服务：main 进程通过 rendererClient.agentEvent.* 推送事件到此处。
@@ -142,5 +144,10 @@ export class AgentEventService extends IpcService {
   onSessionUpdate(session: Session): void {
     void useSessionStore().upsertSession(session)
     useChatStore().updateCompress(session)
+  }
+
+  /** 后台命令快照更新（main 在后台会话 启动/退出/终止 时推送全量列表）。 */
+  onBackgroundSessions(sessions: BackgroundSessionInfo[]): void {
+    useBackgroundStore().setSessions(sessions)
   }
 }
