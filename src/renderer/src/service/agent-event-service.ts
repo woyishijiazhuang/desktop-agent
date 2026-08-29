@@ -11,6 +11,7 @@ import type {
   AgentEventPayload,
   PermissionRequest,
   PlanApprovalRequest,
+  PlanProgress,
   AskUserRequest
 } from '@main/agent/types'
 import type { BackgroundSessionInfo } from '@main/agent/tools/bash-session'
@@ -54,6 +55,10 @@ export class AgentEventService extends IpcService {
       usePermissionStore().clearSession(payload.sessionId)
       usePlanStore().clearSession(payload.sessionId)
       useAskUserStore().clearSession(payload.sessionId)
+    }
+    // 新一轮 run 开始：清除上一轮的计划执行进度（进度按 run 生命周期展示）。
+    if (payload.event.type === 'agent_start') {
+      usePlanStore().clearProgress(payload.sessionId)
     }
     // 流式工具输出：当前会话走 rAF 缓冲（每帧最多应用一次，防高频 IPC 逐条触发渲染）；
     // 后台会话直接应用（不触发渲染，与 message_update 处理一致）。
@@ -142,6 +147,11 @@ export class AgentEventService extends IpcService {
   /** 计划审批请求（exit_plan_mode 提交计划后推送）：入队，PlanApprovalBar 据此展示。 */
   onPlanRequest(req: PlanApprovalRequest): void {
     usePlanStore().enqueue(req)
+  }
+
+  /** 计划执行进度推送（report_step 更新后推送）：PlanProgressBar 据此展示当前步骤。 */
+  onPlanProgress(progress: PlanProgress): void {
+    usePlanStore().setProgress(progress)
   }
 
   /** 澄清问题请求（ask_user 工具调用后推送）：入队，AskUserBar 据此展示。 */

@@ -84,7 +84,7 @@ export const useSettingsStore = defineStore('settings', () => {
   /** 标题栏模式（默认 native：优先当前平台原生窗口栏）。 */
   const titleBarMode = ref<TitleBarMode>('native')
   /**
-   * Agent 工作目录（当前生效值，含默认回退：settings 配置 > 开发项目根 / 生产用户主目录）。
+   * Agent 工作目录（当前生效值，含默认回退：settings 配置 > 用户数据目录下 work 子目录）。
    * bash 默认 cwd 每次执行实时读取；已建会话提示词快照不受影响，仅新会话首次创建 Agent 时按此生成。
    */
   const workdir = ref<string>('')

@@ -57,8 +57,8 @@ function single(tool: AgentTool, defaultEnabled = true): ToolRegistryEntry {
 /** bash 家族元数据（bash / bash_output / kill_shell / bash_input），build 时按 Agent 会话重建。 */
 const [bashMeta, bashOutputMeta, killShellMeta, bashInputMeta] = createBashTools('')
 
-/** Plan Mode 家族元数据（enter_plan_mode / exit_plan_mode），build 时按 Agent 会话重建。 */
-const [enterPlanMeta, exitPlanMeta] = createPlanModeTools('')
+/** Plan Mode 家族元数据（enter_plan_mode / exit_plan_mode / report_step），build 时按 Agent 会话重建。 */
+const [enterPlanMeta, exitPlanMeta, reportStepMeta] = createPlanModeTools('')
 
 const TOOL_REGISTRY: ToolRegistryEntry[] = [
   {
@@ -116,6 +116,14 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
     defaultEnabled: true,
     build: ({ sessionId }) =>
       createPlanModeTools(sessionId).filter((t) => t.name === 'exit_plan_mode')
+  },
+  {
+    name: reportStepMeta.name,
+    label: reportStepMeta.label,
+    description: reportStepMeta.description,
+    defaultEnabled: true,
+    build: ({ sessionId }) =>
+      createPlanModeTools(sessionId).filter((t) => t.name === 'report_step')
   },
   {
     name: 'ask_user',

@@ -158,7 +158,7 @@ async function refreshShellEnv(): Promise<void> {
         <span>工作目录</span>
       </template>
       <p class="settings-card__desc">
-        Agent 执行命令（bash）的默认工作目录，并展示在系统提示「工作目录」行。留空时使用默认值（开发环境为项目根，生产环境为用户主目录）。修改后立即对 bash
+        Agent 执行命令（bash）的默认工作目录，并展示在系统提示「工作目录」行。留空时使用默认值（用户数据目录下的 work 子目录，开发/生产一致）。修改后立即对 bash
         生效；已有消息的会话提示词保持不变，仅新会话按新目录生成。
       </p>
       <div class="workdir">

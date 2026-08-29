@@ -8,6 +8,7 @@ import ChatInput from '@renderer/components/chat/ChatInput.vue'
 import SessionSidebar from '@renderer/components/sidebar/SessionSidebar.vue'
 import PermissionBar from '@renderer/components/permission/PermissionBar.vue'
 import PlanApprovalBar from '@renderer/components/permission/PlanApprovalBar.vue'
+import PlanProgressBar from '@renderer/components/permission/PlanProgressBar.vue'
 import AskUserBar from '@renderer/components/permission/AskUserBar.vue'
 import { useSessionStore } from '@renderer/store/useSessionStore'
 import { useChatStore, type ComposerAttachment } from '@renderer/store/useChatStore'
@@ -194,6 +195,8 @@ function goToSettings(): void {
         <PermissionBar />
         <!-- 计划审批卡片：Agent 提交计划后展示，供用户批准/拒绝 -->
         <PlanApprovalBar />
+        <!-- 计划执行进度条：批准后展示，report_step 驱动当前步骤 -->
+        <PlanProgressBar />
         <!-- 澄清问题卡片：Agent 调用 ask_user 后展示，供用户作答/跳过 -->
         <AskUserBar />
         <div class="chat-view__composer">

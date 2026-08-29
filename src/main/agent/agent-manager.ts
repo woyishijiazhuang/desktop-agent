@@ -10,7 +10,7 @@ import { mcpManager } from './mcp'
 import { getDecryptedApiKey, ensureAllModelConfigsRegistered } from './model-config'
 import { resolveAssistantCost } from './model-config/pricing'
 import { createBeforeToolCallHook, clearRunAutoAllow } from './permission'
-import { clearPlanMode, isPlanMode } from './tools/plan-mode'
+import { clearPlanMode, isPlanMode, finalizePlanProgress } from './tools/plan-mode'
 import { clearAskUserRequests } from './tools/ask-user'
 import { registerSubagentHost, unregisterSubagentHost, PLAN_READONLY_TOOLS } from './subagent'
 import { getModelsInstance, resolveModel, completeText } from './models'
@@ -680,6 +680,8 @@ export class AgentManager {
         if (!aborted && effectiveError) {
           void notifyAgentFinished({ title: '任务出错', body: effectiveError })
         }
+        // 计划进度收尾：正常完成 → 全部步骤标记完成；中止/失败 → 保留部分进度如实展示。
+        finalizePlanProgress(sessionId, !aborted && !effectiveError)
         const payload: AgentEventPayload = aborted
           ? { sessionId, event }
           : effectiveError

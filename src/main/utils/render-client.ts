@@ -27,6 +27,7 @@ const VIEW_ROUTES: Record<string, ViewTarget> = {
   'agentEvent.onSessionUpdate': 'content',
   'agentEvent.onPermissionRequest': 'content',
   'agentEvent.onPlanRequest': 'content',
+  'agentEvent.onPlanProgress': 'content',
   'agentEvent.onAskUserRequest': 'content',
   'agentEvent.onBackgroundSessions': 'content'
 }

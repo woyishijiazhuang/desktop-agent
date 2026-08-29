@@ -791,7 +791,7 @@ export class AgentService extends IpcService {
   // ==================== 工作目录配置 ====================
 
   /**
-   * 当前生效的 Agent 工作目录（含回退逻辑：settings 配置 > 开发项目根 / 生产用户主目录）。
+   * 当前生效的 Agent 工作目录（含回退逻辑：settings 配置 > 用户数据目录下 work 子目录）。
    * 系统提示「工作目录」行（仅对新会话）与 bash 默认 cwd 均以该值为准。
    */
   getWorkdir(): string {

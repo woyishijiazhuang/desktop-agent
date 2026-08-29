@@ -134,6 +134,27 @@ export interface PlanApprovalRequest {
   allowedPrompts: string[]
 }
 
+/** 计划步骤状态（report_step 上报后维护，展示用）。 */
+export type PlanStepStatus = 'pending' | 'in_progress' | 'done'
+
+/** 单个计划步骤的进度展示。 */
+export interface PlanStepProgress {
+  title: string
+  status: PlanStepStatus
+}
+
+/**
+ * 计划进度推送（report_step 更新后 main 推给 renderer）。
+ * renderer 据此在顶部细状态条展示「进行到第几步 / 各步状态」。
+ */
+export interface PlanProgress {
+  sessionId: string
+  /** 计划标题（与 PlanApprovalRequest.title 一致）。 */
+  title: string
+  /** 步骤列表（顺序与提交计划时 steps 一致）。 */
+  steps: PlanStepProgress[]
+}
+
 /** 结构化问题的一个选项。 */
 export interface AskUserOption {
   label: string
@@ -265,7 +286,7 @@ export const SETTING_FIND_SKILL_SOURCE = 'findSkillSource'
 
 /** settings 表中存储的「Agent 工作目录」key。
  * 值为绝对路径；未配置时回退到 resolveAgentWorkdir 的默认值
- * （开发环境 = 项目根 process.cwd()，生产 = 用户主目录 app.getPath('home')）。
+ * （用户数据目录下的 work 子目录，开发/生产一致，避免写源码或安装目录）。
  * Agent 系统提示的能力指引（工作目录行）与 bash 工具默认 cwd 均读取该项。
  */
 export const SETTING_AGENT_WORKDIR = 'agent.workdir'
