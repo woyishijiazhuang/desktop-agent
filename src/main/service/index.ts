@@ -8,6 +8,7 @@ import { McpService } from '../agent/mcp/service'
 import { ModelConfigService } from '../agent/model-config-service'
 import { KnowledgeService } from './knowledge-service'
 import { BashService } from './bash-service'
+import { WorkspaceService } from './workspace-service'
 import { createLogger } from '../utils/log'
 
 const log = createLogger('service')
@@ -22,17 +23,37 @@ export const ipcMainServices = initializeIpcMainServices([
   McpService,
   ModelConfigService,
   KnowledgeService,
-  BashService
+  BashService,
+  WorkspaceService
 ])
 void ipcMainServices
 log.debug('IPC services 已注册', {
-  namespaces: ['app', 'db', 'window', 'theme', 'agent', 'mcp', 'modelConfig', 'knowledge', 'bash']
+  namespaces: [
+    'app',
+    'db',
+    'window',
+    'theme',
+    'agent',
+    'mcp',
+    'modelConfig',
+    'knowledge',
+    'bash',
+    'workspace'
+  ]
 })
 
 // MCP 配置变更（增删改/启停）后驱逐全部内存 Agent：下一轮创建时重新拉取 MCP 工具集。
 // 在 service 层接线，避免 mcp/service 反向依赖 agent-service 造成循环引用。
 ipcMainServices.mcp.onConfigChanged(() => {
   void ipcMainServices.agent.evictAllSessions()
+})
+
+// 工作区删除后驱逐其会话的内存 Agent（防悬挂引用与持久化 shell 残留）。
+// 在 service 层接线，避免 workspace-service 反向依赖 agent-service 造成循环引用。
+ipcMainServices.workspace.setOnSessionsRemoved(async (sessionIds) => {
+  for (const id of sessionIds) {
+    await ipcMainServices.agent.evictSession(id)
+  }
 })
 
 // Export the combined type for the renderer's createIpcRendererClient

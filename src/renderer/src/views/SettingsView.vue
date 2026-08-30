@@ -1,6 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   NCard,
   NSwitch,
@@ -16,7 +15,6 @@ import {
   useMessage
 } from 'naive-ui'
 import {
-  ArrowBackOutline,
   OptionsOutline,
   CubeOutline,
   BuildOutline,
@@ -25,7 +23,9 @@ import {
   FolderOpenOutline,
   StatsChartOutline,
   BookOutline,
-  LibraryOutline
+  LibraryOutline,
+  LayersOutline,
+  InformationCircleOutline
 } from '@vicons/ionicons5'
 import SystemPromptEditor from '@renderer/components/settings/SystemPromptEditor.vue'
 import AddModelDialog from '@renderer/components/settings/AddModelDialog.vue'
@@ -35,11 +35,13 @@ import SkillsPanel from '@renderer/components/settings/SkillsPanel.vue'
 import McpPanel from '@renderer/components/settings/McpPanel.vue'
 import MemoryPanel from '@renderer/components/settings/MemoryPanel.vue'
 import KnowledgePanel from '@renderer/components/settings/KnowledgePanel.vue'
+import WorkspacePanel from '@renderer/components/settings/WorkspacePanel.vue'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
 import { useModelConfigsStore } from '@renderer/store/useModelConfigsStore'
 import { useThemeStore, type ThemeMode } from '@renderer/store/useThemeStore'
 import { useWindowStore } from '@renderer/store/useWindowStore'
 import { mainClient } from '@renderer/utils/main-client'
+import { SETTINGS_TAB_EVENT } from '@renderer/service/ui-service'
 import { formatContextWindow } from '@renderer/utils/format'
 import type { ModelConfigSummary, TitleBarMode } from '@main/agent/types'
 
@@ -48,7 +50,6 @@ const modelConfigs = useModelConfigsStore()
 const theme = useThemeStore()
 const windowStore = useWindowStore()
 const message = useMessage()
-const router = useRouter()
 
 /** 当前激活的分类。 */
 const activeTab = ref('general')
@@ -56,6 +57,7 @@ const activeTab = ref('general')
 /** 左侧导航分类。 */
 const navItems = [
   { key: 'general', label: '通用', icon: OptionsOutline },
+  { key: 'workspace', label: '工作区', icon: LayersOutline },
   { key: 'models', label: '模型', icon: CubeOutline },
   { key: 'usage', label: '用量', icon: StatsChartOutline },
   { key: 'tools', label: '工具', icon: BuildOutline },
@@ -63,12 +65,9 @@ const navItems = [
   { key: 'memory', label: '记忆', icon: BookOutline },
   { key: 'knowledge', label: '知识库', icon: LibraryOutline },
   { key: 'mcp', label: 'MCP', icon: GitNetworkOutline },
-  { key: 'data', label: '数据与诊断', icon: FolderOpenOutline }
+  { key: 'data', label: '数据与诊断', icon: FolderOpenOutline },
+  { key: 'about', label: '关于', icon: InformationCircleOutline }
 ]
-
-function goBack(): void {
-  void router.push('/chat')
-}
 
 /** 系统提示保存中（独立于 API key 的 saving）。 */
 const promptSaving = ref(false)
@@ -206,7 +205,21 @@ onMounted(async () => {
     mainClient.app.getDiagnosticsInfo().then((info) => (diagInfo.value = info)),
     mainClient.app.getAppVersion().then((v) => (appVersion.value = v))
   ])
+  // 跨窗口 tab 导航（工作区窗口「管理工作区」入口经 ui.settingsTab 推送）
+  window.addEventListener(SETTINGS_TAB_EVENT, onSettingsTabEvent)
 })
+
+onUnmounted(() => {
+  window.removeEventListener(SETTINGS_TAB_EVENT, onSettingsTabEvent)
+})
+
+/** 处理跨窗口 tab 导航：切到合法 tab，非法值忽略。 */
+function onSettingsTabEvent(e: Event): void {
+  const tab = (e as CustomEvent<string>).detail
+  if (navItems.some((i) => i.key === tab)) {
+    activeTab.value = tab
+  }
+}
 
 // ---- 模型配置 ----
 function onAdd(): void {
@@ -307,19 +320,7 @@ function onThemeChange(mode: ThemeMode): void {
   <div class="settings-view">
     <!-- 左侧分类导航 -->
     <aside class="settings-nav">
-      <div class="settings-nav__head" title="返回对话" @click="goBack">
-        <NButton
-          quaternary
-          circle
-          size="small"
-          aria-label="返回对话"
-          title="返回对话"
-          @click="goBack"
-        >
-          <template #icon>
-            <NIcon><ArrowBackOutline /></NIcon>
-          </template>
-        </NButton>
+      <div class="settings-nav__head">
         <h1 class="settings-nav__title">设置</h1>
       </div>
 
@@ -487,6 +488,20 @@ function onThemeChange(mode: ThemeMode): void {
               <template #suffix>%</template>
             </NInputNumber>
           </div>
+        </NCard>
+      </div>
+
+      <!-- ========== 工作区 ========== -->
+      <div v-show="activeTab === 'workspace'" class="settings-content__inner">
+        <NCard size="small" class="settings-card">
+          <template #header>
+            <span>工作区</span>
+          </template>
+          <p class="settings-card__desc">
+            工作区 = 一个项目目录（workdir）+ 专属窗口 + 该目录下的会话与 agent.md
+            项目记忆。可同时打开多个工作区窗口，会话按工作区隔离。删除工作区会一并删除其全部会话。
+          </p>
+          <WorkspacePanel />
         </NCard>
       </div>
 
@@ -661,6 +676,67 @@ function onThemeChange(mode: ThemeMode): void {
               <span class="data-row__label">应用版本</span>
             </div>
             <span class="data-row__text">{{ appVersion }}</span>
+          </div>
+        </NCard>
+      </div>
+
+      <!-- ========== 关于 ========== -->
+      <div v-show="activeTab === 'about'" class="settings-content__inner">
+        <NCard size="small" class="settings-card">
+          <template #header>
+            <span>关于</span>
+          </template>
+          <div class="about">
+            <div class="about__head">
+              <div class="about__icon">AI</div>
+              <div>
+                <h2 class="about__title">桌面助手</h2>
+                <p class="about__subtitle">
+                  本地优先的 AI 对话助手
+                  <span v-if="appVersion" class="about__version">v{{ appVersion }}</span>
+                </p>
+              </div>
+            </div>
+
+            <section class="about__section">
+              <h3 class="about__heading">简介</h3>
+              <p class="about__text">
+                基于 <code>Electron</code> + <code>Vue 3</code> +
+                <code>TypeScript</code> 构建的桌面端 AI 对话助手。支持多家模型服务商与自定义
+                OpenAI/Anthropic 兼容端点，API Key 经系统安全存储加密，不会离开你的设备。
+              </p>
+              <p class="about__text">
+                内置文件读写、命令执行、网页搜索、技能市场、MCP
+                扩展等工具能力，并支持会话压缩、长期记忆与用量统计。
+              </p>
+            </section>
+
+            <section class="about__section">
+              <h3 class="about__heading">技术栈</h3>
+              <ul class="about__list">
+                <li><code>Electron</code> + <code>electron-vite</code> 跨平台桌面壳</li>
+                <li><code>Vue 3</code> + <code>Pinia</code> + <code>Vue Router</code> 前端框架</li>
+                <li><code>Naive UI</code> 组件库，深浅双主题</li>
+                <li>
+                  <code>@earendil-works/pi-ai</code> + <code>pi-agent-core</code> 模型与 Agent 能力
+                </li>
+                <li><code>node:sqlite</code> 本地数据库 + MCP 协议支持</li>
+              </ul>
+            </section>
+
+            <section class="about__section">
+              <h3 class="about__heading">关键能力</h3>
+              <div class="about__tags">
+                <NTag size="small" :bordered="false">多模型管理</NTag>
+                <NTag size="small" :bordered="false">流式渲染</NTag>
+                <NTag size="small" :bordered="false">工具调用</NTag>
+                <NTag size="small" :bordered="false">MCP 扩展</NTag>
+                <NTag size="small" :bordered="false">技能市场</NTag>
+                <NTag size="small" :bordered="false">长期记忆</NTag>
+                <NTag size="small" :bordered="false">会话压缩</NTag>
+                <NTag size="small" :bordered="false">用量统计</NTag>
+              </div>
+            </section>
           </div>
         </NCard>
       </div>
@@ -855,5 +931,94 @@ function onThemeChange(mode: ThemeMode): void {
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 380px;
+}
+
+/* 关于 */
+.about {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.about__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.about__icon {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--primary);
+  color: #fff;
+  font-weight: 700;
+  font-size: 15px;
+  letter-spacing: 0.5px;
+  flex-shrink: 0;
+}
+.about__title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text-1);
+}
+.about__subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-3);
+}
+.about__version {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--bg-mute);
+  font-size: 11px;
+  color: var(--text-2);
+}
+.about__section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.about__heading {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.about__text {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-2);
+}
+.about__list {
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.about__list li {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-2);
+}
+.about__tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.about code {
+  background: var(--bg-mute);
+  padding: 1px 5px;
+  border-radius: 4px;
+  font-size: 12px;
+  color: var(--text-1);
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
 }
 </style>

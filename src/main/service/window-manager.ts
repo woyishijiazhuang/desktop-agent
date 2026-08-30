@@ -8,7 +8,7 @@ import icon from '../../../resources/icon.png?asset'
 import winIcon from '../../../build/icon.ico?asset'
 import { createLogger } from '../utils/log'
 import { fileUrlToPath } from '../utils/file-url'
-import { db } from '../database'
+import { db, resolveDefaultWorkdir } from '../database'
 import { SETTING_CLOSE_TO_TRAY, SETTING_TITLE_BAR_MODE, type TitleBarMode } from '../agent/types'
 
 const log = createLogger('window')
@@ -16,18 +16,26 @@ const log = createLogger('window')
 /** 窗口置顶偏好设置键（settings 表，见 setAlwaysOnTop）。 */
 export const SETTING_ALWAYS_ON_TOP = 'window.alwaysOnTop'
 
+/** 上次退出时处于打开状态的工作区窗口（string[]，启动时据此恢复）。 */
+export const SETTING_OPEN_WORKSPACES = 'workspace.openWindows'
+
 /**
- * BaseWindow + 双 WebContentsView 架构的窗口管理器。
+ * BaseWindow + 双 WebContentsView 架构的多窗口管理器。
  *
  * 背景：无边框 BrowserWindow 下整个窗口是单一 webContents，弹窗（NDialog mask /
  * dropdown / tooltip）会遮盖自定义标题栏。改为 BaseWindow 后：
  * - headerView：顶部 32px 独立视图（自定义标题栏），内容/弹窗永远无法遮盖它；
  * - contentView：其余区域承载应用本体，其内部弹窗被裁剪在自身边界内。
  *
+ * 多窗口模型（工作区架构）：
+ * - 工作区窗口：每个绑定一个 workdir，展示该工作区的会话（session 按 workdir 隔离）；
+ * - 设置窗口：不绑定 workdir，承载全局设置（独立窗口，见 openSettingsWindow）。
+ * 同一 workdir 只允许一个窗口；窗口位置/尺寸写回 workspaces.bounds 供下次恢复。
+ *
  * 同时替代 BrowserWindow 的两处静态依赖：
- * - BrowserWindow.fromWebContents() → getWindowByWebContents()（注册表反查）；
+ * - BrowserWindow.fromWebContents() → getAppWindowByWebContents()（注册表反查）；
  * - electron-ipc-service 的 createIpcMainClient（遍历 BrowserWindow.getAllWindows()）
- *   → sendToViews()（按路由表发送到对应视图）。
+ *   → sendToAppWindow() / broadcastToViews()（按窗口/工作区定向发送）。
  */
 
 /** 自定义标题栏高度（与 header 页面 body 高度保持一致）。 */
@@ -70,26 +78,55 @@ nativeTheme.on('updated', () => {
   }
 })
 
-let mainWindow: BaseWindow | null = null
-let headerView: WebContentsView | null = null
-let contentView: WebContentsView | null = null
-/** webContentsId → 所属 BaseWindow（供 WindowService 反查窗口）。 */
-const windowByWebContents = new Map<number, BaseWindow>()
+// ==================== 应用窗口模型 ====================
+
+/** 应用窗口：工作区窗口（workdir 非空）或设置窗口（workdir 为 null）。 */
+export interface AppWindow {
+  win: BaseWindow
+  headerView: WebContentsView
+  contentView: WebContentsView
+  /** 所属工作区（workdir 绝对路径）；null = 设置窗口。 */
+  workdir: string | null
+  /** 内容视图渲染层监听器是否已就绪（可安全向渲染层推送托盘/菜单动作）。 */
+  ready: boolean
+}
+
+/** 全部应用窗口（工作区窗口 + 设置窗口）。 */
+const appWindows: AppWindow[] = []
+/** webContentsId → 所属 AppWindow（供 IPC 反查窗口/工作区）。 */
+const windowByWebContents = new Map<number, AppWindow>()
+/** 等待窗口就绪的 resolve 队列（窗口重建期间注册，加载完成后统一唤醒）。 */
+const readyWaiters = new Map<AppWindow, Array<() => void>>()
 
 /** 应用退出标志：true 后窗口 close 不再拦截（托盘「退出」/ Cmd+Q 等真实退出流程）。 */
 let quitting = false
-
-/** 当前主窗口视图是否已加载完成（渲染层监听器就绪，可安全向渲染层推送托盘/菜单动作）。 */
-let windowReady = false
-/** 等待窗口就绪的 resolve 队列（ensureMainWindow 在窗口重建期间注册，窗口显示后统一唤醒）。 */
-const windowReadyWaiters: Array<() => void> = []
+/** 最近聚焦的工作区窗口（托盘「显示隐藏」/「新建对话」目标）。 */
+let activeWorkspace: AppWindow | null = null
 
 /** Linux 原生标题栏模式：系统框接管，自绘 header 收起（高度 0）。Windows 原生模式改用 titleBarOverlay，header 仍可见。 */
 let nativeFramed = false
 
 /** 标记应用进入退出流程（before-quit 时置位，放行窗口关闭）。 */
 export function markQuitting(): void {
+  // 先记录当前打开的工作区窗口，再放行关闭：窗口关闭会逐个触发 closed 清理，
+  // 若在 closed 中再持久化会把列表清空，故退出前必须提前落盘。
+  persistOpenWorkspaces()
   quitting = true
+}
+
+/**
+ * 把当前打开的工作区窗口列表写入 settings（启动时 restoreStartupWindows 据此恢复）。
+ * 打开/关闭工作区窗口时更新；退出流程由 markQuitting 在窗口关闭前持久化。
+ */
+function persistOpenWorkspaces(): void {
+  try {
+    db.setSetting(
+      SETTING_OPEN_WORKSPACES,
+      appWindows.filter((aw) => aw.workdir !== null).map((aw) => aw.workdir as string)
+    )
+  } catch (err) {
+    log.warn('保存打开的工作区列表失败', { error: err })
+  }
 }
 
 export interface MainWindowBounds {
@@ -115,24 +152,59 @@ function computeInitialBounds(): MainWindowBounds {
 }
 
 /**
+ * 设置窗口初始尺寸：设置界面相对轻量，窗口取工作区 ~50% 宽 / ~62% 高并居中，
+ * 明显小于工作区窗口（66%×72%），避免打开时铺满大屏。
+ */
+function computeSettingsBounds(): MainWindowBounds {
+  const { workArea } = screen.getPrimaryDisplay()
+  const width = Math.min(Math.max(Math.round(workArea.width * 0.5), 760), 1120, workArea.width)
+  const height = Math.min(Math.max(Math.round(workArea.height * 0.62), 560), 820, workArea.height)
+  const x = workArea.x + Math.floor((workArea.width - width) / 2)
+  const y = workArea.y + Math.floor((workArea.height - height) / 2)
+  return { width, height, x, y }
+}
+
+// ==================== 窗口创建与生命周期 ====================
+
+/** 等待窗口视图加载完成（渲染层就绪）。已就绪直接 resolve。 */
+function waitForReady(aw: AppWindow): Promise<void> {
+  if (aw.ready) return Promise.resolve()
+  return new Promise((resolve) => {
+    const list = readyWaiters.get(aw) ?? []
+    list.push(resolve)
+    readyWaiters.set(aw, list)
+  })
+}
+
+/** 显示并聚焦窗口（最小化时先恢复）。 */
+function showWindow(aw: AppWindow): void {
+  const { win } = aw
+  if (win.isMinimized()) win.restore()
+  win.show()
+  win.focus()
+}
+
+/**
  * BaseWindow 不触发 app 的 browser-window-created 事件，需手动为两个
  * WebContentsView 挂上快捷键（F12 开/关 DevTools，生产屏蔽 Ctrl/Cmd+R 等）。
  * watchWindowShortcuts 类型签名是 BrowserWindow，这里传最小结构即可。
  */
-function wireViewShortcuts(): void {
-  const close = (): void => mainWindow?.close()
-  const header = headerView?.webContents
-  const content = contentView?.webContents
-  if (header)
-    optimizer.watchWindowShortcuts({ webContents: header, close } as unknown as BrowserWindow)
-  if (content)
-    optimizer.watchWindowShortcuts({ webContents: content, close } as unknown as BrowserWindow)
+function wireViewShortcuts(aw: AppWindow): void {
+  const close = (): void => aw.win.close()
+  optimizer.watchWindowShortcuts({
+    webContents: aw.headerView.webContents,
+    close
+  } as unknown as BrowserWindow)
+  optimizer.watchWindowShortcuts({
+    webContents: aw.contentView.webContents,
+    close
+  } as unknown as BrowserWindow)
 }
 
 /** 按当前窗口尺寸重排两个视图（窗口 resize / 全屏 / 最大化时触发）。 */
-function layout(): void {
-  if (!mainWindow || !headerView || !contentView) return
-  const { width, height } = mainWindow.getContentBounds()
+function layout(aw: AppWindow): void {
+  const { win, headerView, contentView } = aw
+  const { width, height } = win.getContentBounds()
   if (nativeFramed) {
     // Linux 原生标题栏：系统框已提供窗口控制，自绘 header 收起
     headerView.setBounds({ x: 0, y: 0, width, height: 0 })
@@ -148,11 +220,28 @@ function layout(): void {
   })
 }
 
-export function createMainWindow(bounds?: MainWindowBounds, replace = false): void {
-  // replace=true 用于标题栏模式的无缝重建：旧窗口暂不销毁，等新窗口加载完成
-  // 显示后再拆除旧窗口，避免「销毁 → 重建」之间的空窗期闪烁
-  if (mainWindow && !replace) return
+/** 加载应用视图：工作区窗口加载聊天页；设置窗口加载 #/settings。 */
+function loadAppViews(aw: AppWindow): void {
+  const isSettings = aw.workdir === null
+  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
+    const base = process.env['ELECTRON_RENDERER_URL']
+    aw.headerView.webContents.loadURL(`${base}/header/index.html`)
+    aw.contentView.webContents.loadURL(isSettings ? `${base}/#/settings` : base)
+  } else {
+    aw.headerView.webContents.loadFile(join(__dirname, '../renderer/header/index.html'))
+    aw.contentView.webContents.loadFile(
+      join(__dirname, '../renderer/index.html'),
+      isSettings ? { hash: '/settings' } : undefined
+    )
+  }
+}
 
+/**
+ * 创建应用窗口（工作区窗口或设置窗口）。workdir 非空时：
+ * - 位置/尺寸变更写回 workspaces.bounds（重启恢复）；
+ * - 聚焦时登记为 activeWorkspace（托盘动作目标）。
+ */
+function createAppWindow(workdir: string | null, bounds?: MainWindowBounds): AppWindow {
   const initialBounds = bounds ?? computeInitialBounds()
   const isMac = process.platform === 'darwin'
   // 标题栏模式（默认 native：优先当前平台原生窗口栏，设置页可切回自绘）
@@ -166,17 +255,11 @@ export function createMainWindow(bounds?: MainWindowBounds, replace = false): vo
 
   const win = new BaseWindow({
     ...initialBounds,
-    // 限制窗口最小尺寸，防止被拖到布局无法承载的极小状态
-    minWidth: 960,
-    minHeight: 680,
+    // 限制窗口最小尺寸，防止被拖到布局无法承载的极小状态；设置窗口允许更小
+    minWidth: workdir === null ? 720 : 960,
+    minHeight: workdir === null ? 520 : 680,
     show: false,
     autoHideMenuBar: true,
-    // 原生标题栏模式下各平台展示系统窗口栏：
-    // - macOS：titleBarStyle 'hidden' 保留红绿灯（frame:false 会隐藏它们）
-    // - Windows：titleBarStyle 'hidden' + titleBarOverlay，隐藏系统标题栏但保留系统窗口按钮，
-    //   标题栏底色/图标色由应用控制（可随主题变化）
-    // - Linux：默认系统框（标题 + 最小化/最大化/关闭）
-    // 自定义模式：无边框，由自绘 header 提供窗口控制
     title: '桌面助手',
     ...(isMac
       ? titleBarMode === 'native'
@@ -203,37 +286,40 @@ export function createMainWindow(bounds?: MainWindowBounds, replace = false): vo
         ? { icon }
         : {})
   })
-  mainWindow = win
   // 恢复窗口置顶偏好（设置页可开关，持久化在 settings 表，见 setAlwaysOnTop）
   if (db.getSetting<boolean>(SETTING_ALWAYS_ON_TOP)) {
     win.setAlwaysOnTop(true)
   }
-  // 新窗口视图未加载完成前不算就绪，托盘/菜单动作需等渲染层监听器注册后再发送
-  windowReady = false
   // 自定义模式（macOS）：隐藏系统红绿灯，由自绘标题栏按钮接管窗口控制
   if (isMac && titleBarMode !== 'native') {
     win.setWindowButtonVisibility(false)
   }
-  log.info('创建主窗口', { bounds: initialBounds, minSize: [960, 680], titleBarMode })
 
   const webPreferences = { preload: join(__dirname, '../preload/index.js'), sandbox: false }
-  headerView = new WebContentsView({ webPreferences })
-  contentView = new WebContentsView({ webPreferences })
+  const headerView = new WebContentsView({ webPreferences })
+  const contentView = new WebContentsView({ webPreferences })
+  const aw: AppWindow = { win, headerView, contentView, workdir, ready: false }
   // 视图首帧绘制前是透明的，会透出窗口底色；显式给视图也铺上主题底色，避免加载期间闪现白色
   const viewBg = currentWindowBg()
   headerView.setBackgroundColor(viewBg)
   contentView.setBackgroundColor(viewBg)
-  mainWindow.contentView.addChildView(headerView)
-  mainWindow.contentView.addChildView(contentView)
-  windowByWebContents.set(headerView.webContents.id, mainWindow)
-  windowByWebContents.set(contentView.webContents.id, mainWindow)
+  win.contentView.addChildView(headerView)
+  win.contentView.addChildView(contentView)
+  windowByWebContents.set(headerView.webContents.id, aw)
+  windowByWebContents.set(contentView.webContents.id, aw)
+  appWindows.push(aw)
+  log.info('创建应用窗口', {
+    workdir,
+    bounds: initialBounds,
+    titleBarMode,
+    windowCount: appWindows.length
+  })
 
   // BaseWindow 无 ready-to-show，任一视图首帧渲染完成后显示窗口
   let shown = false
   const showOnce = (): void => {
     if (shown) return
     shown = true
-    log.info('视图渲染完成，显示窗口')
     win.show()
   }
   headerView.webContents.once('did-finish-load', showOnce)
@@ -242,15 +328,18 @@ export function createMainWindow(bounds?: MainWindowBounds, replace = false): vo
   // 标题栏视图很小，几乎总是先于应用完成加载，若按其时机放行，托盘/菜单动作
   // 广播时应用还未注册监听器，消息会丢失（表现为只打开应用、不执行跳转）。
   contentView.webContents.once('did-finish-load', () => {
-    windowReady = true
-    for (const resolve of windowReadyWaiters) resolve()
-    windowReadyWaiters.length = 0
+    aw.ready = true
+    const waiters = readyWaiters.get(aw)
+    if (waiters) {
+      for (const resolve of waiters) resolve()
+      readyWaiters.delete(aw)
+    }
   })
   headerView.webContents.on('did-fail-load', (_e, code, desc) => {
-    log.error('标题栏视图加载失败', { code, desc })
+    log.error('标题栏视图加载失败', { workdir, code, desc })
   })
   contentView.webContents.on('did-fail-load', (_e, code, desc) => {
-    log.error('内容视图加载失败', { code, desc })
+    log.error('内容视图加载失败', { workdir, code, desc })
   })
 
   // 外链一律交给系统浏览器
@@ -275,149 +364,272 @@ export function createMainWindow(bounds?: MainWindowBounds, replace = false): vo
     void shell.openPath(path)
   })
 
-  win.on('resize', layout)
+  win.on('resize', () => layout(aw))
+
+  // 工作区窗口专属行为：位置记忆 + 聚焦登记
+  if (workdir) {
+    const persistBounds = (): void => {
+      try {
+        db.upsertWorkspace(workdir, { bounds: JSON.stringify(win.getBounds()) })
+      } catch (err) {
+        log.warn('保存窗口位置失败', { workdir, error: err })
+      }
+    }
+    win.on('resize', persistBounds)
+    win.on('moved', persistBounds)
+    win.on('focus', () => {
+      activeWorkspace = aw
+      // 聚焦时刷新窗口标题（工作区重命名后，原生标题栏/任务栏显示最新名称）
+      updateAppWindowTitle(aw)
+    })
+    if (!activeWorkspace) activeWorkspace = aw
+  }
 
   // 关闭到托盘：设置开启且非退出流程时拦截关闭、隐藏窗口。
   // 适用场景：Windows/Linux 上关窗默认会退出应用，拦截后 main 进程保持存活，
-  // 正在后台运行的 Agent 任务不会中断，可从托盘随时唤回。
+  // 正在后台运行的 Agent 任务不会中断，可从托盘随时唤回。工作区行不随窗口关闭删除。
   win.on('close', (e) => {
     if (quitting) return
     if (db.getSetting<boolean>(SETTING_CLOSE_TO_TRAY)) {
       e.preventDefault()
       win.hide()
-      log.info('关闭窗口：最小化到托盘')
+      log.info('关闭窗口：最小化到托盘', { workdir })
     }
   })
 
   // BaseWindow 关闭时不会自动销毁子视图的 webContents，需手动 close 防止内存泄漏。
-  // 实例守卫：标题栏模式切换会重建窗口，旧窗口的 closed 不得误清新窗口状态。
+  // 按 AppWindow 实例清理注册表，标题栏模式重建时旧窗口的 closed 不得误清新窗口状态。
   win.on('closed', () => {
-    if (mainWindow !== win) return
-    log.info('主窗口已关闭')
-    const closeView = (view: WebContentsView | null): void => {
-      // webContents 在销毁瞬间可能已置空（Electron 41+ 行为），先判空再判 isDestroyed
-      if (view && view.webContents && !view.webContents.isDestroyed()) view.webContents.close()
+    const idx = appWindows.indexOf(aw)
+    if (idx >= 0) appWindows.splice(idx, 1)
+    for (const [id, w] of windowByWebContents) {
+      if (w === aw) windowByWebContents.delete(id)
+    }
+    if (activeWorkspace === aw) activeWorkspace = null
+    // webContents 在销毁瞬间可能已置空（Electron 41+ 行为），先判空再判 isDestroyed
+    const closeView = (view: WebContentsView): void => {
+      if (view.webContents && !view.webContents.isDestroyed()) view.webContents.close()
     }
     closeView(headerView)
     closeView(contentView)
-    headerView = null
-    contentView = null
-    mainWindow = null
-    windowByWebContents.clear()
+    // 退出流程中 markQuitting 已在窗口关闭前持久化，此处跳过避免清空列表
+    if (!quitting) persistOpenWorkspaces()
+    log.info('应用窗口已关闭', { workdir })
   })
 
-  layout()
-  wireViewShortcuts()
-  if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
-    const base = process.env['ELECTRON_RENDERER_URL']
-    headerView.webContents.loadURL(`${base}/header/index.html`)
-    contentView.webContents.loadURL(base)
-  } else {
-    headerView.webContents.loadFile(join(__dirname, '../renderer/header/index.html'))
-    contentView.webContents.loadFile(join(__dirname, '../renderer/index.html'))
+  layout(aw)
+  wireViewShortcuts(aw)
+  updateAppWindowTitle(aw)
+  loadAppViews(aw)
+  return aw
+}
+
+// ==================== 工作区窗口 ====================
+
+/**
+ * 打开工作区窗口：已存在则显示并聚焦；否则创建（优先恢复 workspaces.bounds）。
+ * 返回的 Promise 在窗口视图加载完成（渲染层就绪）后 resolve。
+ * touch=true（默认）时刷新 last_opened_at（启动恢复应传 false，避免重排恢复顺序）。
+ */
+export async function openWorkspaceWindow(
+  workdir: string,
+  opts?: { bounds?: MainWindowBounds; touch?: boolean }
+): Promise<AppWindow> {
+  const existing = getWorkspaceWindow(workdir)
+  if (existing) {
+    showWindow(existing)
+    if (opts?.touch !== false) db.touchWorkspace(workdir)
+    return existing
   }
+  const ws = db.getWorkspace(workdir)
+  const bounds =
+    opts?.bounds ?? (ws?.bounds ? (JSON.parse(ws.bounds) as MainWindowBounds) : undefined)
+  const aw = createAppWindow(workdir, bounds)
+  showWindow(aw)
+  if (opts?.touch !== false) db.touchWorkspace(workdir)
+  persistOpenWorkspaces()
+  await waitForReady(aw)
+  return aw
+}
+
+/** 关闭工作区窗口（仅关窗，工作区与会话保留；重新打开见 openWorkspaceWindow）。 */
+export function closeWorkspaceWindow(workdir: string): void {
+  getWorkspaceWindow(workdir)?.win.close()
+}
+
+/** 全部工作区窗口（按打开顺序）。 */
+export function getWorkspaceWindows(): AppWindow[] {
+  return appWindows.filter((aw) => aw.workdir !== null)
+}
+
+export function getWorkspaceWindow(workdir: string): AppWindow | undefined {
+  return appWindows.find((aw) => aw.workdir === workdir)
+}
+
+/** 最近聚焦的工作区窗口（托盘/菜单「显示隐藏」「新建对话」目标）。 */
+export function getActiveWorkspaceWindow(): AppWindow | undefined {
+  return activeWorkspace ?? getWorkspaceWindows()[0]
+}
+
+// ==================== 设置窗口 ====================
+
+/** 打开设置窗口（单例；已存在则显示聚焦）。窗口尺寸取专用初始值，明显小于工作区窗口。 */
+export async function openSettingsWindow(): Promise<AppWindow> {
+  const existing = appWindows.find((aw) => aw.workdir === null)
+  if (existing) {
+    showWindow(existing)
+    return existing
+  }
+  const aw = createAppWindow(null, computeSettingsBounds())
+  showWindow(aw)
+  await waitForReady(aw)
+  return aw
+}
+
+export function getSettingsWindow(): AppWindow | undefined {
+  return appWindows.find((aw) => aw.workdir === null)
+}
+
+// ==================== 启动恢复与全局重建 ====================
+
+/**
+ * 启动时恢复工作区窗口：优先恢复「上次退出时打开」的工作区窗口（settings 的
+ * workspace.openWindows，退出时由 markQuitting 落盘）；无记录（首次启动）或
+ * 记录的窗口均已失效时，打开默认工作区（用户数据目录下的 work，与迁移逻辑一致）。
+ */
+export async function restoreStartupWindows(): Promise<void> {
+  const saved = db.getSetting<string[]>(SETTING_OPEN_WORKSPACES) ?? []
+  const existing = new Set(db.listWorkspaces().map((w) => w.workdir))
+  if (saved.length > 0) {
+    for (const workdir of saved) {
+      if (existing.has(workdir)) await openWorkspaceWindow(workdir, { touch: false })
+    }
+    // 保存的窗口全部失效（工作区已被删除）时兜底打开默认工作区
+    if (getWorkspaceWindows().length === 0) {
+      await openDefaultWorkspace()
+    }
+    return
+  }
+  log.info('无上次打开记录，打开默认工作区')
+  await openDefaultWorkspace()
+}
+
+/** 打开默认工作区：优先用户数据目录下 work 的既有行，否则取最早创建的工作区，都没有则注册新建。 */
+async function openDefaultWorkspace(): Promise<void> {
+  const defaultDir = resolveDefaultWorkdir()
+  const workspaces = db.listWorkspaces()
+  const target =
+    workspaces.find((w) => w.workdir === defaultDir)?.workdir ??
+    workspaces[0]?.workdir ??
+    db.upsertWorkspace(defaultDir).workdir
+  await openWorkspaceWindow(target, { touch: false })
 }
 
 /**
- * 重建主窗口：标题栏模式切换后调用（frame/titleBarStyle 在构造时生效）。
- * 保留窗口位置与尺寸。
- *
- * 无缝切换策略：先创建新窗口（show:false，两个视图加载完成才显示），期间旧窗口
- * 保持可见；新窗口显示后再拆除旧窗口，消除「旧窗口销毁 → 新窗口加载」之间的
- * 空窗期闪烁。旧窗口用 destroy 绕过 close 拦截（关闭到托盘设置），且不触发 beforeunload。
+ * 重建全部应用窗口：标题栏模式切换后调用（frame/titleBarStyle 在构造时生效）。
+ * 保留各窗口位置尺寸。无缝策略：新窗口 show:false 创建，**旧窗口保持可见**，
+ * 待新窗口视图加载完成自动 show（同位置覆盖）后再 destroy 旧窗口；
+ * 绝不能提前 hide 旧窗口——否则全部旧窗口瞬间消失、再逐个加载出现，造成明显闪烁。
+ * destroy 绕过 close 拦截（关闭到托盘设置）。
  */
-export function recreateMainWindow(): void {
-  const old = mainWindow
-  if (!old) return
-  const bounds = old.getBounds()
-  // createMainWindow 会立刻把模块级 headerView/contentView 指向新窗口的视图，
-  // 旧视图需先在此保留引用，用于之后卸载与销毁
-  const oldViews = [headerView, contentView].filter((v): v is WebContentsView => v != null)
-  const oldIds = new Set(oldViews.map((v) => v.webContents.id))
-
-  // 先建新窗口（替换模式），期间旧窗口保持可见
-  createMainWindow(bounds, true)
-
-  const newWin = mainWindow
-  if (!newWin || newWin === old) return
-
-  // 新窗口显示后再拆除旧窗口：位置尺寸相同，视觉上无缝切换
-  newWin.once('show', () => {
-    for (const view of oldViews) {
-      try {
-        old.contentView.removeChildView(view)
-      } catch {
-        // 视图已不在窗口上，忽略
-      }
-    }
-    // 旧窗口 closed 处理器因 mainWindow 已换新会提前返回，注销旧视图的
-    // 窗口反查条目需在此手动完成
-    for (const id of oldIds) windowByWebContents.delete(id)
-    old.destroy()
-    // BaseWindow 销毁不会自动销毁子视图的 webContents，需手动 close 防内存泄漏
-    for (const view of oldViews) {
-      if (view.webContents && !view.webContents.isDestroyed()) view.webContents.close()
-    }
-  })
+export function recreateAllWindows(): void {
+  // 当前聚焦窗口（通常是触发切换的设置窗口）最后重建：其新窗口最后 show、保持在最上层，
+  // 否则设置窗口可能被随后显示的工作区窗口盖住。
+  const list = [...appWindows].sort((a, b) => Number(a.win.isFocused()) - Number(b.win.isFocused()))
+  for (const aw of list) {
+    const bounds = aw.win.getBounds()
+    const replacement = createAppWindow(aw.workdir, bounds)
+    replacement.win.once('show', () => aw.win.destroy())
+  }
 }
 
-export function getMainWindow(): BaseWindow | null {
-  return mainWindow
+// ==================== 访问器 ====================
+
+/** 取路径末段作为默认工作区名（workspaces 行缺失时兜底，与 database 迁移逻辑一致）。 */
+function fallbackWorkspaceName(workdir: string): string {
+  const parts = workdir.replace(/[\\/]+$/, '').split(/[\\/]/)
+  const last = parts[parts.length - 1]
+  return last || workdir
 }
 
-/** 设置窗口置顶并持久化偏好（重启后 createMainWindow 恢复）。 */
+/**
+ * 同步应用窗口标题：工作区窗口显示「工作区名 - 桌面助手」，设置窗口显示「设置 - 桌面助手」。
+ * 原生标题栏场景（Linux 系统框 / Windows titleBarOverlay / macOS 隐藏式标题栏）与任务栏
+ * 均以窗口标题展示工作区名，与自绘 header 内的工作区名保持一致；重命名后在聚焦时刷新。
+ */
+export function updateAppWindowTitle(aw: AppWindow): void {
+  if (aw.workdir) {
+    const name = db.getWorkspace(aw.workdir)?.name ?? fallbackWorkspaceName(aw.workdir)
+    aw.win.setTitle(`${name} - 桌面助手`)
+  } else {
+    aw.win.setTitle('设置 - 桌面助手')
+  }
+}
+
+export function getAppWindowByWebContents(webContents: WebContents): AppWindow | undefined {
+  return windowByWebContents.get(webContents.id)
+}
+
+/** 由 IPC 消息来源 webContents 反查所属工作区（替代 BrowserWindow.fromWebContents 的作用域判定）。 */
+export function getWorkspaceByWebContents(
+  webContents: WebContents
+): { workdir: string } | undefined {
+  const aw = windowByWebContents.get(webContents.id)
+  return aw?.workdir ? { workdir: aw.workdir } : undefined
+}
+
+/** 最近聚焦的应用窗口（菜单「标题栏开发者工具」等）。 */
+export function getFocusedAppWindow(): AppWindow | undefined {
+  for (const win of BaseWindow.getAllWindows()) {
+    if (win.isFocused() && !win.isDestroyed()) {
+      return appWindows.find((aw) => aw.win === win)
+    }
+  }
+  return activeWorkspace ?? appWindows[0]
+}
+
+/** 设置窗口置顶并持久化偏好（重启后 createAppWindow 恢复）。 */
 export function setAlwaysOnTop(win: BaseWindow, on: boolean): void {
   win.setAlwaysOnTop(on)
   db.setSetting(SETTING_ALWAYS_ON_TOP, on)
 }
 
-export function getHeaderView(): WebContentsView | null {
-  return headerView
-}
-
-export function getContentView(): WebContentsView | null {
-  return contentView
-}
-
-/** 由 IPC 消息来源 webContents 反查所属窗口（替代 BrowserWindow.fromWebContents）。 */
-export function getWindowByWebContents(webContents: WebContents): BaseWindow | null {
-  return windowByWebContents.get(webContents.id) ?? null
-}
+// ==================== 推送 ====================
 
 /** 视图广播目标。 */
 export type ViewTarget = 'all' | 'header' | 'content'
 
-/**
- * 向指定视图的 webContents 发送消息（fire-and-forget，替代 createIpcMainClient）。
- * 'all' 同时发给标题栏 + 内容视图；'header' / 'content' 只发给对应视图。
- */
-export function sendToViews(channel: string, message: unknown, target: ViewTarget = 'all'): void {
+/** 向单个应用窗口的指定视图发送消息（fire-and-forget，替代 createIpcMainClient）。 */
+export function sendToAppWindow(
+  aw: AppWindow | undefined,
+  channel: string,
+  message: unknown,
+  target: ViewTarget = 'all'
+): void {
+  if (!aw) return
   if (target === 'header' || target === 'all') {
-    headerView?.webContents.send(channel, message)
+    aw.headerView.webContents.send(channel, message)
   }
   if (target === 'content' || target === 'all') {
-    contentView?.webContents.send(channel, message)
+    aw.contentView.webContents.send(channel, message)
   }
 }
 
-/**
- * 显示主窗口；窗口已销毁则按初始尺寸重建（macOS 关窗后应用常驻，
- * 从托盘/程序坞唤回时需重建窗口）。
- *
- * 返回的 Promise 在窗口视图加载完成（渲染层就绪）后 resolve：
- * 托盘/菜单动作需等渲染层监听器注册完成再广播，否则消息会丢失
- *（典型场景：macOS 关窗后窗口销毁，重建是异步的，动作发送过早时渲染层还未加载）。
- */
-export function ensureMainWindow(): Promise<void> {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore()
-    mainWindow.show()
-    mainWindow.focus()
-    if (windowReady) return Promise.resolve()
-  } else {
-    createMainWindow(computeInitialBounds())
-  }
-  return new Promise((resolve) => {
-    windowReadyWaiters.push(resolve)
-  })
+/** 向指定工作区的窗口发送消息。 */
+export function sendToWorkspace(
+  workdir: string,
+  channel: string,
+  message: unknown,
+  target: ViewTarget = 'all'
+): void {
+  sendToAppWindow(getWorkspaceWindow(workdir), channel, message, target)
+}
+
+/** 向全部应用窗口广播（主题/模型配置等全局事件）。 */
+export function broadcastToViews(
+  channel: string,
+  message: unknown,
+  target: ViewTarget = 'all'
+): void {
+  for (const aw of appWindows) sendToAppWindow(aw, channel, message, target)
 }

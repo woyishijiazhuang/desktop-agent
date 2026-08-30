@@ -284,17 +284,15 @@ export const FIND_SKILL_SOURCE_HOMEPAGES: Record<FindSkillSource, string> = {
 /** settings 表中存储的「技能搜索数据源」key。 */
 export const SETTING_FIND_SKILL_SOURCE = 'findSkillSource'
 
-/** settings 表中存储的「Agent 工作目录」key。
- * 值为绝对路径；未配置时回退到 resolveAgentWorkdir 的默认值
- * （用户数据目录下的 work 子目录，开发/生产一致，避免写源码或安装目录）。
- * Agent 系统提示的能力指引（工作目录行）与 bash 工具默认 cwd 均读取该项。
- */
-export const SETTING_AGENT_WORKDIR = 'agent.workdir'
-
 /** settings 表中存储的「欢迎页最近一批 AI 建议」key（string[]）。
  * 新会话优先展示该批建议（跨会话/重启复用），点「换一批」才重新生成并覆盖。
  */
 export const SETTING_WELCOME_SUGGESTIONS = 'welcomeSuggestions'
+
+/** settings 表中存储的「agent.md 注入上限」key（字符数，正整数）。
+ * 仅限制注入系统提示词的常驻摘要长度；agent.md 文件本身不受限，完整内容由 Agent 按需 read_file。
+ */
+export const SETTING_AGENT_MD_INJECTION_CHARS = 'agent.agentMdInjectionChars'
 
 /** settings 表中存储的「bash 工具额外环境变量」key（Record<string, string>）。
  * 用户手动配置、独立于 shell 环境的变量；bash 子进程最终环境 =

@@ -41,32 +41,6 @@ async function removeAllowlistRule(command: string): Promise<void> {
   message.success('已从白名单移除')
 }
 
-/** 工作目录草稿：编辑本地值，点保存才提交。 */
-const workdirDraft = ref('')
-watch(
-  () => settings.workdir,
-  (v) => {
-    workdirDraft.value = v
-  },
-  { immediate: true }
-)
-
-/** 弹系统目录选择框，选中后回填草稿。 */
-async function pickWorkdir(): Promise<void> {
-  const dir = await mainClient.agent.pickWorkdir()
-  if (dir) workdirDraft.value = dir
-}
-
-async function saveWorkdir(): Promise<void> {
-  const v = workdirDraft.value.trim()
-  if (!v) {
-    message.warning('请输入工作目录路径')
-    return
-  }
-  await settings.saveWorkdir(v)
-  message.success('工作目录已保存，新会话生效')
-}
-
 /** 环境变量草稿：编辑本地值，点保存才提交。 */
 const envRows = ref<{ key: string; value: string }[]>([])
 watch(
@@ -155,43 +129,14 @@ async function refreshShellEnv(): Promise<void> {
 
     <NCard size="small" class="settings-card">
       <template #header>
-        <span>工作目录</span>
-      </template>
-      <p class="settings-card__desc">
-        Agent 执行命令（bash）的默认工作目录，并展示在系统提示「工作目录」行。留空时使用默认值（用户数据目录下的 work 子目录，开发/生产一致）。修改后立即对 bash
-        生效；已有消息的会话提示词保持不变，仅新会话按新目录生成。
-      </p>
-      <div class="workdir">
-        <NInput
-          v-model:value="workdirDraft"
-          placeholder="选择或输入工作目录路径"
-          spellcheck="false"
-        />
-        <div class="workdir__actions">
-          <NButton @click="pickWorkdir">选择</NButton>
-          <NButton
-            type="primary"
-            :disabled="workdirDraft.trim() === settings.workdir"
-            @click="saveWorkdir"
-          >
-            保存
-          </NButton>
-        </div>
-      </div>
-    </NCard>
-
-    <NCard size="small" class="settings-card">
-      <template #header>
         <span>环境变量</span>
       </template>
       <p class="settings-card__desc">
-        Agent 执行命令（bash）时使用的额外环境变量。生效优先级：应用自身环境 &lt;
-        用户 shell 环境（自动读取 .zshrc / .bashrc）&lt; 此处配置。修改 .zshrc / .bashrc
+        Agent 执行命令（bash）时使用的额外环境变量。生效优先级：应用自身环境 &lt; 用户 shell
+        环境（自动读取 .zshrc / .bashrc）&lt; 此处配置。修改 .zshrc / .bashrc
         后点「重新读取」即可生效，无需重启应用；此处配置保存后立即生效。
       </p>
-      <div v-if="envRows.length === 0" class="env-empty">
-        暂无自定义环境变量。
-      </div>
+      <div v-if="envRows.length === 0" class="env-empty">暂无自定义环境变量。</div>
       <div v-else class="env-list">
         <div v-for="(row, i) in envRows" :key="i" class="env-row">
           <NInput

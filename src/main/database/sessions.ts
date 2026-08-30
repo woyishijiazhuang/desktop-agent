@@ -20,26 +20,35 @@ const log = createLogger('db')
 export interface SessionApiDeps {
   getMessage: (id: number) => Message | undefined
   listMessagesBySession: (sessionId: string, options?: ListMessagesOptions) => Message[]
+  /** 缺省工作区：createSession 未指定 workdir 时的回退目标（迁移期读旧全局设置，见 database/index.ts）。 */
+  resolveDefaultWorkdir: () => string
 }
 
 /** 会话域 API（index.ts 组装进 db 门面）。 */
 export interface SessionApi {
   createSession(params?: CreateSessionParams): Session
   getSession(id: string): Session | undefined
-  listSessions(): Session[]
+  /** 全部未删除会话；workdir 缺省返回所有工作区。 */
+  listSessions(workdir?: string): Session[]
   /** 分页查询会话列表（游标分页；置顶会话仅在首页返回，后续页仅含非置顶切片）。 */
   listSessionsPaged(options?: ListSessionsOptions): ListSessionsResult
   /** 标题搜索（SQL LIKE 模糊匹配，分页模式下前端仅持有部分数据，须走后端查询）。 */
-  searchSessions(query: string, limit?: number): Session[]
-  listDeletedSessions(): Session[]
+  searchSessions(query: string, options?: { workdir?: string; limit?: number }): Session[]
+  /** 回收站中的会话；workdir 缺省返回所有工作区。 */
+  listDeletedSessions(workdir?: string): Session[]
   updateSession(id: string, params: UpdateSessionParams): Session
   /** 清空全部会话的最终系统提示词快照（全局默认提示词变更后调用，使各会话下次重建时重新组装）。 */
   clearResolvedSystemPrompts(): void
   touchSession(id: string): Session
   deleteSession(id: string): void
-  countTrashSessions(): number
-  purgeTrash(): number
+  /** 回收站中的会话数量；workdir 缺省统计所有工作区。 */
+  countTrashSessions(workdir?: string): number
+  /** 物理删除全部软删除会话；workdir 缺省清空所有工作区。返回删除的会话数。 */
+  purgeTrash(workdir?: string): number
+  /** 物理删除删除时间超过 days 天的软删除会话（启动时兜底清理，全库范围）。返回删除的会话数。 */
   purgeExpiredDeletedSessions(days: number): number
+  /** 物理删除某工作区的全部会话（工作区删除时调用，消息由级联删除，FTS 索引先行清理）。返回删除的会话数。 */
+  deleteSessionsByWorkdir(workdir: string): number
   compressSession(
     sessionId: string,
     upToIndex: number,
@@ -61,11 +70,12 @@ export function createSessionsApi(db: DatabaseSync, deps: SessionApiDeps): Sessi
     createSession(params?: CreateSessionParams): Session {
       const id = crypto.randomUUID()
       db.prepare(
-        `INSERT INTO sessions (id, title, model, thinking_level, system_prompt, parent_session_id)
-         VALUES (?, ?, ?, ?, ?, ?)`
+        `INSERT INTO sessions (id, title, workdir, model, thinking_level, system_prompt, parent_session_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         params?.title ?? '新会话',
+        params?.workdir ?? deps.resolveDefaultWorkdir(),
         params?.model ?? null,
         params?.thinkingLevel ?? null,
         params?.systemPrompt ?? null,
@@ -81,13 +91,19 @@ export function createSessionsApi(db: DatabaseSync, deps: SessionApiDeps): Sessi
       return row ? toSession(row) : undefined
     },
 
-    /** 全部未删除会话，按置顶 → 最后用户活动时间倒序。 */
-    listSessions(): Session[] {
-      const rows = db
-        .prepare(
-          'SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY pinned DESC, last_active_at DESC'
-        )
-        .all() as unknown as SessionRow[]
+    /** 全部未删除会话，按置顶 → 最后用户活动时间倒序；workdir 缺省返回所有工作区。 */
+    listSessions(workdir?: string): Session[] {
+      const rows = (workdir
+        ? db
+            .prepare(
+              'SELECT * FROM sessions WHERE deleted_at IS NULL AND workdir = ? ORDER BY pinned DESC, last_active_at DESC'
+            )
+            .all(workdir)
+        : db
+            .prepare(
+              'SELECT * FROM sessions WHERE deleted_at IS NULL ORDER BY pinned DESC, last_active_at DESC'
+            )
+            .all()) as unknown as SessionRow[]
       return rows.map((r) => toSession(r))
     },
 
@@ -103,15 +119,25 @@ export function createSessionsApi(db: DatabaseSync, deps: SessionApiDeps): Sessi
 
       const pinnedRows =
         options?.cursor === undefined
-          ? (db
-              .prepare(
-                'SELECT * FROM sessions WHERE deleted_at IS NULL AND pinned = 1 ORDER BY last_active_at DESC, id DESC'
-              )
-              .all() as unknown as SessionRow[])
+          ? ((options?.workdir
+              ? db
+                  .prepare(
+                    'SELECT * FROM sessions WHERE deleted_at IS NULL AND pinned = 1 AND workdir = ? ORDER BY last_active_at DESC, id DESC'
+                  )
+                  .all(options.workdir)
+              : db
+                  .prepare(
+                    'SELECT * FROM sessions WHERE deleted_at IS NULL AND pinned = 1 ORDER BY last_active_at DESC, id DESC'
+                  )
+                  .all()) as unknown as SessionRow[])
           : []
 
       const conditions = ['deleted_at IS NULL', 'pinned = 0']
       const values: (string | number)[] = []
+      if (options?.workdir) {
+        conditions.push('workdir = ?')
+        values.push(options.workdir)
+      }
       if (options?.cursor !== undefined && options?.cursorId) {
         // 复合游标：(last_active_at < cursor) OR (last_active_at = cursor AND id < cursorId)
         conditions.push('(last_active_at < ? OR (last_active_at = ? AND id < ?))')
@@ -133,24 +159,38 @@ export function createSessionsApi(db: DatabaseSync, deps: SessionApiDeps): Sessi
       }
     },
 
-    /** 标题搜索（LIKE 模糊匹配，按最近活动倒序，默认最多 50 条）。 */
-    searchSessions(query: string, limit = 50): Session[] {
-      const rows = db
-        .prepare(
-          `SELECT * FROM sessions
-           WHERE deleted_at IS NULL AND title LIKE ?
-           ORDER BY last_active_at DESC, id DESC
-           LIMIT ?`
-        )
-        .all(`%${query}%`, limit) as unknown as SessionRow[]
+    /** 标题搜索（LIKE 模糊匹配，按最近活动倒序，默认最多 50 条；workdir 缺省搜索所有工作区）。 */
+    searchSessions(query: string, options?: { workdir?: string; limit?: number }): Session[] {
+      const limit = options?.limit ?? 50
+      const rows = (options?.workdir
+        ? db
+            .prepare(
+              `SELECT * FROM sessions
+               WHERE deleted_at IS NULL AND title LIKE ? AND workdir = ?
+               ORDER BY last_active_at DESC, id DESC
+               LIMIT ?`
+            )
+            .all(`%${query}%`, options.workdir, limit)
+        : db
+            .prepare(
+              `SELECT * FROM sessions
+               WHERE deleted_at IS NULL AND title LIKE ?
+               ORDER BY last_active_at DESC, id DESC
+               LIMIT ?`
+            )
+            .all(`%${query}%`, limit)) as unknown as SessionRow[]
       return rows.map((r) => toSession(r))
     },
 
     /** 回收站中的会话（已软删除）。附件保留策略：软删期间文件保留，清空回收站/到期后清理。 */
-    listDeletedSessions(): Session[] {
-      const rows = db
-        .prepare('SELECT * FROM sessions WHERE deleted_at IS NOT NULL')
-        .all() as unknown as SessionRow[]
+    listDeletedSessions(workdir?: string): Session[] {
+      const rows = (workdir
+        ? db
+            .prepare('SELECT * FROM sessions WHERE deleted_at IS NOT NULL AND workdir = ?')
+            .all(workdir)
+        : db
+            .prepare('SELECT * FROM sessions WHERE deleted_at IS NOT NULL')
+            .all()) as unknown as SessionRow[]
       return rows.map((r) => toSession(r))
     },
 
@@ -233,27 +273,57 @@ export function createSessionsApi(db: DatabaseSync, deps: SessionApiDeps): Sessi
       db.prepare('UPDATE sessions SET deleted_at = ? WHERE id = ?').run(Date.now(), id)
     },
 
-    /** 回收站中的会话数量（已软删除、尚未物理删除）。 */
-    countTrashSessions(): number {
-      const row = db
-        .prepare('SELECT COUNT(*) AS cnt FROM sessions WHERE deleted_at IS NOT NULL')
-        .get() as unknown as { cnt: number }
+    /** 回收站中的会话数量（已软删除、尚未物理删除）；workdir 缺省统计所有工作区。 */
+    countTrashSessions(workdir?: string): number {
+      const row = (workdir
+        ? db
+            .prepare(
+              'SELECT COUNT(*) AS cnt FROM sessions WHERE deleted_at IS NOT NULL AND workdir = ?'
+            )
+            .get(workdir)
+        : db
+            .prepare('SELECT COUNT(*) AS cnt FROM sessions WHERE deleted_at IS NOT NULL')
+            .get()) as unknown as { cnt: number }
       return row.cnt
     },
 
-    /** 物理删除全部软删除会话（清空回收站）。返回删除的会话数，消息由级联删除，FTS 索引先行清理。 */
-    purgeTrash(): number {
+    /** 物理删除软删除会话（清空回收站）。返回删除的会话数，消息由级联删除，FTS 索引先行清理。 */
+    purgeTrash(workdir?: string): number {
       const count = transaction(db, () => {
         // messages 由 ON DELETE CASCADE 清除，FTS 索引无级联，须先删
         db.prepare(
           'DELETE FROM messages_fts WHERE rowid IN (SELECT m.id FROM messages m JOIN sessions s ON s.id = m.session_id WHERE s.deleted_at IS NOT NULL)'
         ).run()
-        const result = db.prepare('DELETE FROM sessions WHERE deleted_at IS NOT NULL').run() as {
+        const result = (
+          workdir
+            ? db
+                .prepare('DELETE FROM sessions WHERE deleted_at IS NOT NULL AND workdir = ?')
+                .run(workdir)
+            : db.prepare('DELETE FROM sessions WHERE deleted_at IS NOT NULL').run()
+        ) as {
           changes: number
         }
         return result.changes
       })
       // FTS5 DELETE 是逻辑删除（tombstone），optimize 合并段、回收 _data/_idx 物理空间
+      db.exec("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
+      return count
+    },
+
+    /**
+     * 物理删除某工作区的全部会话（工作区删除时调用）。
+     * 含未删除与已软删除的会话；消息由 ON DELETE CASCADE 清除，FTS 索引先行清理。返回删除的会话数。
+     */
+    deleteSessionsByWorkdir(workdir: string): number {
+      const count = transaction(db, () => {
+        db.prepare(
+          'DELETE FROM messages_fts WHERE rowid IN (SELECT m.id FROM messages m JOIN sessions s ON s.id = m.session_id WHERE s.workdir = ?)'
+        ).run(workdir)
+        const result = db.prepare('DELETE FROM sessions WHERE workdir = ?').run(workdir) as {
+          changes: number
+        }
+        return result.changes
+      })
       db.exec("INSERT INTO messages_fts(messages_fts) VALUES('optimize')")
       return count
     },
@@ -328,12 +398,13 @@ export function createSessionsApi(db: DatabaseSync, deps: SessionApiDeps): Sessi
         const forkId = crypto.randomUUID()
         db.prepare(
           `INSERT INTO sessions
-            (id, title, model, thinking_level, system_prompt, parent_session_id,
+            (id, title, workdir, model, thinking_level, system_prompt, parent_session_id,
              compress_summary, compress_last_index, created_at, updated_at, last_active_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
         ).run(
           forkId,
           source.title,
+          source.workdir,
           source.model,
           source.thinkingLevel,
           source.systemPrompt,

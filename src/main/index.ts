@@ -1,7 +1,11 @@
 import { app, BaseWindow, crashReporter } from 'electron'
 import { electronApp } from '@electron-toolkit/utils'
 import { ipcMainServices } from './service'
-import { createMainWindow, ensureMainWindow, markQuitting } from './service/window-manager'
+import {
+  getActiveWorkspaceWindow,
+  markQuitting,
+  restoreStartupWindows
+} from './service/window-manager'
 import { applyStoredThemeMode } from './service/theme-service'
 import { createTray } from './service/tray-service'
 import { createAppMenu } from './service/app-menu-service'
@@ -47,7 +51,8 @@ app.whenReady().then(() => {
   // 渲染层（含标题栏视图）经 prefers-color-scheme 自动跟随
   applyStoredThemeMode()
 
-  createMainWindow()
+  // 恢复工作区窗口：按 last_opened_at 倒序为每个工作区建窗口（无工作区时创建默认工作区）
+  void restoreStartupWindows()
   createTray()
   createAppMenu()
   // 兜底清理孤儿附件（软删会话已到期/清空后残留的附件目录）
@@ -58,11 +63,14 @@ app.whenReady().then(() => {
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the
     // dock icon is clicked and there are no other windows open.
-    // 窗口存在但被隐藏（关闭到托盘）时同样显示置前。
+    // 无窗口时恢复全部工作区窗口；窗口存在但被隐藏（关闭到托盘）时显示置前。
     if (BaseWindow.getAllWindows().length === 0) {
-      log.info('Dock 图标激活，重建主窗口')
+      log.info('Dock 图标激活，恢复工作区窗口')
+      void restoreStartupWindows()
+      return
     }
-    ensureMainWindow()
+    // 有窗口时把最近的工作区窗口显示置前
+    getActiveWorkspaceWindow()?.win.show()
   })
 })
 

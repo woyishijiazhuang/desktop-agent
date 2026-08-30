@@ -1,7 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { mainClient } from '../utils/main-client'
-import { useSessionStore } from './useSessionStore'
 import type {
   FindSkillSource,
   InstalledSkill,
@@ -83,11 +82,6 @@ export const useSettingsStore = defineStore('settings', () => {
   const closeToTray = ref(false)
   /** 标题栏模式（默认 native：优先当前平台原生窗口栏）。 */
   const titleBarMode = ref<TitleBarMode>('native')
-  /**
-   * Agent 工作目录（当前生效值，含默认回退：settings 配置 > 用户数据目录下 work 子目录）。
-   * bash 默认 cwd 每次执行实时读取；已建会话提示词快照不受影响，仅新会话首次创建 Agent 时按此生成。
-   */
-  const workdir = ref<string>('')
   /** bash 工具额外环境变量（KEY=VALUE；优先级高于应用自身与自动抓取的 shell 环境）。 */
   const agentEnv = ref<Record<string, string>>({})
 
@@ -112,7 +106,6 @@ export const useSettingsStore = defineStore('settings', () => {
       autoCompressThresholdVal,
       closeToTrayVal,
       titleBarModeVal,
-      workdirVal,
       agentEnvVal,
       permissionAutoApproveVal,
       permissionTimeoutSecVal
@@ -132,7 +125,6 @@ export const useSettingsStore = defineStore('settings', () => {
       mainClient.db.getSetting(SETTING_AUTO_COMPRESS_THRESHOLD),
       mainClient.db.getSetting(SETTING_CLOSE_TO_TRAY),
       mainClient.db.getSetting(SETTING_TITLE_BAR_MODE),
-      mainClient.agent.getWorkdir(),
       mainClient.db.getSetting(SETTING_AGENT_ENV),
       mainClient.db.getSetting(SETTING_PERMISSION_AUTO_APPROVE),
       mainClient.db.getSetting(SETTING_PERMISSION_TIMEOUT_SEC)
@@ -167,28 +159,20 @@ export const useSettingsStore = defineStore('settings', () => {
     closeToTray.value = (closeToTrayVal as boolean | undefined) ?? false
     const mode = titleBarModeVal as TitleBarMode | undefined
     titleBarMode.value = mode === 'custom' || mode === 'native' ? mode : 'native'
-    workdir.value = (workdirVal as string | undefined) ?? ''
     agentEnv.value = (agentEnvVal as Record<string, string> | undefined) ?? {}
   }
 
-  /** 保存后驱逐当前会话的内存 Agent，使新设置在下一轮生效。 */
-  async function evictCurrentAgent(): Promise<void> {
-    const sessionId = useSessionStore().currentSessionId
-    if (sessionId) {
-      await mainClient.agent.evictSession(sessionId)
-    }
-  }
-
   /**
-   * 保存默认系统提示并驱逐当前会话 Agent。
+   * 保存默认系统提示并驱逐全部内存 Agent。
    * 同时清空全部会话已固化的最终提示词快照：快照优先复用，若不失效，
    * 旧会话会永远沿用旧默认提示词（resolved_system_prompt 逻辑见 agent-manager.createAgent）。
+   * 设置独立窗口无「当前会话」概念，且这些设置是全局的，须驱逐全部工作区的 Agent。
    */
   async function saveDefaultSystemPrompt(prompt: string): Promise<void> {
     await mainClient.db.setSetting(SETTING_DEFAULT_SYSTEM_PROMPT, prompt)
     await mainClient.db.clearResolvedSystemPrompts()
     defaultSystemPrompt.value = prompt
-    await evictCurrentAgent()
+    await mainClient.agent.evictAllSessions()
   }
 
   /** 写回「上次使用思考级别」：新建会话继承（与模型 lastUsed 语义一致）。非法 level 拒绝写库。无需驱逐 Agent（会话级选择已由 selectThinkingLevel 同步内存）。 */
@@ -217,7 +201,7 @@ export const useSettingsStore = defineStore('settings', () => {
   async function saveMemoryEnabled(v: boolean): Promise<void> {
     await mainClient.db.setSetting(SETTING_MEMORY_ENABLED, v)
     memoryEnabled.value = v
-    await evictCurrentAgent()
+    await mainClient.agent.evictAllSessions()
   }
 
   /**
@@ -227,7 +211,7 @@ export const useSettingsStore = defineStore('settings', () => {
   async function saveSkillsEnabled(v: boolean): Promise<void> {
     await mainClient.db.setSetting(SETTING_SKILLS_ENABLED, v)
     skillsEnabled.value = v
-    await evictCurrentAgent()
+    await mainClient.agent.evictAllSessions()
   }
 
   /**
@@ -237,7 +221,7 @@ export const useSettingsStore = defineStore('settings', () => {
   async function saveKbEnabled(v: boolean): Promise<void> {
     await mainClient.db.setSetting(SETTING_KB_ENABLED, v)
     kbEnabled.value = v
-    await evictCurrentAgent()
+    await mainClient.agent.evictAllSessions()
   }
 
   /**
@@ -304,24 +288,64 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   /**
-   * 保存 Agent 工作目录（settings 表持久化）。
-   * 不驱逐 Agent、不清提示词快照：bash 默认 cwd 每次执行实时读取，立即生效；
-   * 已有消息的会话提示词保持原样，仅新会话首次创建 Agent 时按新目录生成。
-   */
-  async function saveWorkdir(dir: string): Promise<void> {
-    const v = dir.trim()
-    if (!v) return
-    await mainClient.agent.setWorkdir(v)
-    workdir.value = v
-  }
-
-  /**
    * 保存 bash 工具额外环境变量（KEY=VALUE）。
    * 无需驱逐 Agent：bash 每次执行实时读 settings，改后下一轮命令立即生效。
    */
   async function saveAgentEnv(env: Record<string, string>): Promise<void> {
     await mainClient.db.setSetting(SETTING_AGENT_ENV, env)
     agentEnv.value = env
+  }
+
+  /**
+   * 处理 main 进程广播的设置变更（settingsSync.settingChanged）。
+   * 多窗口下任意窗口保存设置后广播，本窗口据此同步内存状态，避免各窗口数据不一致。
+   * 仅同步纯设置项；工具列表/技能列表等聚合数据由对应 store 自行管理。
+   */
+  function handleSettingChanged(key: string, value: unknown): void {
+    switch (key) {
+      case SETTING_DEFAULT_SYSTEM_PROMPT:
+        defaultSystemPrompt.value = (value as string) ?? ''
+        break
+      case SETTING_DEFAULT_THINKING_LEVEL:
+        lastUsedThinkingLevel.value = (value as ThinkingLevel) ?? 'medium'
+        break
+      case SETTING_MAX_TURNS_PER_RUN:
+        maxTurnsPerRun.value = (value as number) ?? DEFAULT_MAX_TURNS_PER_RUN
+        break
+      case SETTING_NOTIFICATIONS_ENABLED:
+        notificationsEnabled.value = value as boolean
+        break
+      case SETTING_MEMORY_ENABLED:
+        memoryEnabled.value = value as boolean
+        break
+      case SETTING_SKILLS_ENABLED:
+        skillsEnabled.value = value as boolean
+        break
+      case SETTING_KB_ENABLED:
+        kbEnabled.value = value as boolean
+        break
+      case SETTING_AUTO_COMPRESS_ENABLED:
+        autoCompressEnabled.value = value as boolean
+        break
+      case SETTING_AUTO_COMPRESS_THRESHOLD:
+        autoCompressThreshold.value = value as number
+        break
+      case SETTING_CLOSE_TO_TRAY:
+        closeToTray.value = value as boolean
+        break
+      case SETTING_TITLE_BAR_MODE:
+        titleBarMode.value = (value as TitleBarMode) ?? 'native'
+        break
+      case SETTING_AGENT_ENV:
+        agentEnv.value = (value as Record<string, string>) ?? {}
+        break
+      case SETTING_PERMISSION_AUTO_APPROVE:
+        permissionAutoApprove.value = value as boolean
+        break
+      case SETTING_PERMISSION_TIMEOUT_SEC:
+        permissionTimeoutSec.value = value as number
+        break
+    }
   }
 
   /**
@@ -335,7 +359,7 @@ export const useSettingsStore = defineStore('settings', () => {
     await mainClient.db.setSetting(SETTING_ENABLED_TOOLS, overrides)
     const target = tools.value.find((t) => t.name === name)
     if (target) target.enabled = enabled
-    await evictCurrentAgent()
+    await mainClient.agent.evictAllSessions()
   }
 
   /** 保存 Tavily API Key（main 进程加密存储，renderer 只记录已配置状态）。 */
@@ -402,7 +426,6 @@ export const useSettingsStore = defineStore('settings', () => {
     notificationsEnabled,
     closeToTray,
     titleBarMode,
-    workdir,
     agentEnv,
     permissionAutoApprove,
     permissionTimeoutSec,
@@ -420,8 +443,8 @@ export const useSettingsStore = defineStore('settings', () => {
     saveAutoCompressThreshold,
     saveCloseToTray,
     saveTitleBarMode,
-    saveWorkdir,
     saveAgentEnv,
+    handleSettingChanged,
     saveToolEnabled,
     saveWebSearchApiKey,
     clearWebSearchApiKey,

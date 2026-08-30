@@ -6,6 +6,21 @@ import type { DatabaseSync } from 'node:sqlite'
  * 所有时间列统一 unix 毫秒（INTEGER），与 messages.timestamp 同格式，避免跨表比较/排序需转换。
  */
 export function initSchema(db: DatabaseSync): void {
+  // 老库 sessions 无 workdir 列时先补列：后续 CREATE INDEX 引用该列，必须在建索引前完成。
+  // 新库由下方 CREATE TABLE IF NOT EXISTS 直接含该列，此检查为幂等空操作。
+  // 放在 DDL 之前而非文末的轻量列补齐处，否则老库在建索引时即崩溃（no such column）。
+  const hasSessionsTable = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions'")
+    .get()
+  if (hasSessionsTable) {
+    const earlySessionCols = (
+      db.prepare('PRAGMA table_info(sessions)').all() as unknown as { name: string }[]
+    ).map((c) => c.name)
+    if (!earlySessionCols.includes('workdir')) {
+      db.exec("ALTER TABLE sessions ADD COLUMN workdir TEXT NOT NULL DEFAULT ''")
+    }
+  }
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS sessions (
       id TEXT PRIMARY KEY,
@@ -14,6 +29,8 @@ export function initSchema(db: DatabaseSync): void {
       model TEXT,
       thinking_level TEXT,
       system_prompt TEXT,
+      -- 所属工作区（workdir 绝对路径）：会话按工作区隔离，空串表示未迁移/默认归属。
+      workdir TEXT NOT NULL DEFAULT '',
       -- 最终组装后的系统提示词快照：会话首次创建 Agent 时固化（时间/记忆等一次固定），
       -- 重建 Agent 直接复用，保证 systemPrompt 前缀跨重建稳定、命中 LLM 前缀缓存。
       -- 失效时机：自定义提示词变更（updateSession 自动清空）、全局默认提示词变更（clearResolvedSystemPrompts）。
@@ -171,9 +188,21 @@ export function initSchema(db: DatabaseSync): void {
       timestamp INTEGER NOT NULL
     ) STRICT;
 
+    -- 工作区：一个 workdir 绝对路径对应一个工作区（专属窗口 + 会话集合 + agent.md）。
+    CREATE TABLE IF NOT EXISTS workspaces (
+      workdir TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      -- 窗口位置/尺寸记忆（JSON 字符串；null = 未记录）。
+      bounds TEXT,
+      last_opened_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+    ) STRICT;
+
     -- 单用户应用，无 user_id 概念。
     CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(last_active_at);
     CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
+    -- 会话按工作区隔离：列表/回收站按 (workdir, last_active_at) 过滤。
+    CREATE INDEX IF NOT EXISTS idx_sessions_workdir_active ON sessions(workdir, last_active_at);
     CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
     -- 用量统计按 timestamp 范围过滤（聚合查询），单列索引避免全表扫描。
     CREATE INDEX IF NOT EXISTS idx_messages_timestamp ON messages(timestamp);
@@ -222,5 +251,9 @@ export function initSchema(db: DatabaseSync): void {
   // 轻量列补齐：老库 sessions 无 plan 列时补列（可空列，保留既有会话）。
   if (!sessionCols.includes('plan')) {
     db.exec('ALTER TABLE sessions ADD COLUMN plan TEXT')
+  }
+  // 轻量列补齐：老库 sessions 无 workdir 列时补列（默认空串，由迁移逻辑回填，见 database/index.ts）。
+  if (!sessionCols.includes('workdir')) {
+    db.exec("ALTER TABLE sessions ADD COLUMN workdir TEXT NOT NULL DEFAULT ''")
   }
 }

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { useMessage, NButton, NAlert, NIcon } from 'naive-ui'
 import { RefreshOutline, PencilOutline, Sparkles, SettingsOutline } from '@vicons/ionicons5'
 import MessageList from '@renderer/components/chat/MessageList.vue'
@@ -14,12 +13,12 @@ import { useSessionStore } from '@renderer/store/useSessionStore'
 import { useChatStore, type ComposerAttachment } from '@renderer/store/useChatStore'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
 import { useModelConfigsStore } from '@renderer/store/useModelConfigsStore'
+import { mainClient } from '@renderer/utils/main-client'
 
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
 const settingsStore = useSettingsStore()
 const modelConfigs = useModelConfigsStore()
-const router = useRouter()
 const message = useMessage()
 
 /** 首屏数据是否就绪（避免无模型引导在加载完成前闪烁）。 */
@@ -125,9 +124,9 @@ function onRecall(): void {
   void chatStore.recallLastMessage()
 }
 
-/** 引导：跳转到设置页添加模型。 */
+/** 引导：打开设置独立窗口添加模型（设置页只在独立设置窗口展示）。 */
 function goToSettings(): void {
-  void router.push('/settings')
+  void mainClient.window.openSettingsWindow()
 }
 </script>
 

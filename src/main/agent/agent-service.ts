@@ -1,5 +1,5 @@
 import { IpcService } from 'electron-ipc-service'
-import { clipboard, dialog } from 'electron'
+import { clipboard } from 'electron'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { ImageContent } from '@earendil-works/pi-ai'
 import { rendererClient } from '../service/render-client'
@@ -43,13 +43,12 @@ import type {
 } from './types'
 import {
   isThinkingLevel,
-  SETTING_AGENT_WORKDIR,
   SETTING_WELCOME_SUGGESTIONS,
   SETTING_AUTO_COMPRESS_ENABLED,
   SETTING_AUTO_COMPRESS_THRESHOLD,
   DEFAULT_AUTO_COMPRESS_THRESHOLD
 } from './types'
-import { resolveAgentWorkdir } from './workdir'
+import { resolveSessionWorkdir } from './workdir'
 import { refreshShellEnv } from '../utils/shell-env'
 import { notifyAgentFinished } from '../service/notifier'
 import { isDeepEqual } from '../utils/deep-equal'
@@ -789,36 +788,9 @@ export class AgentService extends IpcService {
   }
 
   // ==================== 工作目录配置 ====================
-
-  /**
-   * 当前生效的 Agent 工作目录（含回退逻辑：settings 配置 > 用户数据目录下 work 子目录）。
-   * 系统提示「工作目录」行（仅对新会话）与 bash 默认 cwd 均以该值为准。
-   */
-  getWorkdir(): string {
-    return resolveAgentWorkdir()
-  }
-
-  /**
-   * 保存工作目录（settings 表持久化）。
-   * 不改动已固化提示词快照（resolved_system_prompt）：已有消息的会话提示词保持原样，
-   * 仅新会话首次创建 Agent 时按新目录生成；bash 默认 cwd 每次执行实时读取，立即生效。
-   */
-  setWorkdir(dir: string): void {
-    const v = dir.trim()
-    if (!v) return
-    db.setSetting(SETTING_AGENT_WORKDIR, v)
-    log.info('已保存 Agent 工作目录', { dir: v })
-  }
-
-  /** 弹系统目录选择框选工作目录，返回选中路径（用户取消返回 null）。 */
-  async pickWorkdir(): Promise<string | null> {
-    const { canceled, filePaths } = await dialog.showOpenDialog({
-      title: '选择 Agent 工作目录',
-      properties: ['openDirectory', 'createDirectory']
-    })
-    if (canceled || filePaths.length === 0) return null
-    return filePaths[0]
-  }
+  // 工作目录已改为按工作区（workdir）管理：会话归属工作区、窗口绑定工作区，
+  // 新增/打开/删除工作区见 WorkspaceService（namespace `workspace`），
+  // 此处不再提供全局 getWorkdir/setWorkdir/pickWorkdir。
 
   /**
    * 重新抓取用户 shell 环境（.zshrc/.bashrc）并更新缓存：修改 shell 配置后无需重启应用，
@@ -885,10 +857,12 @@ export class AgentService extends IpcService {
     const skills = listInstalledSkillsStore().filter((s) => s.enabled)
     const kbCount = db.listDocuments().length
     const memoryCount = db.listMemories().length
+    // 工作目录按会话归属工作区解析（临时会话无归属时不展示）
+    const workdir = sessionId ? resolveSessionWorkdir(sessionId) : undefined
     const contextParts: string[] = [
-      `当前时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`,
-      `工作目录：${resolveAgentWorkdir()}`
+      `当前时间：${new Date().toLocaleString('zh-CN', { hour12: false })}`
     ]
+    if (workdir) contextParts.push(`工作目录：${workdir}`)
     if (skills.length > 0)
       contextParts.push(
         `已启用技能：${skills

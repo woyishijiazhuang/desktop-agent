@@ -6,6 +6,8 @@ export interface Session {
   id: string
   title: string
   status: SessionStatus
+  /** 所属工作区（workdir 绝对路径）：会话按工作区隔离。 */
+  workdir: string
   model: string | null
   /** 会话级思考级别（ThinkingLevel 值；null = 沿用全局默认）。 */
   thinkingLevel: string | null
@@ -35,6 +37,8 @@ export interface Session {
 }
 
 export interface CreateSessionParams {
+  /** 所属工作区（workdir 绝对路径）。缺省时由 db 层回退到默认工作区（见 database/index.ts 的 resolveDefaultWorkdir）。 */
+  workdir?: string
   title?: string
   model?: string
   thinkingLevel?: string
@@ -67,6 +71,8 @@ export interface SessionContext {
 
 /** 会话列表分页参数（游标分页：lastActiveAt + id 复合游标，首页不传游标）。 */
 export interface ListSessionsOptions {
+  /** 按工作区过滤（workdir 绝对路径）；缺省返回全部工作区会话。 */
+  workdir?: string
   /** 每页大小（默认 30） */
   limit?: number
   /** 游标：上一页最后一条非置顶会话的 lastActiveAt（仅在非置顶区间使用） */
@@ -86,6 +92,7 @@ export interface SessionRow {
   id: string
   title: string
   status: string
+  workdir: string
   model: string | null
   thinking_level: string | null
   system_prompt: string | null

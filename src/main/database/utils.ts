@@ -42,6 +42,7 @@ export function toSession(row: SessionRow): Session {
     id: row.id,
     title: row.title,
     status: row.status as SessionStatus,
+    workdir: row.workdir,
     model: row.model,
     thinkingLevel: row.thinking_level,
     systemPrompt: row.system_prompt,

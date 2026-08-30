@@ -2,7 +2,7 @@ import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { stat } from 'node:fs/promises'
 import { relative } from 'node:path'
-import { resolveAgentWorkdir } from '../workdir'
+import { resolveAgentSessionWorkdir } from '../workdir'
 import { createGlobMatcher, toPosix, walkFiles } from './fs-walk'
 import { createLogger } from '../../utils/log'
 
@@ -27,8 +27,14 @@ const params = Type.Object({
   path: Type.Optional(Type.String({ description: '搜索的起始目录绝对路径，默认为工作目录' }))
 })
 
-export const globTool: AgentTool<typeof params, { pattern: string; path: string; count: number }> =
-  {
+/**
+ * 正则内容搜索工具：按 glob 模式查找文件。
+ * 与 bash/read_file 同理按 Agent 会话绑定工作目录（默认搜索根），故用工厂而非单例。
+ */
+export function createGlobTool(
+  sessionId: string
+): AgentTool<typeof params, { pattern: string; path: string; count: number }> {
+  return {
     name: 'glob',
     label: '匹配文件',
     description:
@@ -37,7 +43,7 @@ export const globTool: AgentTool<typeof params, { pattern: string; path: string;
     executionMode: 'parallel',
     async execute(_toolCallId, p) {
       const start = Date.now()
-      const root = p.path ?? resolveAgentWorkdir()
+      const root = p.path ?? resolveAgentSessionWorkdir(sessionId)
       const { files, truncated: scanTruncated } = await walkFiles(root, MAX_SCAN)
       const matcher = createGlobMatcher(p.pattern)
 
@@ -79,3 +85,4 @@ export const globTool: AgentTool<typeof params, { pattern: string; path: string;
       }
     }
   }
+}

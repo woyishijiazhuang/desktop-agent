@@ -1,6 +1,6 @@
 import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { resolveAgentWorkdir } from '../workdir'
+import { resolveAgentSessionWorkdir } from '../workdir'
 import { db } from '../../database'
 import { getShellEnv } from '../../utils/shell-env'
 import { SETTING_AGENT_ENV } from '../types'
@@ -169,7 +169,7 @@ export function createBashTools(sessionId: string): AgentTool[] {
       const shellEnv = await getShellEnv()
       const manualEnv = db.getSetting<Record<string, string>>(SETTING_AGENT_ENV) ?? {}
       const env = { ...process.env, ...shellEnv, ...manualEnv }
-      const cwd = p.cwd ?? resolveAgentWorkdir()
+      const cwd = p.cwd ?? resolveAgentSessionWorkdir(sessionId)
 
       if (p.background) {
         const shell = bashSessionManager.startBackground(p.command, { cwd, env })
@@ -334,7 +334,9 @@ export function createBashTools(sessionId: string): AgentTool[] {
     async execute(_toolCallId, p) {
       const shell = bashSessionManager.getBackgroundShell(p.session_id)
       if (!shell) {
-        throw new Error(`后台会话不存在或不是 shell 命令（后台下载不支持写入输入）：${p.session_id}`)
+        throw new Error(
+          `后台会话不存在或不是 shell 命令（后台下载不支持写入输入）：${p.session_id}`
+        )
       }
       // 空内容 + 仅关闭：直接发 EOF
       const data = p.input + (p.newline === false ? '' : '\n')

@@ -2,6 +2,9 @@ import { IpcService } from 'electron-ipc-service'
 import { app, dialog } from 'electron'
 import { writeFile } from 'node:fs/promises'
 import { db } from '../database'
+import { resolveScopedWorkdir } from './ipc-scope'
+import { rendererClient } from './render-client'
+import { cacheSessionWorkdir } from '../agent/workdir'
 import {
   deleteSessionAttachments,
   copyAttachmentToSession,
@@ -93,7 +96,11 @@ export class DbService extends IpcService {
   // ==================== 会话 CRUD ====================
 
   createSession(params?: CreateSessionParams): Session {
-    return db.createSession(params)
+    // 工作区作用域：会话创建自动归入发送方窗口所属工作区（主进程内部调用缺省时走 db 层默认目录）
+    const workdir = resolveScopedWorkdir()
+    const session = db.createSession(workdir ? { ...params, workdir } : params)
+    cacheSessionWorkdir(session.id, session.workdir)
+    return session
   }
 
   getSession(id: string): Session | undefined {
@@ -105,12 +112,15 @@ export class DbService extends IpcService {
   }
 
   listSessionsPaged(options?: ListSessionsOptions): ListSessionsResult {
-    return db.listSessionsPaged(options)
+    // 工作区作用域：仅返回发送方窗口所属工作区的会话
+    const workdir = resolveScopedWorkdir()
+    return db.listSessionsPaged(workdir ? { ...options, workdir } : options)
   }
 
-  /** 标题搜索（SQL LIKE，供分页模式下前端搜索未加载的会话）。 */
-  searchSessions(query: string, limit?: number): Session[] {
-    return db.searchSessions(query, limit)
+  /** 标题搜索（SQL LIKE，供分页模式下前端搜索未加载的会话；按发送方工作区过滤）。 */
+  searchSessions(query: string, options?: { workdir?: string; limit?: number }): Session[] {
+    const workdir = resolveScopedWorkdir() ?? options?.workdir
+    return db.searchSessions(query, { ...options, workdir })
   }
 
   updateSession(id: string, params: UpdateSessionParams): Session {
@@ -328,6 +338,9 @@ export class DbService extends IpcService {
 
   setSetting(key: string, value: unknown): void {
     db.setSetting(key, value)
+    // 广播设置变更到全部窗口：多窗口下各窗口的设置 store 需同步刷新
+    //（如模型配置/权限/记忆开关变更后，其他工作区窗口立即生效）。
+    rendererClient.settingsSync.settingChanged({ key, value })
   }
 
   deleteSetting(key: string): void {

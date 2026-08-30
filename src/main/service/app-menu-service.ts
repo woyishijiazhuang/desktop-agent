@@ -1,5 +1,5 @@
 import { app, Menu } from 'electron'
-import { getHeaderView } from './window-manager'
+import { getFocusedAppWindow } from './window-manager'
 import { toggleMainWindow, showMainWindowAnd } from './window-service'
 import { createLogger } from '../utils/log'
 
@@ -59,7 +59,7 @@ export function createAppMenu(): void {
         {
           label: '标题栏开发者工具',
           click: () => {
-            getHeaderView()?.webContents.toggleDevTools()
+            getFocusedAppWindow()?.headerView.webContents.toggleDevTools()
           }
         },
         { type: 'separator' },

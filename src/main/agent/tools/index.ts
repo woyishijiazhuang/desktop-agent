@@ -1,14 +1,14 @@
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { readFileTool, createReadFileTool } from './read-file'
 import { listFilesTool } from './list-files'
-import { globTool } from './glob'
-import { grepTool } from './grep'
+import { createGlobTool } from './glob'
+import { createGrepTool } from './grep'
 import { writeFileTool } from './write-file'
 import { editFileTool } from './edit-file'
 import { createBashTools } from './bash'
 import { webSearchTool } from './web-search'
 import { webFetchTool } from './web-fetch'
-import { downloadTool } from './download'
+import { createDownloadTool } from './download'
 import { findSkillTool } from './find-skill'
 import { installSkillTool } from './install-skill'
 import { readSkillTool } from './read-skill'
@@ -69,8 +69,28 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
     build: ({ supportsImages }) => [createReadFileTool(supportsImages ?? false)]
   },
   single(listFilesTool),
-  single(globTool),
-  single(grepTool),
+  // glob / grep / download 按 Agent 会话绑定工作目录（默认搜索根/落盘目录），故用工厂
+  {
+    name: 'glob',
+    label: '匹配文件',
+    description: '按 glob 模式查找文件，返回匹配的文件路径（按修改时间从新到旧排序）。',
+    defaultEnabled: true,
+    build: ({ sessionId }) => [createGlobTool(sessionId)]
+  },
+  {
+    name: 'grep',
+    label: '搜索内容',
+    description: '按正则表达式搜索文件内容，返回匹配的文件/行。',
+    defaultEnabled: true,
+    build: ({ sessionId }) => [createGrepTool(sessionId)]
+  },
+  {
+    name: 'download',
+    label: '下载文件',
+    description: '从 URL 下载文件到本地磁盘（默认保存到工作目录）。',
+    defaultEnabled: true,
+    build: ({ sessionId }) => [createDownloadTool(sessionId)]
+  },
   single(writeFileTool),
   single(editFileTool),
   {
@@ -122,8 +142,7 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
     label: reportStepMeta.label,
     description: reportStepMeta.description,
     defaultEnabled: true,
-    build: ({ sessionId }) =>
-      createPlanModeTools(sessionId).filter((t) => t.name === 'report_step')
+    build: ({ sessionId }) => createPlanModeTools(sessionId).filter((t) => t.name === 'report_step')
   },
   {
     name: 'ask_user',
@@ -141,7 +160,6 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
   },
   single(webSearchTool, false),
   single(webFetchTool),
-  single(downloadTool),
   single(findSkillTool),
   single(installSkillTool),
   single(readSkillTool),

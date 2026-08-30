@@ -9,6 +9,7 @@ import type { GlobalThemeOverrides } from 'naive-ui'
 import { useRouter } from 'vue-router'
 import { useThemeStore } from './store/useThemeStore'
 import { useSessionStore } from './store/useSessionStore'
+import { mainClient } from './utils/main-client'
 import ToastBridge from './components/ToastBridge.vue'
 import { TRAY_ACTION_EVENT, type TrayAction } from './service/ui-service'
 
@@ -60,14 +61,14 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => ({
 
 const theme = computed(() => (themeStore.isDark ? darkTheme : null))
 
-/** 托盘菜单动作：新建对话 → 跳到对话页并进入临时空对话；打开设置 → 跳设置页。 */
+/** 托盘菜单动作：新建对话 → 跳到对话页并进入临时空对话；打开设置 → 打开设置独立窗口。 */
 function onTrayAction(e: Event): void {
   const action = (e as CustomEvent<TrayAction>).detail
   if (action === 'new-chat') {
     void router.push('/chat')
     void useSessionStore().startNewChat()
   } else if (action === 'open-settings') {
-    void router.push('/settings')
+    void mainClient.window.openSettingsWindow()
   }
 }
 

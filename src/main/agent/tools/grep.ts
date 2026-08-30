@@ -2,7 +2,7 @@ import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { readFile, stat } from 'node:fs/promises'
 import { relative } from 'node:path'
-import { resolveAgentWorkdir } from '../workdir'
+import { resolveAgentSessionWorkdir } from '../workdir'
 import { createGlobMatcher, toPosix, walkFiles } from './fs-walk'
 import { createLogger } from '../../utils/log'
 
@@ -81,116 +81,119 @@ interface FileHit {
 /**
  * 正则内容搜索工具：在文件/目录中按正则匹配行，代替 bash 中调用 grep。
  * 自动跳过 node_modules、.git 等目录、二进制与超大文件。只读操作，无需权限确认。
+ * 与 bash/read_file 同理按 Agent 会话绑定工作目录（默认搜索根），故用工厂而非单例。
  */
-export const grepTool: AgentTool<typeof params, GrepDetails> = {
-  name: 'grep',
-  label: '搜索内容',
-  description:
-    '按正则表达式搜索文件内容，返回匹配的文件/行。用于定位代码、查找符号引用、搜索配置项等，代替 bash 中调用 grep。支持输出模式（匹配行 / 文件列表 / 计数）、文件名过滤（glob）、忽略大小写与上下文行。',
-  parameters: params,
-  executionMode: 'parallel',
-  async execute(_toolCallId, p) {
-    const start = Date.now()
-    const root = p.path ?? resolveAgentWorkdir()
-    const mode: OutputMode = p.output_mode ?? 'files_with_matches'
+export function createGrepTool(sessionId: string): AgentTool<typeof params, GrepDetails> {
+  return {
+    name: 'grep',
+    label: '搜索内容',
+    description:
+      '按正则表达式搜索文件内容，返回匹配的文件/行。用于定位代码、查找符号引用、搜索配置项等，代替 bash 中调用 grep。支持输出模式（匹配行 / 文件列表 / 计数）、文件名过滤（glob）、忽略大小写与上下文行。',
+    parameters: params,
+    executionMode: 'parallel',
+    async execute(_toolCallId, p) {
+      const start = Date.now()
+      const root = p.path ?? resolveAgentSessionWorkdir(sessionId)
+      const mode: OutputMode = p.output_mode ?? 'files_with_matches'
 
-    let regex: RegExp
-    try {
-      regex = new RegExp(p.pattern, p.case_insensitive ? 'i' : '')
-    } catch (err) {
-      throw new Error(
-        `正则表达式无效：${(err as Error).message}。请检查转义（如匹配字面量 . 需写 \\.）。`
-      )
-    }
-
-    const rootStat = await stat(root).catch(() => undefined)
-    if (!rootStat) {
-      throw new Error(`路径不存在：${root}`)
-    }
-
-    // 待搜索文件集合：path 为文件时只搜该文件；为目录时递归遍历（可按 glob 过滤）
-    let files: string[]
-    let scanTruncated = false
-    const globMatcher = p.glob ? createGlobMatcher(p.glob) : undefined
-    if (rootStat.isFile()) {
-      files = [root]
-    } else {
-      const walked = await walkFiles(root, MAX_SCAN)
-      scanTruncated = walked.truncated
-      files = walked.files.filter((f) => {
-        if (!globMatcher) return true
-        return globMatcher(toPosix(relative(root, f)))
-      })
-    }
-
-    const outLines: string[] = []
-    const matchedFiles: { file: string; count: number }[] = []
-    let matchedLines = 0
-    const headLimit = Math.min(Math.max(1, p.head_limit ?? DEFAULT_HEAD_LIMIT), MAX_HEAD_LIMIT)
-    const context = Math.max(0, Math.min(p.context ?? 0, 10))
-    let truncated = false
-
-    for (const file of files) {
-      if (mode === 'content' && matchedLines >= headLimit) {
-        truncated = true
-        break
+      let regex: RegExp
+      try {
+        regex = new RegExp(p.pattern, p.case_insensitive ? 'i' : '')
+      } catch (err) {
+        throw new Error(
+          `正则表达式无效：${(err as Error).message}。请检查转义（如匹配字面量 . 需写 \\.）。`
+        )
       }
-      if (mode !== 'content' && matchedFiles.length >= MAX_FILES) {
-        truncated = true
-        break
+
+      const rootStat = await stat(root).catch(() => undefined)
+      if (!rootStat) {
+        throw new Error(`路径不存在：${root}`)
       }
-      const hit = await searchFile(file, regex)
-      if (!hit) continue
-      if (mode === 'content') {
-        matchedLines += hit.matchedIndices.length
-        emitContent(outLines, file, hit, context)
+
+      // 待搜索文件集合：path 为文件时只搜该文件；为目录时递归遍历（可按 glob 过滤）
+      let files: string[]
+      let scanTruncated = false
+      const globMatcher = p.glob ? createGlobMatcher(p.glob) : undefined
+      if (rootStat.isFile()) {
+        files = [root]
       } else {
-        matchedFiles.push({ file, count: hit.matchedIndices.length })
+        const walked = await walkFiles(root, MAX_SCAN)
+        scanTruncated = walked.truncated
+        files = walked.files.filter((f) => {
+          if (!globMatcher) return true
+          return globMatcher(toPosix(relative(root, f)))
+        })
       }
-    }
 
-    // files_with_matches / count 模式按修改时间排序（新→旧），优先展示最近改动的文件
-    if (mode !== 'content' && matchedFiles.length > 0) {
-      const withMtime = await Promise.all(
-        matchedFiles.map(async (m) => ({
-          ...m,
-          t: (await stat(m.file).catch(() => undefined))?.mtimeMs ?? 0
-        }))
-      )
-      withMtime.sort((a, b) => b.t - a.t)
-      for (const m of withMtime) {
-        outLines.push(mode === 'count' ? `${m.file}:${m.count}` : m.file)
+      const outLines: string[] = []
+      const matchedFiles: { file: string; count: number }[] = []
+      let matchedLines = 0
+      const headLimit = Math.min(Math.max(1, p.head_limit ?? DEFAULT_HEAD_LIMIT), MAX_HEAD_LIMIT)
+      const context = Math.max(0, Math.min(p.context ?? 0, 10))
+      let truncated = false
+
+      for (const file of files) {
+        if (mode === 'content' && matchedLines >= headLimit) {
+          truncated = true
+          break
+        }
+        if (mode !== 'content' && matchedFiles.length >= MAX_FILES) {
+          truncated = true
+          break
+        }
+        const hit = await searchFile(file, regex)
+        if (!hit) continue
+        if (mode === 'content') {
+          matchedLines += hit.matchedIndices.length
+          emitContent(outLines, file, hit, context)
+        } else {
+          matchedFiles.push({ file, count: hit.matchedIndices.length })
+        }
       }
-    }
 
-    let text = outLines.join('\n')
-    if (text.length > MAX_OUTPUT) {
-      text = text.slice(0, MAX_OUTPUT)
-      truncated = true
-    }
-    if (outLines.length === 0) text = '(无匹配结果)'
-    const notes: string[] = []
-    if (truncated) {
-      notes.push(
-        mode === 'content'
-          ? `[结果较多，仅显示前 ${Math.min(matchedLines, headLimit)} 个匹配行]`
-          : `[匹配文件超过 ${MAX_FILES} 个，仅显示前 ${MAX_FILES} 个]`
-      )
-    }
-    if (scanTruncated) notes.push(`[目录过大，仅扫描了前 ${MAX_SCAN} 个文件]`)
-    if (notes.length > 0) text += `\n\n${notes.join('\n')}`
+      // files_with_matches / count 模式按修改时间排序（新→旧），优先展示最近改动的文件
+      if (mode !== 'content' && matchedFiles.length > 0) {
+        const withMtime = await Promise.all(
+          matchedFiles.map(async (m) => ({
+            ...m,
+            t: (await stat(m.file).catch(() => undefined))?.mtimeMs ?? 0
+          }))
+        )
+        withMtime.sort((a, b) => b.t - a.t)
+        for (const m of withMtime) {
+          outLines.push(mode === 'count' ? `${m.file}:${m.count}` : m.file)
+        }
+      }
 
-    const count = mode === 'content' ? Math.min(matchedLines, headLimit) : matchedFiles.length
-    log.debug('搜索内容', {
-      pattern: p.pattern,
-      root,
-      mode,
-      count,
-      durationMs: Date.now() - start
-    })
-    return {
-      content: [{ type: 'text', text }],
-      details: { pattern: p.pattern, path: root, mode, count }
+      let text = outLines.join('\n')
+      if (text.length > MAX_OUTPUT) {
+        text = text.slice(0, MAX_OUTPUT)
+        truncated = true
+      }
+      if (outLines.length === 0) text = '(无匹配结果)'
+      const notes: string[] = []
+      if (truncated) {
+        notes.push(
+          mode === 'content'
+            ? `[结果较多，仅显示前 ${Math.min(matchedLines, headLimit)} 个匹配行]`
+            : `[匹配文件超过 ${MAX_FILES} 个，仅显示前 ${MAX_FILES} 个]`
+        )
+      }
+      if (scanTruncated) notes.push(`[目录过大，仅扫描了前 ${MAX_SCAN} 个文件]`)
+      if (notes.length > 0) text += `\n\n${notes.join('\n')}`
+
+      const count = mode === 'content' ? Math.min(matchedLines, headLimit) : matchedFiles.length
+      log.debug('搜索内容', {
+        pattern: p.pattern,
+        root,
+        mode,
+        count,
+        durationMs: Date.now() - start
+      })
+      return {
+        content: [{ type: 'text', text }],
+        details: { pattern: p.pattern, path: root, mode, count }
+      }
     }
   }
 }

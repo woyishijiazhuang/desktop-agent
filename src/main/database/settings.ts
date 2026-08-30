@@ -47,10 +47,16 @@ const SETTING_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   'appearance.theme': (v) => v === 'light' || v === 'dark' || v === 'system',
   /** bash 持久白名单（权限弹窗点「总是允许」的命令，string[]）。 */
   bashAllowlist: (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'),
-  /** Agent 工作目录（绝对路径字符串，见 agent/types.ts SETTING_AGENT_WORKDIR）。 */
-  'agent.workdir': (v) => typeof v === 'string',
+  /** 跳过工具确认（危险工具免确认；破坏性命令除外，见 agent/types.ts SETTING_PERMISSION_AUTO_APPROVE）。 */
+  'permission.autoApprove': (v) => typeof v === 'boolean',
+  /** 工具确认超时（秒；0 = 一直等待，见 agent/types.ts SETTING_PERMISSION_TIMEOUT_SEC）。 */
+  'permission.timeoutSec': (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0,
+  /** 上次退出时打开的工作区窗口（string[]，见 window-manager.ts SETTING_OPEN_WORKSPACES）。 */
+  'workspace.openWindows': (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'),
   /** 欢迎页最近一批 AI 建议（string[]，见 agent/types.ts SETTING_WELCOME_SUGGESTIONS）。 */
   welcomeSuggestions: (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'),
+  /** agent.md 注入系统提示词的上限（字符数，正整数；见 agent/types.ts SETTING_AGENT_MD_INJECTION_CHARS）。 */
+  'agent.agentMdInjectionChars': (v) => typeof v === 'number' && Number.isInteger(v) && v > 0,
   /** bash 工具额外环境变量（Record<string, string>，见 agent/types.ts SETTING_AGENT_ENV）。 */
   'agent.env': (v) =>
     typeof v === 'object' &&

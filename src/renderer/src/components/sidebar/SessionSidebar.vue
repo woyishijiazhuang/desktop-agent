@@ -1,47 +1,57 @@
 <script setup lang="ts">
 import { ref, computed, watch, nextTick, h, onMounted, onUnmounted } from 'vue'
-import { useRouter } from 'vue-router'
-import { NScrollbar, NButton, NIcon, NInput, NModal, useDialog, useMessage } from 'naive-ui'
+import type { Component, VNode } from 'vue'
+import {
+  NScrollbar,
+  NButton,
+  NIcon,
+  NInput,
+  NModal,
+  NDropdown,
+  useDialog,
+  useMessage,
+  type DropdownOption
+} from 'naive-ui'
 import {
   AddOutline,
   ChatbubbleEllipsesOutline,
   SettingsOutline,
-  InformationCircleOutline,
   ArchiveOutline,
   SearchOutline,
   SunnyOutline,
   MoonOutline,
   ChevronDownOutline,
-  ChevronForwardOutline
+  ChevronForwardOutline,
+  FolderOpenOutline,
+  CopyOutline
 } from '@vicons/ionicons5'
 import { formatContextWindow, formatTokens } from '@renderer/utils/format'
 import { useSessionStore } from '@renderer/store/useSessionStore'
 import { useChatStore } from '@renderer/store/useChatStore'
 import { useThemeStore } from '@renderer/store/useThemeStore'
+import { useWindowStore } from '@renderer/store/useWindowStore'
 import { mainClient } from '@renderer/utils/main-client'
-import AboutDialog from '@renderer/components/AboutDialog.vue'
 import SessionItem from './SessionItem.vue'
 import BackgroundSessionsPanel from './BackgroundSessionsPanel.vue'
 import type { Session, MessageSearchHit, SessionExportFormat } from '@main/service/db-service'
 
 /**
  * 左侧会话侧栏：新建 / 切换 / 重命名 / 删除会话 + 压缩当前会话历史。
+ * - 顶部工作区标识：展示当前窗口所属工作区（名称 + 路径），点击打开设置窗口管理
  * - 「新建对话」进入临时空对话（不写库），首条消息发送时才落库
  * - 会话项 hover 显示 ⋯ 菜单：重命名（弹窗）/ 删除（确认）
  * - 按日期分组（今天/昨天/7天内/30天内/更早）+ 顶部搜索框
- * - 底部入口：主题切换 / 压缩历史 / 设置（路由页）/ 关于（弹窗）
+ * - 底部入口：主题切换 / 压缩历史 / 设置（独立窗口；关于在设置页末 tab）
  */
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
 const themeStore = useThemeStore()
-const router = useRouter()
+const windowStore = useWindowStore()
 const message = useMessage()
 const dialog = useDialog()
 
 /** 压缩进行中（禁用按钮，避免重复触发）。 */
 const compressing = ref(false)
-/** 关于弹窗显示。 */
-const aboutShow = ref(false)
 /** 搜索关键词。 */
 const query = ref('')
 
@@ -278,7 +288,43 @@ watch(renameShow, async (show) => {
 })
 
 function goToSettings(): void {
-  void router.push('/settings')
+  // 设置页只在独立设置窗口中展示（多工作区窗口共用同一设置窗口，避免各窗口设置分叉）
+  void mainClient.window.openSettingsWindow()
+}
+
+// ==================== 工作区标识卡片菜单 ====================
+
+/** 菜单图标统一约束尺寸（≈ 文字大小），避免图标远大于文字。 */
+function menuIcon(icon: Component): () => VNode {
+  return () => h(NIcon, { size: 14 }, { default: () => h(icon) })
+}
+
+/** 点击工作区标识弹出的操作菜单：打开文件夹 / 管理工作区 / 复制路径。 */
+const wsMenuOptions: DropdownOption[] = [
+  { key: 'open-folder', label: '打开文件夹', icon: menuIcon(FolderOpenOutline) },
+  { key: 'manage', label: '管理工作区', icon: menuIcon(SettingsOutline) },
+  { key: 'copy-path', label: '复制路径', icon: menuIcon(CopyOutline) }
+]
+/** 菜单弹出的目标工作区（卡片点击时记录；select 时据此执行）。 */
+const wsMenuWorkdir = ref<string | null>(null)
+
+/** 记录目标工作区并允许菜单弹出。 */
+function onWsMenuShow(show: boolean, workdir: string): void {
+  if (show) wsMenuWorkdir.value = workdir
+}
+
+async function onWsMenuSelect(key: string): Promise<void> {
+  const workdir = wsMenuWorkdir.value
+  if (!workdir) return
+  if (key === 'open-folder') {
+    await mainClient.workspace.openFolder(workdir)
+  } else if (key === 'manage') {
+    // 打开设置窗口并导航到「工作区」tab（跨窗口经 ui.settingsTab 推送）
+    await mainClient.window.openSettingsTab('workspace')
+  } else if (key === 'copy-path') {
+    await navigator.clipboard.writeText(workdir)
+    message.success('路径已复制')
+  }
 }
 
 /** 当前会话上下文占用（手动压缩确认弹窗展示用）。 */
@@ -380,6 +426,29 @@ function isSessionFailed(id: string): boolean {
 
 <template>
   <aside class="sidebar">
+    <!-- 工作区标识：区分当前窗口所属工作区（会话按工作区隔离）；点击弹操作菜单 -->
+    <NDropdown
+      :options="wsMenuOptions"
+      trigger="click"
+      placement="bottom-start"
+      @select="onWsMenuSelect"
+      @update:show="(show: boolean) => onWsMenuShow(show, windowStore.state.workdir ?? '')"
+    >
+      <div
+        class="sidebar__workspace"
+        :title="`${windowStore.state.workspaceName ?? ''}\n${windowStore.state.workdir ?? ''}`"
+      >
+        <NIcon :size="15" class="sidebar__workspace-icon"><FolderOpenOutline /></NIcon>
+        <div class="sidebar__workspace-info">
+          <span class="sidebar__workspace-name">{{
+            windowStore.state.workspaceName ?? '工作区'
+          }}</span>
+          <span class="sidebar__workspace-path">{{ windowStore.state.workdir }}</span>
+        </div>
+        <NIcon :size="12" class="sidebar__workspace-arrow"><ChevronDownOutline /></NIcon>
+      </div>
+    </NDropdown>
+
     <!-- 顶部：搜索 + 新建对话 -->
     <div class="sidebar__top">
       <NInput
@@ -463,7 +532,7 @@ function isSessionFailed(id: string): boolean {
     <!-- 后台命令面板：全局展示运行中的后台命令（与当前会话无关） -->
     <BackgroundSessionsPanel />
 
-    <!-- 底部：主题 / 压缩历史 / 设置 / 关于 -->
+    <!-- 底部：主题 / 压缩历史 / 设置 -->
     <div class="sidebar__footer">
       <NButton
         quaternary
@@ -503,18 +572,6 @@ function isSessionFailed(id: string): boolean {
           <NIcon><SettingsOutline /></NIcon>
         </template>
       </NButton>
-      <NButton
-        quaternary
-        circle
-        size="small"
-        class="sidebar__foot-btn"
-        title="关于"
-        @click="aboutShow = true"
-      >
-        <template #icon>
-          <NIcon><InformationCircleOutline /></NIcon>
-        </template>
-      </NButton>
     </div>
 
     <!-- 重命名弹窗：NModal preset="dialog" 自带 teleport 到 body + 居中遮罩 -->
@@ -535,8 +592,6 @@ function isSessionFailed(id: string): boolean {
         @keydown.enter="onRenameConfirm"
       />
     </NModal>
-
-    <AboutDialog v-model:show="aboutShow" />
   </aside>
 </template>
 
@@ -551,8 +606,54 @@ function isSessionFailed(id: string): boolean {
   height: 100%;
   overflow: hidden;
 }
+.sidebar__workspace {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 10px;
+  margin: 8px 8px 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.sidebar__workspace:hover {
+  background: var(--hover-bg);
+}
+.sidebar__workspace-icon {
+  color: var(--primary);
+  flex-shrink: 0;
+}
+.sidebar__workspace-info {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.sidebar__workspace-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-1);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.sidebar__workspace-path {
+  font-size: 10px;
+  color: var(--text-3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: 'SF Mono', 'Fira Code', ui-monospace, monospace;
+}
+.sidebar__workspace-arrow {
+  color: var(--text-3);
+  flex-shrink: 0;
+}
 .sidebar__top {
-  padding: 10px 10px 6px;
+  padding: 6px 10px;
   display: flex;
   flex-direction: column;
   gap: 8px;

@@ -1,7 +1,7 @@
 import { Notification, shell } from 'electron'
 import { db } from '../database'
 import { SETTING_NOTIFICATIONS_ENABLED } from '../agent/types'
-import { ensureMainWindow } from './window-manager'
+import { showMainWindow } from './window-service'
 import { createLogger } from '../utils/log'
 import { rendererClient } from './render-client'
 import icon from '../../../resources/icon.png?asset'
@@ -84,7 +84,7 @@ export async function notifyAgentFinished(input: {
     })
     n.on('click', () => {
       if (input.openPath) openTarget(input.openPath)
-      else ensureMainWindow()
+      else showMainWindow()
     })
     n.on('action', (_event, actionIndex) => {
       if (actionIndex === 0 && input.openPath) openTarget(input.openPath)
