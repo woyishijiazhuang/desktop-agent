@@ -1,5 +1,6 @@
 import type { AgentEvent, AgentMessage } from '@earendil-works/pi-agent-core'
 import type { ModelKey, ThinkingLevel } from '@main/agent/types'
+import { messageSignature } from '../utils/messageKey'
 
 /**
  * 工具执行状态（ToolCallCard 展示用）。
@@ -57,13 +58,7 @@ export interface SessionChatState {
   compressSummary: string | null
 }
 
-/** 消息签名：role::timestamp::toolCallId。同一消息在流式更新期间 timestamp 不变，
- *  故签名稳定（与 renderer 侧 useStableMessageKeys 保持一致）。 */
-function signatureOf(m: AgentMessage): string {
-  return `${(m as { role?: string }).role}::${(m as { timestamp?: number }).timestamp}::${
-    (m as { toolCallId?: string }).toolCallId ?? ''
-  }`
-}
+/** 消息签名见 utils/messageKey.messageSignature（与渲染层稳定 key 共用同一规则）。 */
 
 /**
  * 合并 agent_end 权威 transcript 到当前列表，保证 UI 始终显示会话的完整历史。
@@ -89,11 +84,11 @@ function signatureOf(m: AgentMessage): string {
  */
 export function mergeTranscript(current: AgentMessage[], incoming: AgentMessage[]): AgentMessage[] {
   if (incoming.length === 0) return current
-  const incomingSigs = new Set(incoming.map(signatureOf))
-  const idx = current.findIndex((m) => incomingSigs.has(signatureOf(m)))
+  const incomingSigs = new Set(incoming.map(messageSignature))
+  const idx = current.findIndex((m) => incomingSigs.has(messageSignature(m)))
   if (idx < 0) return incoming
-  const overlap = signatureOf(current[idx])
-  const splitIn = incoming.findIndex((m) => signatureOf(m) === overlap)
+  const overlap = messageSignature(current[idx])
+  const splitIn = incoming.findIndex((m) => messageSignature(m) === overlap)
   return [...current.slice(0, idx), ...incoming.slice(splitIn)]
 }
 
@@ -137,9 +132,9 @@ export function applyChatEvent(state: SessionChatState, event: AgentEvent, error
         }
       }
       if (!matched) {
-        const sig = signatureOf(msg)
+        const sig = messageSignature(msg)
         for (let i = state.messages.length - 1; i >= 0; i--) {
-          if (signatureOf(state.messages[i]) === sig) {
+          if (messageSignature(state.messages[i]) === sig) {
             state.messages[i] = msg
             break
           }

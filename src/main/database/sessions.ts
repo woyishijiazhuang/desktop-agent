@@ -1,16 +1,26 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { createLogger } from '../utils/log'
 import type {
+  Message,
   Session,
+  SessionContext,
   SessionRow,
   CreateSessionParams,
   UpdateSessionParams,
+  ListMessagesOptions,
   ListSessionsOptions,
   ListSessionsResult
 } from './types'
 import { transaction, toSession } from './utils'
+import { extractSearchableText, toFtsIndexText } from './fts'
 
 const log = createLogger('db')
+
+/** 会话域对消息域的依赖（压缩/分叉/上下文重建需读取消息行）。 */
+export interface SessionApiDeps {
+  getMessage: (id: number) => Message | undefined
+  listMessagesBySession: (sessionId: string, options?: ListMessagesOptions) => Message[]
+}
 
 /** 会话域 API（index.ts 组装进 db 门面）。 */
 export interface SessionApi {
@@ -30,10 +40,23 @@ export interface SessionApi {
   countTrashSessions(): number
   purgeTrash(): number
   purgeExpiredDeletedSessions(days: number): number
+  compressSession(
+    sessionId: string,
+    upToIndex: number,
+    summary: string,
+    expectedVersion: number
+  ): Session
+  /**
+   * 从源会话分叉新会话（分支对话）：复制分支点消息（不含）之前的全部历史，
+   * 继承标题/模型/思考级别/系统提示，记录 parentSessionId。
+   * 附件文件复制与 file 引用改写由 service 层在调用后完成。
+   */
+  forkSession(sourceSessionId: string, upToMessageId: number): Session
+  getSessionContext(sessionId: string): SessionContext
 }
 
-/** 会话 CRUD + 回收站清理。 */
-export function createSessionsApi(db: DatabaseSync): SessionApi {
+/** 会话 CRUD + 回收站清理 + 压缩/分叉/上下文重建。 */
+export function createSessionsApi(db: DatabaseSync, deps: SessionApiDeps): SessionApi {
   const api: SessionApi = {
     createSession(params?: CreateSessionParams): Session {
       const id = crypto.randomUUID()
@@ -241,6 +264,138 @@ export function createSessionsApi(db: DatabaseSync): SessionApi {
      */
     purgeExpiredDeletedSessions(days: number): number {
       return purgeSessionsBefore(db, Date.now() - days * 24 * 60 * 60 * 1000)
+    },
+
+    /**
+     * 压缩会话历史：将 upToIndex（含）之前的消息摘要化。
+     * 使用乐观锁：expectedVersion 必须匹配当前 compress_version，否则抛错。
+     * 本方法不删除原始消息，仅推进压缩指针，便于审计与重新压缩。
+     */
+    compressSession(
+      sessionId: string,
+      upToIndex: number,
+      summary: string,
+      expectedVersion: number
+    ): Session {
+      const result = db
+        .prepare(
+          `UPDATE sessions
+           SET compress_summary = ?,
+               compress_last_index = ?,
+               compress_version = compress_version + 1,
+               updated_at = ?
+           WHERE id = ? AND compress_version = ?`
+        )
+        .run(summary, upToIndex, Date.now(), sessionId, expectedVersion) as { changes: number }
+
+      if (result.changes === 0) {
+        const msg = `压缩会话失败：版本号不匹配或会话不存在 (sessionId=${sessionId}, expectedVersion=${expectedVersion})`
+        log.error(msg)
+        throw new Error(msg)
+      }
+      return api.getSession(sessionId)!
+    },
+
+    /**
+     * 从源会话分叉新会话（分支对话）：
+     * 复制 upToMessageId（不含）之前的消息到新会话，继承标题/模型/思考级别/系统提示，
+     * 记录 parentSessionId。压缩继承：分支点在压缩指针之后时，新会话沿用摘要+压缩指针
+     *（仅复制未压缩部分）；分支点落在已压缩区域内时，摘要覆盖了分支点之后的内容无法
+     * 沿用，改为清空压缩、完整复制原始前缀。
+     * 注意：图片附件（file: 引用）的文件复制由 service 层调用后完成。
+     */
+    forkSession(sourceSessionId: string, upToMessageId: number): Session {
+      return transaction(db, () => {
+        const source = api.getSession(sourceSessionId)
+        if (!source) throw new Error('会话不存在')
+        const target = deps.getMessage(upToMessageId)
+        if (!target || target.sessionId !== sourceSessionId) {
+          throw new Error('分支点消息不存在')
+        }
+        if (target.role !== 'user') {
+          throw new Error('只能从用户消息开启分支')
+        }
+        // 分支点（不含）之前的全部消息（ASC）
+        const prefix = deps
+          .listMessagesBySession(sourceSessionId)
+          .filter((m) => m.id < upToMessageId)
+        // 压缩继承判定：分支点位于压缩指针之后 → 沿用摘要与指针（只复制未压缩部分）。
+        const inheritCompression =
+          source.compressLastIndex !== null && upToMessageId > source.compressLastIndex
+        const copied = inheritCompression
+          ? prefix.filter((m) => m.id > source.compressLastIndex!)
+          : prefix
+        const forkId = crypto.randomUUID()
+        db.prepare(
+          `INSERT INTO sessions
+            (id, title, model, thinking_level, system_prompt, parent_session_id,
+             compress_summary, compress_last_index, created_at, updated_at, last_active_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+        ).run(
+          forkId,
+          source.title,
+          source.model,
+          source.thinkingLevel,
+          source.systemPrompt,
+          sourceSessionId,
+          inheritCompression ? source.compressSummary : null,
+          inheritCompression ? source.compressLastIndex : null,
+          Date.now(),
+          Date.now(),
+          Date.now()
+        )
+        for (const row of copied) {
+          const result = db
+            .prepare(
+              `INSERT INTO messages
+                (session_id, role, content, tool_call_id, tool_name, model, provider,
+                 finish_reason, timestamp, metadata)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+            )
+            .run(
+              forkId,
+              row.role,
+              JSON.stringify(row.content),
+              row.toolCallId ?? null,
+              row.toolName ?? null,
+              row.model ?? null,
+              row.provider ?? null,
+              row.finishReason ?? null,
+              row.timestamp,
+              row.metadata ? JSON.stringify(row.metadata) : null
+            ) as { lastInsertRowid: number | bigint }
+          // 同步全文搜索索引（与 createMessage 一致）
+          const ftsText = toFtsIndexText(
+            [extractSearchableText(row.content), row.toolName ?? ''].join('\n')
+          )
+          db.prepare('INSERT INTO messages_fts (rowid, text) VALUES (?, ?)').run(
+            Number(result.lastInsertRowid),
+            ftsText
+          )
+        }
+        return api.getSession(forkId)!
+      })
+    },
+
+    /**
+     * 获取会话上下文（用于 LLM 重放）：
+     *   - 若已压缩：返回 compressSummary + id > compressLastIndex 的消息
+     *   - 若未压缩：返回 null 摘要 + 全部消息
+     */
+    getSessionContext(sessionId: string): SessionContext {
+      const session = api.getSession(sessionId)
+      if (!session) {
+        throw new Error(`会话不存在: ${sessionId}`)
+      }
+      const messages =
+        session.compressLastIndex !== null
+          ? deps.listMessagesBySession(sessionId, { afterId: session.compressLastIndex })
+          : deps.listMessagesBySession(sessionId)
+      return {
+        session,
+        compressSummary: session.compressSummary,
+        messages
+      }
     }
   }
   return api

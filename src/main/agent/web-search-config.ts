@@ -1,6 +1,6 @@
-import { safeStorage } from 'electron'
-import { db } from '../../database'
-import { createLogger } from '../../utils/log'
+import { db } from '../database'
+import { createLogger } from '../utils/log'
+import { encryptSecret, decryptSecret } from '../utils/safe-key'
 
 const log = createLogger('webSearch')
 
@@ -22,21 +22,12 @@ export function hasWebSearchApiKey(): boolean {
 export function getWebSearchApiKey(): string {
   const b64 = db.getSetting<string>(SETTING_WEB_SEARCH_API_KEY)
   if (!b64) throw new Error('未配置 Tavily API Key，请先在「设置 → 工具」中配置')
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error('系统不支持安全存储（safeStorage 不可用），无法解密 API key')
-  }
-  return safeStorage.decryptString(Buffer.from(b64, 'base64'))
+  return decryptSecret(Buffer.from(b64, 'base64'))
 }
 
 /** 加密并保存 Tavily API Key（覆盖旧值）。 */
 export function setWebSearchApiKeyConfig(key: string): void {
-  if (!safeStorage.isEncryptionAvailable()) {
-    throw new Error('系统不支持安全存储（safeStorage 不可用），无法加密 API key')
-  }
-  db.setSetting(
-    SETTING_WEB_SEARCH_API_KEY,
-    Buffer.from(safeStorage.encryptString(key)).toString('base64')
-  )
+  db.setSetting(SETTING_WEB_SEARCH_API_KEY, encryptSecret(key).toString('base64'))
   log.info('已保存 Tavily API Key')
 }
 

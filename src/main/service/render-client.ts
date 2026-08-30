@@ -1,5 +1,5 @@
 import type { IpcRendererServices } from '@renderer/service'
-import { sendToViews, type ViewTarget } from '../service/window-manager'
+import { sendToViews, type ViewTarget } from './window-manager'
 
 /**
  * 与 electron-ipc-service 的 renderer 侧约定的推送通道常量。

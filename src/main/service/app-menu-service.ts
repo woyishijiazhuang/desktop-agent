@@ -1,6 +1,6 @@
 import { app, Menu } from 'electron'
-import { ensureMainWindow, getHeaderView, getMainWindow } from './window-manager'
-import { rendererClient } from '../utils/render-client'
+import { getHeaderView } from './window-manager'
+import { toggleMainWindow, showMainWindowAnd } from './window-service'
 import { createLogger } from '../utils/log'
 
 const log = createLogger('menu')
@@ -10,25 +10,8 @@ const log = createLogger('menu')
  * 此前未调用 Menu.setApplicationMenu，Electron 会挂默认英文菜单（File/Edit/View/...），
  * 与产品不符。这里改为与托盘一致的操作项，并补齐 macOS 标准应用菜单与编辑菜单
  *（编辑菜单缺失会导致 macOS 上 Cmd+C/V/X 等系统剪贴板快捷键失效）。
+ * 显隐切换与动作广播见 window-service.toggleMainWindow / showMainWindowAnd。
  */
-
-/** 切换窗口显隐：可见且聚焦 → 隐藏；否则 → 显示并聚焦。 */
-function toggleWindow(): void {
-  const win = getMainWindow()
-  if (win && win.isVisible()) {
-    win.hide()
-    return
-  }
-  ensureMainWindow()
-}
-
-/** 显示窗口并向渲染进程发送动作（新建对话/打开设置）。 */
-async function showWindowAnd(action: 'new-chat' | 'open-settings'): Promise<void> {
-  // macOS 关窗后窗口已销毁，ensureMainWindow 需异步重建窗口；
-  // 等待视图加载完成（渲染层监听器就绪）再广播，避免动作丢失
-  await ensureMainWindow()
-  rendererClient.ui.trayAction(action)
-}
 
 export function createAppMenu(): void {
   const isMac = process.platform === 'darwin'
@@ -55,9 +38,9 @@ export function createAppMenu(): void {
     {
       label: '操作',
       submenu: [
-        { label: '显示/隐藏桌面助手', click: () => toggleWindow() },
-        { label: '新建对话', click: () => showWindowAnd('new-chat') },
-        { label: '打开设置', click: () => showWindowAnd('open-settings') },
+        { label: '显示/隐藏桌面助手', click: () => toggleMainWindow() },
+        { label: '新建对话', click: () => showMainWindowAnd('new-chat') },
+        { label: '打开设置', click: () => showMainWindowAnd('open-settings') },
         { type: 'separator' },
         ...(isMac
           ? [{ label: '关闭窗口', role: 'close' } satisfies Electron.MenuItemConstructorOptions]
@@ -98,9 +81,9 @@ export function createAppMenu(): void {
   if (isMac && app.dock) {
     app.dock.setMenu(
       Menu.buildFromTemplate([
-        { label: '显示/隐藏桌面助手', click: () => toggleWindow() },
-        { label: '新建对话', click: () => showWindowAnd('new-chat') },
-        { label: '打开设置', click: () => showWindowAnd('open-settings') }
+        { label: '显示/隐藏桌面助手', click: () => toggleMainWindow() },
+        { label: '新建对话', click: () => showMainWindowAnd('new-chat') },
+        { label: '打开设置', click: () => showMainWindowAnd('open-settings') }
       ])
     )
   }

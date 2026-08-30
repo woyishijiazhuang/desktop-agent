@@ -1,43 +1,14 @@
 import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { randomUUID } from 'node:crypto'
-import { rendererClient } from '../../utils/render-client'
+import { rendererClient } from '../../service/render-client'
 import { db } from '../../database'
 import { createLogger } from '../../utils/log'
 import { SETTING_PERMISSION_TIMEOUT_SEC, DEFAULT_PERMISSION_TIMEOUT_SEC } from '../types'
 import type { AskUserOption, AskUserRequest } from '../types'
+import { waitForAskUserAnswer } from '../ask-user'
 
 const log = createLogger('tool:ask_user')
-
-/** 待回答的提问：requestId → 决议回调（value = null 表示用户跳过 / 超时）。 */
-interface PendingAsk {
-  sessionId: string
-  resolve: (value: string | string[] | null) => void
-}
-const pending = new Map<string, PendingAsk>()
-
-/** renderer 回传用户回答，解除 ask_user 的挂起。 */
-export function resolveAskUser(requestId: string, value: string | string[] | null): void {
-  const req = pending.get(requestId)
-  if (!req) {
-    log.warn('收到未知提问回执', { requestId })
-    return
-  }
-  pending.delete(requestId)
-  log.info('提问已回传', { sessionId: req.sessionId, requestId, value })
-  req.resolve(value)
-}
-
-/** 会话结束（agent_end）时清理残留的挂起提问，避免 Promise 泄漏。 */
-export function clearAskUserRequests(sessionId: string): void {
-  for (const [requestId, req] of pending) {
-    if (req.sessionId === sessionId) {
-      pending.delete(requestId)
-      log.info('会话结束，清理挂起提问', { sessionId, requestId })
-      req.resolve(null)
-    }
-  }
-}
 
 const askParams = Type.Object({
   question: Type.String({
@@ -72,6 +43,7 @@ export interface AskUserDetails {
  * 澄清问题工具（对标 Claude Code 的 AskUserQuestion）：
  * 规划/执行阶段对不确定的需求点提问，挂起等待用户作答后继续。
  * 与 read_file / bash 家族同理按 Agent 会话绑定，故用工厂。
+ * 会话级挂起/回执见 ../ask-user。
  */
 export function createAskUserTool(sessionId: string): AgentTool<typeof askParams, AskUserDetails> {
   return {
@@ -101,53 +73,26 @@ export function createAskUserTool(sessionId: string): AgentTool<typeof askParams
       rendererClient.agentEvent.onAskUserRequest(payload)
       log.info('提问待用户回答', { sessionId, requestId, hasOptions: options.length > 0 })
 
-      return new Promise((resolve) => {
-        const timer =
-          timeoutSec > 0
-            ? setTimeout(() => {
-                pending.delete(requestId)
-                log.warn('提问超时，按跳过处理', { sessionId, requestId })
-                resolve({
-                  content: [
-                    {
-                      type: 'text',
-                      text: '用户未在时限内回答，已跳过。请基于已有信息继续，必要时可再次提问。'
-                    }
-                  ],
-                  details: { value: null, requestId }
-                })
-              }, timeoutSec * 1000)
-            : null
-        const finish = (value: string | string[] | null): void => {
-          if (timer) clearTimeout(timer)
-          pending.delete(requestId)
-          if (value === null) {
-            resolve({
-              content: [
-                { type: 'text', text: '用户跳过了该问题。请基于已有信息继续，必要时可再次提问。' }
-              ],
-              details: { value: null, requestId }
-            })
-          } else {
-            const text = Array.isArray(value) ? value.join('、') : String(value)
-            resolve({
-              content: [{ type: 'text', text: `用户回答：${text}` }],
-              details: { value, requestId }
-            })
-          }
+      const answer = await waitForAskUserAnswer(
+        requestId,
+        sessionId,
+        timeoutSec > 0 ? timeoutSec * 1000 : 0,
+        signal
+      )
+      if (answer.value === null) {
+        const text = answer.timedOut
+          ? '用户未在时限内回答，已跳过。请基于已有信息继续，必要时可再次提问。'
+          : '用户跳过了该问题。请基于已有信息继续，必要时可再次提问。'
+        return {
+          content: [{ type: 'text', text }],
+          details: { value: null, requestId }
         }
-        if (signal) {
-          signal.addEventListener(
-            'abort',
-            () => {
-              log.warn('提问已中断', { sessionId, requestId })
-              finish(null)
-            },
-            { once: true }
-          )
-        }
-        pending.set(requestId, { sessionId, resolve: finish })
-      })
+      }
+      const text = Array.isArray(answer.value) ? answer.value.join('、') : String(answer.value)
+      return {
+        content: [{ type: 'text', text: `用户回答：${text}` }],
+        details: { value: answer.value, requestId }
+      }
     }
   }
 }

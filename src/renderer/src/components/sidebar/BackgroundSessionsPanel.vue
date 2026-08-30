@@ -3,7 +3,7 @@ import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { NButton, NIcon, NPopconfirm, NScrollbar } from 'naive-ui'
 import { ChevronDownOutline, ChevronUpOutline, CloseOutline } from '@vicons/ionicons5'
 import { useBackgroundStore } from '@renderer/store/useBackgroundStore'
-import type { BackgroundSessionInfo } from '@main/agent/tools/bash-session'
+import type { BackgroundSessionInfo } from '@main/agent/bash-session'
 
 /**
  * 侧栏「后台任务」面板：展示所有后台命令与后台下载（全局，与当前会话无关），

@@ -1,6 +1,6 @@
 import { IpcService } from 'electron-ipc-service'
-import { bashSessionManager, type BackgroundSessionInfo } from '../agent/tools/bash-session'
-import { rendererClient } from '../utils/render-client'
+import { bashSessionManager, type BackgroundSessionInfo } from '../agent/bash-session'
+import { rendererClient } from './render-client'
 import { createLogger } from '../utils/log'
 
 const log = createLogger('service:bash')

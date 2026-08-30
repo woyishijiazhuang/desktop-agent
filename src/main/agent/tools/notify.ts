@@ -1,6 +1,6 @@
 import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { notifyAgentFinished } from '../../utils/notifier'
+import { notifyAgentFinished } from '../../service/notifier'
 import { createLogger } from '../../utils/log'
 
 const log = createLogger('tool:notify')

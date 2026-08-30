@@ -31,8 +31,11 @@ const raw = new DatabaseSync(dbPath, {
 raw.exec('PRAGMA journal_mode = WAL')
 initSchema(raw)
 
-const sessions = createSessionsApi(raw)
-const messages = createMessagesApi(raw, { getSession: sessions.getSession })
+const messages = createMessagesApi(raw)
+const sessions = createSessionsApi(raw, {
+  getMessage: messages.getMessage,
+  listMessagesBySession: messages.listMessagesBySession
+})
 
 // 方案 B 兜底：应用启动时物理清理超过保留期（30 天）的回收站数据。
 const purged = sessions.purgeExpiredDeletedSessions(DELETED_SESSION_RETENTION_DAYS)

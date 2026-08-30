@@ -1,7 +1,7 @@
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
 import { createWriteStream } from 'node:fs'
 import { randomUUID } from 'node:crypto'
-import { createLogger } from '../../utils/log'
+import { createLogger } from '../utils/log'
 
 const log = createLogger('tool:bash')
 

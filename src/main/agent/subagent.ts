@@ -10,7 +10,7 @@ import type {
 import type { Api, AssistantMessage, Model } from '@earendil-works/pi-ai'
 import { randomUUID } from 'node:crypto'
 import { db } from '../database'
-import { resolveAssistantCost } from './model-config/pricing'
+import { resolveAssistantCost } from './model-config'
 import { evaluateReadonlyBash, createBeforeToolCallHook } from './permission'
 import { createLogger } from '../utils/log'
 

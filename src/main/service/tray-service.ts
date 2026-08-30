@@ -1,8 +1,7 @@
 import { app, Menu, Tray, nativeImage } from 'electron'
 import trayColored from '../../../resources/tray-icon.png?asset'
 import trayTemplate from '../../../resources/tray-icon-template.png?asset'
-import { ensureMainWindow, getMainWindow } from './window-manager'
-import { rendererClient } from '../utils/render-client'
+import { toggleMainWindow, showMainWindowAnd } from './window-service'
 import { createLogger } from '../utils/log'
 
 const log = createLogger('tray')
@@ -13,6 +12,7 @@ const log = createLogger('tray')
  * - 菜单项：显示/隐藏、新建对话、打开设置、退出。
  * 「关闭到托盘」开关位于设置页（window.closeToTray，默认关闭），
  * 开启后关窗不退出、Agent 后台任务可继续运行，经托盘唤回。
+ * 显隐切换与动作广播见 window-service.toggleMainWindow / showMainWindowAnd。
  */
 
 let tray: Tray | null = null
@@ -39,24 +39,6 @@ function trayImage(): Electron.NativeImage {
   return image
 }
 
-/** 切换窗口显隐：可见且聚焦 → 隐藏；否则 → 显示并聚焦。 */
-function toggleWindow(): void {
-  const win = getMainWindow()
-  if (win && win.isVisible()) {
-    win.hide()
-    return
-  }
-  ensureMainWindow()
-}
-
-/** 显示窗口并向渲染进程发送动作（新建对话/打开设置）。 */
-async function showWindowAnd(action: 'new-chat' | 'open-settings'): Promise<void> {
-  // macOS 关窗后窗口已销毁，ensureMainWindow 需异步重建窗口；
-  // 等待视图加载完成（渲染层监听器就绪）再广播，避免动作丢失
-  await ensureMainWindow()
-  rendererClient.ui.trayAction(action)
-}
-
 export function createTray(): void {
   if (tray) return
 
@@ -65,15 +47,15 @@ export function createTray(): void {
   const menu = Menu.buildFromTemplate([
     {
       label: '显示/隐藏桌面助手',
-      click: () => toggleWindow()
+      click: () => toggleMainWindow()
     },
     {
       label: '新建对话',
-      click: () => showWindowAnd('new-chat')
+      click: () => showMainWindowAnd('new-chat')
     },
     {
       label: '打开设置',
-      click: () => showWindowAnd('open-settings')
+      click: () => showMainWindowAnd('open-settings')
     },
     { type: 'separator' },
     {
@@ -87,7 +69,7 @@ export function createTray(): void {
   tray.setContextMenu(menu)
   // macOS 点击托盘图标默认弹出菜单；Windows/Linux 左键点击切换窗口显隐
   if (process.platform !== 'darwin') {
-    tray.on('click', toggleWindow)
+    tray.on('click', toggleMainWindow)
   }
   log.info('系统托盘已创建')
 }

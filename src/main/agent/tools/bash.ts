@@ -4,7 +4,7 @@ import { resolveAgentWorkdir } from '../workdir'
 import { db } from '../../database'
 import { getShellEnv } from '../../utils/shell-env'
 import { SETTING_AGENT_ENV } from '../types'
-import { bashSessionManager, DEFAULT_TIMEOUT, formatBytes, resolveShell } from './bash-session'
+import { bashSessionManager, DEFAULT_TIMEOUT, formatBytes, resolveShell } from '../bash-session'
 import { createLogger } from '../../utils/log'
 
 const log = createLogger('tool:bash')

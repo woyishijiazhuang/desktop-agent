@@ -1,22 +1,15 @@
 import { app, BaseWindow, crashReporter } from 'electron'
 import { electronApp } from '@electron-toolkit/utils'
 import { ipcMainServices } from './service'
-import {
-  createMainWindow,
-  ensureMainWindow,
-  getMainWindow,
-  markQuitting
-} from './service/window-manager'
+import { createMainWindow, ensureMainWindow, markQuitting } from './service/window-manager'
 import { applyStoredThemeMode } from './service/theme-service'
 import { createTray } from './service/tray-service'
 import { createAppMenu } from './service/app-menu-service'
-import { SETTING_ALWAYS_ON_TOP } from './service/window-service'
-import { db } from './database'
 import icon from '../../resources/icon.png?asset'
 // 副作用：初始化主进程文件日志（electron-log，捕获 console 写入 userData/logs/main.log）
 import { createLogger } from './utils/log'
 import { cleanupOrphanAttachments } from './agent/attachment'
-import { bashSessionManager } from './agent/tools/bash-session'
+import { bashSessionManager } from './agent/bash-session'
 
 const log = createLogger('app')
 
@@ -61,11 +54,6 @@ app.whenReady().then(() => {
   void cleanupOrphanAttachments()
   // 启动时连接已启用的 MCP server（失败不影响启动，状态可在设置页查看）
   void ipcMainServices.mcp.connectAll()
-  // 恢复窗口置顶偏好（设置页可开关，persisted in settings）
-  if (db.getSetting<boolean>(SETTING_ALWAYS_ON_TOP)) {
-    getMainWindow()?.setAlwaysOnTop(true)
-    log.info('已恢复窗口置顶偏好')
-  }
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the

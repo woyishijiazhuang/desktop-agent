@@ -13,6 +13,9 @@ import { SETTING_CLOSE_TO_TRAY, SETTING_TITLE_BAR_MODE, type TitleBarMode } from
 
 const log = createLogger('window')
 
+/** 窗口置顶偏好设置键（settings 表，见 setAlwaysOnTop）。 */
+export const SETTING_ALWAYS_ON_TOP = 'window.alwaysOnTop'
+
 /**
  * BaseWindow + 双 WebContentsView 架构的窗口管理器。
  *
@@ -201,6 +204,10 @@ export function createMainWindow(bounds?: MainWindowBounds, replace = false): vo
         : {})
   })
   mainWindow = win
+  // 恢复窗口置顶偏好（设置页可开关，持久化在 settings 表，见 setAlwaysOnTop）
+  if (db.getSetting<boolean>(SETTING_ALWAYS_ON_TOP)) {
+    win.setAlwaysOnTop(true)
+  }
   // 新窗口视图未加载完成前不算就绪，托盘/菜单动作需等渲染层监听器注册后再发送
   windowReady = false
   // 自定义模式（macOS）：隐藏系统红绿灯，由自绘标题栏按钮接管窗口控制
@@ -358,6 +365,12 @@ export function getMainWindow(): BaseWindow | null {
   return mainWindow
 }
 
+/** 设置窗口置顶并持久化偏好（重启后 createMainWindow 恢复）。 */
+export function setAlwaysOnTop(win: BaseWindow, on: boolean): void {
+  win.setAlwaysOnTop(on)
+  db.setSetting(SETTING_ALWAYS_ON_TOP, on)
+}
+
 export function getHeaderView(): WebContentsView | null {
   return headerView
 }
@@ -378,11 +391,7 @@ export type ViewTarget = 'all' | 'header' | 'content'
  * 向指定视图的 webContents 发送消息（fire-and-forget，替代 createIpcMainClient）。
  * 'all' 同时发给标题栏 + 内容视图；'header' / 'content' 只发给对应视图。
  */
-export function sendToViews(
-  channel: string,
-  message: unknown,
-  target: ViewTarget = 'all'
-): void {
+export function sendToViews(channel: string, message: unknown, target: ViewTarget = 'all'): void {
   if (target === 'header' || target === 'all') {
     headerView?.webContents.send(channel, message)
   }

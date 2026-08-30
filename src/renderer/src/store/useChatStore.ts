@@ -7,14 +7,14 @@ import { extractUserText, type FileTextBlock, type SkillTextBlock } from '../uti
 import { useModelConfigsStore } from './useModelConfigsStore'
 import { useSessionStore } from './useSessionStore'
 import { useSettingsStore } from './useSettingsStore'
-import { applyChatEvent, mergeTranscript } from './chat-events'
-import type { ToolStatus, SessionChatState } from './chat-events'
+import { applyChatEvent, mergeTranscript } from '../service/chat-events'
+import type { ToolStatus, SessionChatState } from '../service/chat-events'
 import type { ModelKey, ThinkingLevel } from '@main/agent/types'
 import { formatModelKey, isThinkingLevel, parseModelKey } from '@main/agent/types'
 import type { Message as DbMessage } from '@main/database'
 
 // 重新导出容器与工具状态类型，保持既有 import 路径（如 ToolCallCard）不变。
-export type { ToolStatus, SessionChatState } from './chat-events'
+export type { ToolStatus, SessionChatState } from '../service/chat-events'
 
 /** 会话滚动锚点：锚定到消息行（mid）+ 该行相对视口顶部的偏移（offset）。 */
 export interface ScrollAnchor {

@@ -3,7 +3,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { mkdir } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
 import { resolveAgentWorkdir } from '../workdir'
-import { bashSessionManager, formatBytes } from './bash-session'
+import { bashSessionManager, formatBytes } from '../bash-session'
 import { createLogger } from '../../utils/log'
 
 const log = createLogger('tool:download')

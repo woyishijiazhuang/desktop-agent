@@ -1,8 +1,14 @@
 import { BaseWindow } from 'electron'
 import { IpcService, useIpcMainContext } from 'electron-ipc-service'
-import { rendererClient } from '../utils/render-client'
+import { rendererClient } from './render-client'
 import { db } from '../database'
-import { getWindowByWebContents, recreateMainWindow } from './window-manager'
+import {
+  getWindowByWebContents,
+  recreateMainWindow,
+  setAlwaysOnTop,
+  ensureMainWindow,
+  getMainWindow
+} from './window-manager'
 import { SETTING_TITLE_BAR_MODE, type TitleBarMode } from '../agent/types'
 import { createLogger } from '../utils/log'
 
@@ -18,9 +24,6 @@ export interface WindowState {
   isNativeTitleBar: boolean // 原生标题栏模式（macOS 红绿灯 / Windows overlay 系统按钮），自绘窗口控制隐藏
 }
 
-/** 窗口置顶偏好设置键（settings 表，启动时恢复）。 */
-export const SETTING_ALWAYS_ON_TOP = 'window.alwaysOnTop'
-
 export type WindowAction =
   | 'hide'
   | 'show'
@@ -35,6 +38,24 @@ export type WindowAction =
   | 'cancel-always-on-top'
   | 'native-title-bar'
   | 'cancel-native-title-bar'
+
+/** 切换窗口显隐：可见且聚焦 → 隐藏；否则 → 显示并聚焦（托盘/菜单共用）。 */
+export function toggleMainWindow(): void {
+  const win = getMainWindow()
+  if (win && win.isVisible()) {
+    win.hide()
+    return
+  }
+  void ensureMainWindow()
+}
+
+/** 显示窗口并向渲染进程发送动作（新建对话/打开设置；托盘/菜单共用）。 */
+export async function showMainWindowAnd(action: 'new-chat' | 'open-settings'): Promise<void> {
+  // macOS 关窗后窗口已销毁，ensureMainWindow 需异步重建窗口；
+  // 等待视图加载完成（渲染层监听器就绪）再广播，避免动作丢失
+  await ensureMainWindow()
+  rendererClient.ui.trayAction(action)
+}
 
 export class WindowService extends IpcService {
   static override readonly namespace = 'window'
@@ -93,13 +114,10 @@ export class WindowService extends IpcService {
         win.setFullScreen(false)
         break
       case 'always-on-top':
-        win.setAlwaysOnTop(true)
-        // 置顶偏好持久化：重启后由 main/index.ts 恢复
-        db.setSetting(SETTING_ALWAYS_ON_TOP, true)
+        setAlwaysOnTop(win, true)
         break
       case 'cancel-always-on-top':
-        win.setAlwaysOnTop(false)
-        db.setSetting(SETTING_ALWAYS_ON_TOP, false)
+        setAlwaysOnTop(win, false)
         break
       case 'native-title-bar':
       case 'cancel-native-title-bar': {

@@ -2,7 +2,7 @@ import { IpcService } from 'electron-ipc-service'
 import { clipboard, dialog } from 'electron'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { ImageContent } from '@earendil-works/pi-ai'
-import { rendererClient } from '../utils/render-client'
+import { rendererClient } from '../service/render-client'
 import { db } from '../database'
 import { toCreateMessageParams, fromMessageRow, persistMessageImages } from './convert'
 import { extractMessageText } from '../utils/message-text'
@@ -25,13 +25,13 @@ import {
   hasWebSearchApiKey,
   setWebSearchApiKeyConfig,
   clearWebSearchApiKeyConfig
-} from './tools/web-search-config'
+} from './web-search-config'
 import { resolvePermission, SETTING_BASH_ALLOWLIST } from './permission'
-import { resolvePlanApproval } from './tools/plan-mode'
-import { resolveAskUser } from './tools/ask-user'
+import { resolvePlanApproval } from './plan-mode'
+import { resolveAskUser } from './ask-user'
 import { extractDocumentText } from '../utils/doc-parser'
 import { completeText, type CompleteTextResult } from './models'
-import { resolveAssistantCost } from './model-config/pricing'
+import { resolveAssistantCost } from './model-config'
 import { AgentManager } from './agent-manager'
 import { createLogger } from '../utils/log'
 import type {
@@ -51,7 +51,7 @@ import {
 } from './types'
 import { resolveAgentWorkdir } from './workdir'
 import { refreshShellEnv } from '../utils/shell-env'
-import { notifyAgentFinished } from '../utils/notifier'
+import { notifyAgentFinished } from '../service/notifier'
 import { isDeepEqual } from '../utils/deep-equal'
 import { estimateTokens, truncateMiddle } from '../utils/token'
 

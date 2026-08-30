@@ -1,5 +1,6 @@
 import { computed, type ComputedRef } from 'vue'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
+import { messageSignature } from '../utils/messageKey'
 
 /**
  * 为无稳定 id 的 AgentMessage 列表生成稳定 key（纯渲染层映射，不污染 store）。
@@ -21,13 +22,6 @@ export interface KeyedMessage {
 /** 生成短 id（无需第三方依赖）。 */
 function uid(): string {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4)
-}
-
-function signatureOf(m: AgentMessage): string {
-  const role = (m as { role?: string }).role ?? ''
-  const ts = (m as { timestamp?: number }).timestamp ?? 0
-  const toolCallId = (m as { toolCallId?: string }).toolCallId ?? ''
-  return `${role}::${ts}::${toolCallId}`
 }
 
 /**
@@ -65,7 +59,7 @@ export function useStableMessageKeys(messages: () => AgentMessage[]): ComputedRe
       }
       if (prefixSame) {
         const msg = list[list.length - 1]
-        const sig = signatureOf(msg)
+        const sig = messageSignature(msg)
         let id = cache.get(sig)
         if (!id) {
           id = uid()
@@ -81,7 +75,7 @@ export function useStableMessageKeys(messages: () => AgentMessage[]): ComputedRe
     // 全量路径（原逻辑）
     const seen = new Set<string>()
     const result: KeyedMessage[] = list.map((message) => {
-      const sig = signatureOf(message)
+      const sig = messageSignature(message)
       seen.add(sig)
       let id = cache.get(sig)
       if (!id) {

@@ -1,7 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import { mainClient } from '../utils/main-client'
-import type { BackgroundSessionInfo } from '@main/agent/tools/bash-session'
+import type { BackgroundSessionInfo } from '@main/agent/bash-session'
 
 /**
  * 后台命令面板状态（全局、与当前会话无关）。

@@ -1,8 +1,8 @@
 import { Notification, shell } from 'electron'
 import { db } from '../database'
 import { SETTING_NOTIFICATIONS_ENABLED } from '../agent/types'
-import { ensureMainWindow } from '../service/window-manager'
-import { createLogger } from './log'
+import { ensureMainWindow } from './window-manager'
+import { createLogger } from '../utils/log'
 import { rendererClient } from './render-client'
 import icon from '../../../resources/icon.png?asset'
 

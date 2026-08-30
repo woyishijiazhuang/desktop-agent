@@ -14,7 +14,7 @@ import type {
   PlanProgress,
   AskUserRequest
 } from '@main/agent/types'
-import type { BackgroundSessionInfo } from '@main/agent/tools/bash-session'
+import type { BackgroundSessionInfo } from '@main/agent/bash-session'
 
 /**
  * Agent 事件接收服务：main 进程通过 rendererClient.agentEvent.* 推送事件到此处。

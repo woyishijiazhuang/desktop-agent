@@ -1,6 +1,6 @@
 import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { getWebSearchApiKey } from './web-search-config'
+import { getWebSearchApiKey } from '../web-search-config'
 import { createLogger } from '../../utils/log'
 
 const log = createLogger('tool:web_search')

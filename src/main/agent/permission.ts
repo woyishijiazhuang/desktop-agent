@@ -4,10 +4,10 @@ import type {
   BeforeToolCallContext,
   BeforeToolCallResult
 } from '@earendil-works/pi-agent-core'
-import { rendererClient } from '../utils/render-client'
+import { rendererClient } from '../service/render-client'
 import { db } from '../database'
 import { createLogger } from '../utils/log'
-import { isPlanMode, isPlanAllowedCommand } from './tools/plan-mode'
+import { isPlanMode, isPlanAllowedCommand } from './plan-mode'
 import type { PermissionRequest, PermissionBatchItem, PermissionScope } from './types'
 import {
   SETTING_PERMISSION_AUTO_APPROVE,
