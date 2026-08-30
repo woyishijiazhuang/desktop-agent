@@ -22,7 +22,8 @@ import {
   PieChart,
   ScatterChart,
   EffectScatterChart,
-  MapChart
+  MapChart,
+  GaugeChart
 } from 'echarts/charts'
 import {
   TitleComponent,
@@ -48,6 +49,7 @@ echarts.use([
   ScatterChart,
   EffectScatterChart,
   MapChart,
+  GaugeChart,
   TitleComponent,
   TooltipComponent,
   LegendComponent,

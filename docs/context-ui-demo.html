@@ -1,0 +1,678 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>上下文占用 UI 方案对比</title>
+    <style>
+      :root {
+        --pct: 62; /* 由滑块驱动 */
+        --bg: #f6f7f9;
+        --card: #ffffff;
+        --border: #e5e7eb;
+        --text-1: #1f2329;
+        --text-2: #4b5563;
+        --text-3: #9aa3ad;
+        --primary: #6d5ce7;
+        --ok: #22c55e;
+        --warn: #f59e0b;
+        --danger: #ef4444;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+      body {
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei',
+          sans-serif;
+        background: var(--bg);
+        color: var(--text-1);
+        padding: 32px 24px 64px;
+      }
+      .page {
+        max-width: 1080px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 20px;
+        font-weight: 700;
+      }
+      .sub {
+        margin: 6px 0 20px;
+        font-size: 13px;
+        color: var(--text-3);
+        line-height: 1.6;
+      }
+      .controls {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 14px 18px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        margin-bottom: 24px;
+        flex-wrap: wrap;
+      }
+      .controls label {
+        font-size: 13px;
+        color: var(--text-2);
+      }
+      .controls input[type='range'] {
+        flex: 1;
+        min-width: 200px;
+        accent-color: var(--primary);
+      }
+      .pct-readout {
+        font-variant-numeric: tabular-nums;
+        font-weight: 700;
+        min-width: 52px;
+        text-align: right;
+      }
+      .pct-readout[data-state='warn'] {
+        color: var(--warn);
+      }
+      .pct-readout[data-state='danger'] {
+        color: var(--danger);
+      }
+      .legend {
+        display: flex;
+        gap: 16px;
+        font-size: 12px;
+        color: var(--text-3);
+        margin-left: auto;
+      }
+      .legend i {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        margin-right: 4px;
+        vertical-align: -1px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(330px, 1fr));
+        gap: 18px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      .card__head {
+        padding: 12px 16px;
+        border-bottom: 1px solid var(--border);
+      }
+      .card__title {
+        font-size: 14px;
+        font-weight: 600;
+      }
+      .card__ref {
+        font-size: 11px;
+        color: var(--text-3);
+        margin-top: 2px;
+      }
+      .card__body {
+        padding: 18px 16px 16px;
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        background: linear-gradient(180deg, #fafbfc 0%, #f3f4f6 100%);
+      }
+      .card__note {
+        font-size: 11px;
+        color: var(--text-3);
+        line-height: 1.5;
+      }
+
+      /* ===== 通用聊天 mock ===== */
+      .chat {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      .chat__msgs {
+        min-height: 64px;
+        padding: 10px 12px;
+        font-size: 12px;
+        color: var(--text-3);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .chat__bubble {
+        max-width: 78%;
+        padding: 7px 10px;
+        border-radius: 8px;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--text-2);
+        background: #eef0f3;
+      }
+      .chat__bubble--user {
+        align-self: flex-end;
+        background: #e8e4fb;
+        color: #3d3454;
+      }
+      .chat__input {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 12px;
+        border-top: 1px solid var(--border);
+      }
+      .chat__field {
+        flex: 1;
+        height: 26px;
+        border-radius: 7px;
+        background: #f3f4f6;
+        border: 1px solid var(--border);
+      }
+      .chat__send {
+        width: 40px;
+        height: 26px;
+        border-radius: 7px;
+        background: var(--primary);
+      }
+
+      /* ===== 方案 A：输入框顶部细线（当前实现） ===== */
+      .bar-a {
+        height: 3px;
+        background: #e5e7eb;
+        border-radius: 2px;
+        overflow: hidden;
+      }
+      .bar-a__fill {
+        height: 100%;
+        width: calc(var(--pct) * 1%);
+        background: var(--ok);
+        border-radius: 2px;
+        transition: width 0.3s ease, background 0.2s ease;
+      }
+      body[data-state='warn'] .bar-a__fill {
+        background: var(--warn);
+      }
+      body[data-state='danger'] .bar-a__fill {
+        background: var(--danger);
+      }
+
+      /* ===== 方案 B：底部状态栏 HUD（Claude Code / Cursor 风格） ===== */
+      .chat--hud .chat__statusbar {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 5px 12px;
+        font-size: 11px;
+        color: var(--text-3);
+        background: #fafbfc;
+        border-top: 1px solid var(--border);
+        font-variant-numeric: tabular-nums;
+      }
+      .hud-bar {
+        display: flex;
+        gap: 2px;
+        flex: 1;
+        max-width: 200px;
+      }
+      .hud-bar i {
+        flex: 1;
+        height: 7px;
+        border-radius: 1.5px;
+        background: #e5e7eb;
+      }
+      .hud-bar i.on {
+        background: var(--ok);
+      }
+      body[data-state='warn'] .hud-bar i.on {
+        background: var(--warn);
+      }
+      body[data-state='danger'] .hud-bar i.on {
+        background: var(--danger);
+      }
+      .hud-text {
+        white-space: nowrap;
+      }
+      .hud-model {
+        margin-left: auto;
+        white-space: nowrap;
+      }
+
+      /* ===== 方案 C：消息区顶部细条（Claude.ai 风格） ===== */
+      .chat--top .chat__topbar {
+        height: 4px;
+        background: #e5e7eb;
+        border-radius: 2px;
+        margin: 0 12px 10px;
+        overflow: hidden;
+      }
+      .chat--top .chat__topbar i {
+        display: block;
+        height: 100%;
+        width: calc(var(--pct) * 1%);
+        background: var(--ok);
+        border-radius: 2px;
+        transition: width 0.3s ease, background 0.2s ease;
+      }
+      body[data-state='warn'] .chat--top .chat__topbar i {
+        background: var(--warn);
+      }
+      body[data-state='danger'] .chat--top .chat__topbar i {
+        background: var(--danger);
+      }
+
+      /* ===== 方案 D：输入框内嵌文本（Codex 风格） ===== */
+      .chat--inline .chat__input {
+        position: relative;
+      }
+      .inline-pct {
+        position: absolute;
+        right: 60px;
+        bottom: -14px;
+        font-size: 10px;
+        color: var(--text-3);
+        font-variant-numeric: tabular-nums;
+        pointer-events: none;
+      }
+      .inline-pct[data-state='warn'] {
+        color: var(--warn);
+      }
+      .inline-pct[data-state='danger'] {
+        color: var(--danger);
+      }
+
+      /* ===== 方案 E：分段上下文条（claude-context-visualizer 风格） ===== */
+      .seg {
+        display: flex;
+        height: 10px;
+        border-radius: 5px;
+        overflow: hidden;
+        background: #eceef1;
+      }
+      .seg span {
+        height: 100%;
+      }
+      .seg-legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 16px;
+        font-size: 11px;
+        color: var(--text-3);
+      }
+      .seg-legend i {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+        margin-right: 4px;
+        vertical-align: -1px;
+      }
+      .seg-system {
+        background: #9aa3ad;
+      }
+      .seg-chat {
+        background: var(--ok);
+      }
+      .seg-tools {
+        background: #ec4899;
+      }
+      .seg-free {
+        background: #eceef1;
+      }
+
+      /* ===== 方案 F：侧栏压缩按钮角标 ===== */
+      .side-mock {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+      .side-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 8px;
+        background: #f3f4f6;
+        font-size: 12px;
+        color: var(--text-2);
+      }
+      .side-row__icon {
+        width: 20px;
+        height: 20px;
+        border-radius: 6px;
+        background: #e5e7eb;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+      }
+      .side-row__label {
+        flex: 1;
+      }
+      .badge {
+        min-width: 30px;
+        height: 18px;
+        padding: 0 6px;
+        border-radius: 9px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 10px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+        color: var(--text-2);
+        background: #eceef1;
+      }
+      .badge[data-state='warn'] {
+        background: #fef3c7;
+        color: #b45309;
+      }
+      .badge[data-state='danger'] {
+        background: #fee2e2;
+        color: #b91c1c;
+      }
+
+      /* 方案说明列表 */
+      .summary {
+        margin-top: 28px;
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 14px;
+        padding: 18px 20px;
+      }
+      .summary h2 {
+        font-size: 14px;
+        margin-bottom: 10px;
+      }
+      .summary table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 12px;
+      }
+      .summary th,
+      .summary td {
+        text-align: left;
+        padding: 6px 8px;
+        border-bottom: 1px solid var(--border);
+        vertical-align: top;
+      }
+      .summary th {
+        color: var(--text-3);
+        font-weight: 600;
+      }
+      .summary td {
+        color: var(--text-2);
+        line-height: 1.6;
+      }
+      .summary code {
+        background: #eef0f3;
+        padding: 1px 5px;
+        border-radius: 4px;
+        font-size: 11px;
+      }
+    </style>
+  </head>
+  <body data-state="ok">
+    <div class="page">
+      <h1>上下文占用 UI 方案对比</h1>
+      <p class="sub">
+        基于 Claude.ai / OpenAI Codex / Cursor / Claude Code 生态（claude-hud、context-visualizer 等）的调研结果，把主流做法做成可交互 mock。拖动滑块切换占用率，观察各方案在
+        低占用 → 达到压缩阈值(70%) → 接近溢出(90%) 时的表现。
+      </p>
+
+      <div class="controls">
+        <label for="pct">占用率</label>
+        <input id="pct" type="range" min="5" max="95" value="62" />
+        <span class="pct-readout" id="pct-readout">62%</span>
+        <div class="legend">
+          <span><i style="background: var(--ok)"></i>&lt;70%</span>
+          <span><i style="background: var(--warn)"></i>≥70% 建议压缩</span>
+          <span><i style="background: var(--danger)"></i>≥90% 接近溢出</span>
+        </div>
+      </div>
+
+      <div class="grid">
+        <!-- A -->
+        <div class="card">
+          <div class="card__head">
+            <div class="card__title">A · 输入框顶部细线</div>
+            <div class="card__ref">当前实现（待替换）</div>
+          </div>
+          <div class="card__body">
+            <div class="chat chat--a">
+              <div class="chat__msgs">
+                <span class="chat__bubble">好的，我来实现这个功能。</span>
+                <span class="chat__bubble chat__bubble--user">再加个自动刷新吧</span>
+              </div>
+              <div class="bar-a"><div class="bar-a__fill"></div></div>
+              <div class="chat__input"><div class="chat__field"></div><div class="chat__send"></div></div>
+            </div>
+            <p class="card__note">无文字，只一条细色线贴在输入框上沿。最不打扰，但信息量少。</p>
+          </div>
+        </div>
+
+        <!-- B -->
+        <div class="card">
+          <div class="card__head">
+            <div class="card__title">B · 底部状态栏 HUD</div>
+            <div class="card__ref">Claude Code HUD / Cursor 状态栏</div>
+          </div>
+          <div class="card__body">
+            <div class="chat chat--hud">
+              <div class="chat__msgs">
+                <span class="chat__bubble">好的，我来实现这个功能。</span>
+                <span class="chat__bubble chat__bubble--user">再加个自动刷新吧</span>
+              </div>
+              <div class="chat__input"><div class="chat__field"></div><div class="chat__send"></div></div>
+              <div class="chat__statusbar">
+                <div class="hud-bar" id="hud-bar"></div>
+                <span class="hud-text" id="hud-text">62% · 12.4K/128K</span>
+                <span class="hud-model">DeepSeek-V3</span>
+              </div>
+            </div>
+            <p class="card__note">常驻一行：分格进度条 + 百分比/用量 + 模型名。信息完整、可读性强，占一行高度。</p>
+          </div>
+        </div>
+
+        <!-- C -->
+        <div class="card">
+          <div class="card__head">
+            <div class="card__title">C · 消息区顶部细条</div>
+            <div class="card__ref">Claude.ai 对话顶部指示条</div>
+          </div>
+          <div class="card__body">
+            <div class="chat chat--top">
+              <div class="chat__topbar"><i></i></div>
+              <div class="chat__msgs">
+                <span class="chat__bubble">好的，我来实现这个功能。</span>
+                <span class="chat__bubble chat__bubble--user">再加个自动刷新吧</span>
+              </div>
+              <div class="chat__input"><div class="chat__field"></div><div class="chat__send"></div></div>
+            </div>
+            <p class="card__note">细条在消息区最顶部（会话开头位置），滚动时离开视口，属于"开场即见"的提示。</p>
+          </div>
+        </div>
+
+        <!-- D -->
+        <div class="card">
+          <div class="card__head">
+            <div class="card__title">D · 输入框内嵌文本</div>
+            <div class="card__ref">OpenAI Codex 实时 token 计数</div>
+          </div>
+          <div class="card__body">
+            <div class="chat chat--inline">
+              <div class="chat__msgs">
+                <span class="chat__bubble">好的，我来实现这个功能。</span>
+                <span class="chat__bubble chat__bubble--user">再加个自动刷新吧</span>
+              </div>
+              <div class="chat__input">
+                <div class="chat__field"></div><div class="chat__send"></div>
+                <span class="inline-pct" id="inline-pct">62% (12.4K/128K)</span>
+              </div>
+            </div>
+            <p class="card__note">只在输入框下方一行小字，零额外结构；到阈值才变色提醒。最克制。</p>
+          </div>
+        </div>
+
+        <!-- E -->
+        <div class="card">
+          <div class="card__head">
+            <div class="card__title">E · 分段上下文条</div>
+            <div class="card__ref">claude-context-visualizer</div>
+          </div>
+          <div class="card__body">
+            <div class="seg" id="seg"></div>
+            <div class="seg-legend">
+              <span><i class="seg-system"></i>系统提示</span>
+              <span><i class="seg-chat"></i>对话</span>
+              <span><i class="seg-tools"></i>工具结果</span>
+              <span><i class="seg-free"></i>剩余</span>
+            </div>
+            <p class="card__note">把上下文拆成 系统/对话/工具 分段，信息密度最高，适合专业用户；对普通对话偏重。</p>
+          </div>
+        </div>
+
+        <!-- F -->
+        <div class="card">
+          <div class="card__head">
+            <div class="card__title">F · 压缩按钮角标</div>
+            <div class="card__ref">侧栏压缩入口集成</div>
+          </div>
+          <div class="card__body">
+            <div class="side-mock">
+              <div class="side-row"><span class="side-row__icon">📄</span><span class="side-row__label">重构接口层</span></div>
+              <div class="side-row"><span class="side-row__icon">📄</span><span class="side-row__label">修复登录问题</span></div>
+              <div class="side-row">
+                <span class="side-row__icon">🗜️</span>
+                <span class="side-row__label">压缩当前会话</span>
+                <span class="badge" id="badge">62%</span>
+              </div>
+            </div>
+            <p class="card__note">压缩按钮旁挂百分比角标，复用既有入口，零新增行高；但不够显眼、非实时主视觉。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="summary">
+        <h2>各方案对比小结</h2>
+        <table>
+          <tr>
+            <th>方案</th>
+            <th>形态</th>
+            <th>参考产品</th>
+            <th>优点</th>
+            <th>缺点</th>
+          </tr>
+          <tr>
+            <td>A · 输入框顶部细线</td>
+            <td>3px 细色线</td>
+            <td>—（当前实现）</td>
+            <td>最不打扰</td>
+            <td>突兀、无数字、信息量低</td>
+          </tr>
+          <tr>
+            <td>B · 底部状态栏</td>
+            <td>分格条 + 百分比 + 模型</td>
+            <td>Claude Code HUD / Cursor</td>
+            <td>常驻、信息完整、可读性强</td>
+            <td>占一行高度</td>
+          </tr>
+          <tr>
+            <td>C · 消息区顶部细条</td>
+            <td>顶部横条</td>
+            <td>Claude.ai</td>
+            <td>开场即见、不遮挡</td>
+            <td>滚动后不可见</td>
+          </tr>
+          <tr>
+            <td>D · 输入框内嵌文本</td>
+            <td>一行小字</td>
+            <td>OpenAI Codex</td>
+            <td>最克制、零结构</td>
+            <td>不够直观（无图形）</td>
+          </tr>
+          <tr>
+            <td>E · 分段上下文条</td>
+            <td>分段色条 + 图例</td>
+            <td>claude-context-visualizer</td>
+            <td>信息密度最高</td>
+            <td>对普通用户偏重</td>
+          </tr>
+          <tr>
+            <td>F · 压缩按钮角标</td>
+            <td>百分比徽标</td>
+            <td>—（侧栏集成）</td>
+            <td>复用入口、零行高</td>
+            <td>不够显眼</td>
+          </tr>
+        </table>
+        <p style="margin-top: 10px; font-size: 12px; color: var(--text-3); line-height: 1.7">
+          我的建议：若只选一个，<b>B · 底部状态栏</b>是市面上最主流的形态（Claude Code 生态已验证），
+          可降噪为「一条细状态行：分格条 + 百分比」；若想最克制，<b>D · 内嵌文本</b>最接近 Codex。
+          也可以组合：常态只显示 D 的小字，达到阈值时自动浮现 B 的状态行 + 提示。
+        </p>
+      </div>
+    </div>
+
+    <script>
+      const pctEl = document.getElementById('pct')
+      const readout = document.getElementById('pct-readout')
+      const THRESHOLD = 70
+      const DANGER = 90
+
+      // HUD 分格条：20 格
+      const hudBar = document.getElementById('hud-bar')
+      const HUD_SEGMENTS = 20
+      for (let i = 0; i < HUD_SEGMENTS; i++) hudBar.appendChild(document.createElement('i'))
+
+      // 分段条：系统 12% + 对话 60% + 工具 28% 的比例按总占用缩放
+      const seg = document.getElementById('seg')
+
+      function apply(pct) {
+        const state = pct >= DANGER ? 'danger' : pct >= THRESHOLD ? 'warn' : 'ok'
+        document.body.dataset.state = state
+        document.documentElement.style.setProperty('--pct', pct)
+        readout.textContent = `${pct}%`
+        readout.dataset.state = state
+
+        // B：HUD 分格
+        const lit = Math.round((pct / 100) * HUD_SEGMENTS)
+        ;[...hudBar.children].forEach((segEl, i) => segEl.classList.toggle('on', i < lit))
+        const usedK = Math.round((pct / 100) * 128)
+        document.getElementById('hud-text').textContent = `${pct}% · ${usedK}K/128K`
+
+        // D：内嵌文本
+        const inline = document.getElementById('inline-pct')
+        inline.textContent = `${pct}% (${usedK}K/128K)`
+        inline.dataset.state = state
+
+        // E：分段条（系统/对话/工具 固定比例，剩余为可用）
+        const sys = pct * 0.12
+        const chat = pct * 0.6
+        const tools = pct * 0.28
+        seg.innerHTML = `
+          <span class="seg-system" style="width:${sys}%"></span>
+          <span class="seg-chat" style="width:${chat}%"></span>
+          <span class="seg-tools" style="width:${tools}%"></span>
+        `
+
+        // F：角标
+        const badge = document.getElementById('badge')
+        badge.textContent = `${pct}%`
+        badge.dataset.state = state
+      }
+
+      pctEl.addEventListener('input', () => apply(Number(pctEl.value)))
+      apply(Number(pctEl.value))
+    </script>
+  </body>
+</html>

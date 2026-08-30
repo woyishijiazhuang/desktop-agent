@@ -16,7 +16,6 @@ import {
   AddOutline,
   ChatbubbleEllipsesOutline,
   SettingsOutline,
-  ArchiveOutline,
   SearchOutline,
   SunnyOutline,
   MoonOutline,
@@ -33,6 +32,7 @@ import { useWindowStore } from '@renderer/store/useWindowStore'
 import { mainClient } from '@renderer/utils/main-client'
 import SessionItem from './SessionItem.vue'
 import BackgroundSessionsPanel from './BackgroundSessionsPanel.vue'
+import ContextRingButton from './ContextRingButton.vue'
 import type { Session, MessageSearchHit, SessionExportFormat } from '@main/service/db-service'
 
 /**
@@ -546,20 +546,11 @@ function isSessionFailed(id: string): boolean {
           <NIcon><SunnyOutline v-if="themeStore.isDark" /><MoonOutline v-else /></NIcon>
         </template>
       </NButton>
-      <NButton
-        quaternary
-        circle
-        size="small"
+      <ContextRingButton
         class="sidebar__foot-btn"
-        title="压缩当前会话历史"
         :disabled="!canCompress"
-        :loading="compressing"
-        @click="onCompress"
-      >
-        <template #icon>
-          <NIcon><ArchiveOutline /></NIcon>
-        </template>
-      </NButton>
+        @compress="onCompress"
+      />
       <NButton
         quaternary
         circle

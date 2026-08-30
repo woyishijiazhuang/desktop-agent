@@ -533,12 +533,20 @@ export class AgentService extends IpcService {
       : DEFAULT_AUTO_COMPRESS_THRESHOLD
   }
 
-  /** 当前会话上下文占用估算（手动压缩确认弹窗用）。 */
+  /**
+   * 当前会话上下文占用估算（压缩确认弹窗 / 压缩按钮圆环与详情面板共用）。
+   * 返回按构成拆分：系统提示、压缩摘要、对话消息、工具结果，以及合计 usedTotal。
+   * 口径与 autoCompressIfNeeded 一致：活跃消息 = 压缩指针之后的消息。
+   */
   getSessionContextUsage(sessionId: string): {
     contextWindow: number
     threshold: number
     summaryTokens: number
     activeTokens: number
+    systemTokens: number
+    chatTokens: number
+    toolTokens: number
+    usedTotal: number
   } {
     const session = db.getSession(sessionId)
     if (!session) throw new Error(`会话不存在: ${sessionId}`)
@@ -548,12 +556,27 @@ export class AgentService extends IpcService {
     const active = allRows.filter(
       (r) => session.compressLastIndex === null || r.id > session.compressLastIndex
     )
-    const activeTokens = active.reduce((sum, r) => {
+    let chatTokens = 0
+    let toolTokens = 0
+    for (const r of active) {
       const m = fromMessageRow(r)
-      return sum + estimateTokens(extractMessageText((m as { content: unknown }).content))
-    }, 0)
+      const tokens = estimateTokens(extractMessageText((m as { content: unknown }).content))
+      // 工具结果单独归类，其余（user/assistant）归入对话
+      if (m.role === 'toolResult') toolTokens += tokens
+      else chatTokens += tokens
+    }
     const summaryTokens = estimateTokens(session.compressSummary ?? '')
-    return { contextWindow, threshold: this.getCompressThreshold(), summaryTokens, activeTokens }
+    const systemTokens = estimateTokens(session.resolvedSystemPrompt ?? '')
+    return {
+      contextWindow,
+      threshold: this.getCompressThreshold(),
+      summaryTokens,
+      activeTokens: chatTokens + toolTokens,
+      systemTokens,
+      chatTokens,
+      toolTokens,
+      usedTotal: systemTokens + summaryTokens + chatTokens + toolTokens
+    }
   }
 
   /**
