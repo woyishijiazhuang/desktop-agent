@@ -17,7 +17,12 @@ import { clearPlanMode, isPlanMode, finalizePlanProgress } from './plan-mode'
 import { clearAskUserRequests } from './ask-user'
 import { registerSubagentHost, unregisterSubagentHost, PLAN_READONLY_TOOLS } from './subagent'
 import { getModelsInstance, resolveModel, completeText } from './models'
-import { resolveAgentSessionWorkdir, cacheSessionWorkdir, dropSessionWorkdir } from './workdir'
+import {
+  resolveAgentSessionWorkdir,
+  resolveSessionWorkdir,
+  cacheSessionWorkdir,
+  dropSessionWorkdir
+} from './workdir'
 import { readAgentMdForInjection } from './agent-md'
 import { createLogger } from '../utils/log'
 import { notifyAgentFinished } from '../service/notifier'
@@ -99,6 +104,29 @@ export class AgentManager {
   /** 本轮 run 是否已收到 agent_end（prompt 兜底 catch 用于避免重复补发 agent_end）。 */
   hasRunEnded(sessionId: string): boolean {
     return this.endedRuns.has(sessionId)
+  }
+
+  /** 会话是否有 Agent 正在运行（存在且本轮 run 未结束）。 */
+  isRunning(sessionId: string): boolean {
+    return this.agents.has(sessionId) && !this.endedRuns.has(sessionId)
+  }
+
+  /** 指定工作区下是否有会话正在生成（含后台会话；窗口关闭守卫用）。 */
+  hasRunningSessions(workdir: string): boolean {
+    for (const sessionId of this.agents.keys()) {
+      if (!this.endedRuns.has(sessionId) && resolveSessionWorkdir(sessionId) === workdir) {
+        return true
+      }
+    }
+    return false
+  }
+
+  /** 中止指定工作区下所有正在生成的会话（确认关窗后中断，防后台触发审批/askUser）。 */
+  async abortSessionsByWorkdir(workdir: string): Promise<void> {
+    const targets = [...this.agents.keys()].filter(
+      (id) => !this.endedRuns.has(id) && resolveSessionWorkdir(id) === workdir
+    )
+    await Promise.all(targets.map((id) => this.evictAgent(id)))
   }
 
   /** 新一轮 run 前重置轮次计数与超限标记（prompt/continue/retry/rerunAssistant）。 */

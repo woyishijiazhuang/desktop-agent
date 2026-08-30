@@ -29,6 +29,9 @@ import { useSessionStore } from '@renderer/store/useSessionStore'
 import { useChatStore } from '@renderer/store/useChatStore'
 import { useThemeStore } from '@renderer/store/useThemeStore'
 import { useWindowStore } from '@renderer/store/useWindowStore'
+import { usePermissionStore } from '@renderer/store/usePermissionStore'
+import { usePlanStore } from '@renderer/store/usePlanStore'
+import { useAskUserStore } from '@renderer/store/useAskUserStore'
 import { mainClient } from '@renderer/utils/main-client'
 import SessionItem from './SessionItem.vue'
 import BackgroundSessionsPanel from './BackgroundSessionsPanel.vue'
@@ -422,6 +425,18 @@ function isSessionFailed(id: string): boolean {
   const st = chatStore.sessionState(id)
   return !!st && !st.isBusy && st.lastTurnFailed
 }
+
+/**
+ * 会话是否有待用户处理的操作（权限确认 / 计划审批 / 澄清问题）。
+ * 后台会话触发这类交互时 Agent 会阻塞等待，侧边栏用闪烁点提示，提醒切过去处理。
+ */
+function isSessionWaiting(id: string): boolean {
+  return (
+    usePermissionStore().pendingForSession(id).length > 0 ||
+    usePlanStore().forSession(id) !== null ||
+    useAskUserStore().forSession(id) !== null
+  )
+}
 </script>
 
 <template>
@@ -510,6 +525,7 @@ function isSessionFailed(id: string): boolean {
             :active="session.id === sessionStore.currentSessionId"
             :busy="isSessionBusy(session.id)"
             :failed="isSessionFailed(session.id)"
+            :waiting="isSessionWaiting(session.id)"
             @select="onSelect(session)"
             @action="(key: string) => onMenu(key, session)"
           />

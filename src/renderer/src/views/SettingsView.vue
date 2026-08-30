@@ -370,7 +370,7 @@ function onThemeChange(mode: ThemeMode): void {
             <div class="data-row__info">
               <span class="data-row__label">关闭到托盘</span>
               <span class="data-row__hint">
-                开启后点击关闭按钮将隐藏到系统托盘而非退出，应用与后台任务保持运行，可从托盘随时唤回
+                关闭按钮会真正关闭窗口；开启后全部窗口关闭时应用保留在系统托盘，后台任务继续运行，可从托盘随时唤回
               </span>
             </div>
             <NSwitch :value="settings.closeToTray" @update:value="onCloseToTrayChange" />

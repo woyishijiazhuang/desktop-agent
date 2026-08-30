@@ -941,6 +941,16 @@ export class AgentService extends IpcService {
     resolveAskUser(requestId, value)
   }
 
+  /** 指定工作区下是否有会话正在生成（窗口关闭守卫用；含后台会话）。 */
+  hasRunningSessions(workdir: string): boolean {
+    return this.manager.hasRunningSessions(workdir)
+  }
+
+  /** 中止指定工作区下所有正在生成的会话（确认关窗后中断，防后台触发审批/askUser）。 */
+  async abortSessionsByWorkdir(workdir: string): Promise<void> {
+    await this.manager.abortSessionsByWorkdir(workdir)
+  }
+
   /** 当前 bash 持久白名单（权限弹窗点「总是允许」累积的命令列表）。 */
   listBashAllowlist(): string[] {
     return db.getSetting<string[]>(SETTING_BASH_ALLOWLIST) ?? []

@@ -9,7 +9,7 @@ import winIcon from '../../../build/icon.ico?asset'
 import { createLogger } from '../utils/log'
 import { fileUrlToPath } from '../utils/file-url'
 import { db, resolveDefaultWorkdir } from '../database'
-import { SETTING_CLOSE_TO_TRAY, SETTING_TITLE_BAR_MODE, type TitleBarMode } from '../agent/types'
+import { SETTING_TITLE_BAR_MODE, type TitleBarMode } from '../agent/types'
 
 const log = createLogger('window')
 
@@ -106,6 +106,16 @@ let activeWorkspace: AppWindow | null = null
 /** Linux 原生标题栏模式：系统框接管，自绘 header 收起（高度 0）。Windows 原生模式改用 titleBarOverlay，header 仍可见。 */
 let nativeFramed = false
 
+/** 窗口关闭守卫（service/index.ts 注册）：返回 'allow' 放行关闭；'blocked' 表示已阻止
+ *（如弹确认框后用户取消，或守卫内部已处理销毁）。用于「正在生成时关窗需确认」。 */
+export type WindowCloseGuard = (aw: AppWindow) => Promise<'allow' | 'blocked'>
+let windowCloseGuard: WindowCloseGuard | null = null
+
+/** 注册窗口关闭守卫（在 service/index.ts 中接线，避免 window-manager 反向依赖 agent）。 */
+export function setWindowCloseGuard(guard: WindowCloseGuard): void {
+  windowCloseGuard = guard
+}
+
 /** 标记应用进入退出流程（before-quit 时置位，放行窗口关闭）。 */
 export function markQuitting(): void {
   // 先记录当前打开的工作区窗口，再放行关闭：窗口关闭会逐个触发 closed 清理，
@@ -116,13 +126,17 @@ export function markQuitting(): void {
 
 /**
  * 把当前打开的工作区窗口列表写入 settings（启动时 restoreStartupWindows 据此恢复）。
- * 打开/关闭工作区窗口时更新；退出流程由 markQuitting 在窗口关闭前持久化。
+ * 只统计**可见**的窗口：关闭到托盘（hide）视为已关闭，不应在下次启动时恢复；
+ * 最小化仍算可见（isVisible 为 true）。打开/关闭工作区窗口时更新；
+ * 退出流程由 markQuitting 在窗口关闭前持久化。
  */
 function persistOpenWorkspaces(): void {
   try {
     db.setSetting(
       SETTING_OPEN_WORKSPACES,
-      appWindows.filter((aw) => aw.workdir !== null).map((aw) => aw.workdir as string)
+      appWindows
+        .filter((aw) => aw.workdir !== null && aw.win.isVisible())
+        .map((aw) => aw.workdir as string)
     )
   } catch (err) {
     log.warn('保存打开的工作区列表失败', { error: err })
@@ -385,16 +399,24 @@ function createAppWindow(workdir: string | null, bounds?: MainWindowBounds): App
     if (!activeWorkspace) activeWorkspace = aw
   }
 
-  // 关闭到托盘：设置开启且非退出流程时拦截关闭、隐藏窗口。
-  // 适用场景：Windows/Linux 上关窗默认会退出应用，拦截后 main 进程保持存活，
-  // 正在后台运行的 Agent 任务不会中断，可从托盘随时唤回。工作区行不随窗口关闭删除。
+  // 关闭窗口即真正关闭（销毁）：不拦截、不隐藏。
+  // 「关闭到托盘」的语义由 window-all-closed 承载（全部窗口关闭后应用保留在托盘，
+  // 后台 Agent 任务继续运行，可从托盘唤回），不再是"隐藏单个窗口"。
+  // 关闭守卫：工作区有会话正在生成时先弹确认（确认后中断生成再关闭），
+  // 避免 AI 静默后台运行、触发审批/askUser 而无人处理；最小化不经过 close，不受影响。
+  let closeConfirmed = false
   win.on('close', (e) => {
-    if (quitting) return
-    if (db.getSetting<boolean>(SETTING_CLOSE_TO_TRAY)) {
-      e.preventDefault()
-      win.hide()
-      log.info('关闭窗口：最小化到托盘', { workdir })
-    }
+    if (quitting || closeConfirmed) return
+    const guard = windowCloseGuard
+    if (!guard) return
+    // 先阻止默认关闭，异步询问守卫后再决定；'allow' 时置位标志重新 close
+    e.preventDefault()
+    void guard(aw).then((decision) => {
+      if (decision === 'allow') {
+        closeConfirmed = true
+        win.close()
+      }
+    })
   })
 
   // BaseWindow 关闭时不会自动销毁子视图的 webContents，需手动 close 防止内存泄漏。
@@ -439,6 +461,8 @@ export async function openWorkspaceWindow(
   if (existing) {
     showWindow(existing)
     if (opts?.touch !== false) db.touchWorkspace(workdir)
+    // 从托盘/菜单重新显示隐藏窗口：同步打开列表（含已显示状态）
+    persistOpenWorkspaces()
     return existing
   }
   const ws = db.getWorkspace(workdir)
@@ -455,6 +479,11 @@ export async function openWorkspaceWindow(
 /** 关闭工作区窗口（仅关窗，工作区与会话保留；重新打开见 openWorkspaceWindow）。 */
 export function closeWorkspaceWindow(workdir: string): void {
   getWorkspaceWindow(workdir)?.win.close()
+}
+
+/** 强制销毁工作区窗口（绕过关闭守卫；用于删除工作区等已二次确认的销毁场景）。 */
+export function forceCloseWorkspaceWindow(workdir: string): void {
+  getWorkspaceWindow(workdir)?.win.destroy()
 }
 
 /** 全部工作区窗口（按打开顺序）。 */
@@ -599,18 +628,22 @@ export function setAlwaysOnTop(win: BaseWindow, on: boolean): void {
 /** 视图广播目标。 */
 export type ViewTarget = 'all' | 'header' | 'content'
 
-/** 向单个应用窗口的指定视图发送消息（fire-and-forget，替代 createIpcMainClient）。 */
+/** 向单个应用窗口的指定视图发送消息（fire-and-forget，替代 createIpcMainClient）。
+ * 窗口销毁瞬间（closed 清理前）可能仍有在途事件，逐视图判 isDestroyed 避免
+ * 向已销毁的 webContents.send 抛「Object has been destroyed」。 */
 export function sendToAppWindow(
   aw: AppWindow | undefined,
   channel: string,
   message: unknown,
   target: ViewTarget = 'all'
 ): void {
-  if (!aw) return
-  if (target === 'header' || target === 'all') {
+  if (!aw || aw.win.isDestroyed()) return
+  const headerAlive = aw.headerView.webContents && !aw.headerView.webContents.isDestroyed()
+  const contentAlive = aw.contentView.webContents && !aw.contentView.webContents.isDestroyed()
+  if ((target === 'header' || target === 'all') && headerAlive) {
     aw.headerView.webContents.send(channel, message)
   }
-  if (target === 'content' || target === 'all') {
+  if ((target === 'content' || target === 'all') && contentAlive) {
     aw.contentView.webContents.send(channel, message)
   }
 }

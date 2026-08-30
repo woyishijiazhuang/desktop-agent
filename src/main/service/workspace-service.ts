@@ -1,7 +1,11 @@
 import { IpcService } from 'electron-ipc-service'
 import { dialog, shell } from 'electron'
 import { db } from '../database'
-import { openWorkspaceWindow, closeWorkspaceWindow } from './window-manager'
+import {
+  openWorkspaceWindow,
+  closeWorkspaceWindow,
+  forceCloseWorkspaceWindow
+} from './window-manager'
 import { deleteSessionAttachments } from '../agent/attachment'
 import { readAgentMdRaw, writeAgentMd } from '../agent/agent-md'
 import { createLogger } from '../utils/log'
@@ -65,7 +69,8 @@ export class WorkspaceService extends IpcService {
     if (db.listWorkspaces().length <= 1) {
       throw new Error('至少需要保留一个工作区（启动与兜底依赖默认工作区）')
     }
-    closeWorkspaceWindow(workdir)
+    // 删除工作区已在设置页二次确认，强制关窗绕过「正在生成」关闭守卫
+    forceCloseWorkspaceWindow(workdir)
     const sessionIds = [...db.listSessions(workdir), ...db.listDeletedSessions(workdir)].map(
       (s) => s.id
     )

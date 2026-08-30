@@ -14,6 +14,8 @@ import icon from '../../resources/icon.png?asset'
 import { createLogger } from './utils/log'
 import { cleanupOrphanAttachments } from './agent/attachment'
 import { bashSessionManager } from './agent/bash-session'
+import { SETTING_CLOSE_TO_TRAY } from './agent/types'
+import { db } from './database'
 
 const log = createLogger('app')
 
@@ -77,9 +79,11 @@ app.whenReady().then(() => {
 // Quit when all windows are closed, except on macOS. There, it's common
 // for applications and their menu bar to stay active until the user quits
 // explicitly with Cmd + Q.
+// 「关闭到托盘」开启时：全部窗口关闭后应用仍保留在托盘（后台 Agent 任务不中断），
+// 可从托盘「显示/隐藏」唤回最近的工作区；关闭后不再恢复已关窗口。
 app.on('window-all-closed', () => {
   log.info('全部窗口已关闭', { platform: process.platform })
-  if (process.platform !== 'darwin') {
+  if (process.platform !== 'darwin' && !db.getSetting<boolean>(SETTING_CLOSE_TO_TRAY)) {
     app.quit()
   }
 })

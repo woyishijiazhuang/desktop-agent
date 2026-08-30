@@ -10,8 +10,8 @@ const log = createLogger('tray')
  * 系统托盘：常驻入口 + 快捷操作。
  * - 点击图标：Windows/Linux 切换窗口显隐（macOS 点击弹出菜单）；
  * - 菜单项：显示/隐藏、新建对话、打开设置、退出。
- * 「关闭到托盘」开关位于设置页（window.closeToTray，默认关闭），
- * 开启后关窗不退出、Agent 后台任务可继续运行，经托盘唤回。
+ * 「关闭到托盘」开关位于设置页（window.closeToTray，默认关闭）：
+ * 关闭按钮真正关闭窗口；开启后全部窗口关闭时应用保留在托盘，Agent 后台任务可继续运行，经托盘唤回。
  * 显隐切换与动作广播见 window-service.toggleMainWindow / showMainWindowAnd。
  */
 

@@ -14,7 +14,7 @@ import {
 import type { Session } from '@main/service/db-service'
 
 /**
- * 单个会话行：图标 + 标题 + 置顶标记 + 状态点（生成中/失败）+ 相对时间 + ⋯ 菜单。
+ * 单个会话行：图标 + 标题 + 置顶标记 + 状态点（待交互/生成中/失败）+ 相对时间 + ⋯ 菜单。
  * 菜单行为由父组件通过 action 事件处理（置顶/归档/导出/重命名/删除）。
  */
 const props = defineProps<{
@@ -22,6 +22,7 @@ const props = defineProps<{
   active: boolean
   busy: boolean
   failed: boolean
+  waiting: boolean
 }>()
 
 const emit = defineEmits<{
@@ -98,7 +99,17 @@ function formatTime(): string {
         >
           <PinOutline />
         </NIcon>
-        <span v-if="busy" class="session-item__dot session-item__dot--busy" title="生成中…" />
+        <!-- 状态点优先级：待交互（需用户处理，闪烁最醒目）> 生成中 > 上一轮失败 -->
+        <span
+          v-if="waiting"
+          class="session-item__dot session-item__dot--waiting"
+          title="等待确认/回答问题"
+        />
+        <span
+          v-else-if="busy"
+          class="session-item__dot session-item__dot--busy"
+          title="生成中…"
+        />
         <span
           v-else-if="failed"
           class="session-item__dot session-item__dot--error"
@@ -193,12 +204,17 @@ function formatTime(): string {
   font-weight: 600;
   color: var(--primary-pressed);
 }
-/* 会话状态指示：busy 主色脉冲点（生成中），error 红点（上一轮失败） */
+/* 会话状态指示：busy 主色脉冲点（生成中），error 红点（上一轮失败），
+   waiting 警示色闪烁点（有待用户处理的交互，如权限确认/计划审批/澄清问题） */
 .session-item__dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+}
+.session-item__dot--waiting {
+  background: var(--warning);
+  animation: session-status-blink 0.8s ease-in-out infinite;
 }
 .session-item__dot--busy {
   background: var(--primary);
@@ -206,6 +222,17 @@ function formatTime(): string {
 }
 .session-item__dot--error {
   background: var(--error);
+}
+@keyframes session-status-blink {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.3;
+    transform: scale(0.7);
+  }
 }
 @keyframes session-status-pulse {
   0%,
