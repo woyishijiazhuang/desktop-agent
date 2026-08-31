@@ -233,6 +233,40 @@ export type ThemeMode = 'light' | 'dark' | 'system'
 /** settings 表中存储的「主题模式」key（默认 system）。主进程以此为唯一真源驱动 nativeTheme。 */
 export const SETTING_THEME_MODE = 'appearance.theme'
 
+/** 设置窗口可导航的 tab 键（与 SettingsView.navItems 的 key 一一对应）。 */
+export type SettingsTabKey =
+  | 'general'
+  | 'workspace'
+  | 'models'
+  | 'usage'
+  | 'tools'
+  | 'skills'
+  | 'memory'
+  | 'knowledge'
+  | 'mcp'
+  | 'data'
+  | 'about'
+
+/** settings 表中存储的「设置窗口当前激活 tab」key：打开设置窗口时恢复上次位置；
+ * 跨窗口导航（如「管理工作区」）也先写入该值，渲染层挂载时读取，
+ * 避免推送事件早于监听器注册而丢失（首次创建设置窗口时）。 */
+export const SETTING_SETTINGS_TAB = 'ui.settingsTab'
+
+/** 设置窗口合法 tab 键集合（settings 白名单校验 / 渲染层恢复用）。 */
+export const SETTINGS_TAB_KEYS: SettingsTabKey[] = [
+  'general',
+  'workspace',
+  'models',
+  'usage',
+  'tools',
+  'skills',
+  'memory',
+  'knowledge',
+  'mcp',
+  'data',
+  'about'
+]
+
 /** settings 表中存储的「桌面通知」开关 key（默认开启；关闭后不弹系统通知）。 */
 export const SETTING_NOTIFICATIONS_ENABLED = 'notificationsEnabled'
 

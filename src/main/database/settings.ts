@@ -1,6 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { SettingRow } from './types'
 import { isThemeColorKey } from '../service/theme-palettes'
+import { SETTINGS_TAB_KEYS, type SettingsTabKey } from '../agent/types'
 
 /**
  * settings 表写入白名单 + 值类型校验。
@@ -48,6 +49,9 @@ const SETTING_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   'appearance.theme': (v) => v === 'light' || v === 'dark' || v === 'system',
   /** 全局默认主题色（ThemeColorKey；未自定义主题色的工作区跟随）。 */
   'appearance.themeColor': isThemeColorKey,
+  /** 设置窗口当前激活 tab（打开设置窗口时恢复；跨窗口导航也经此传递）。 */
+  'ui.settingsTab': (v) =>
+    typeof v === 'string' && SETTINGS_TAB_KEYS.includes(v as SettingsTabKey),
   /** bash 持久白名单（权限弹窗点「总是允许」的命令，string[]）。 */
   bashAllowlist: (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'),
   /** 跳过工具确认（危险工具免确认；破坏性命令除外，见 agent/types.ts SETTING_PERMISSION_AUTO_APPROVE）。 */

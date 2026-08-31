@@ -10,7 +10,7 @@ import {
   setAlwaysOnTop,
   type AppWindow
 } from './window-manager'
-import { SETTING_TITLE_BAR_MODE, type TitleBarMode } from '../agent/types'
+import { SETTING_TITLE_BAR_MODE, SETTING_SETTINGS_TAB, type TitleBarMode } from '../agent/types'
 import type { SettingsTabKey } from '@renderer/service/ui-service'
 import { createLogger } from '../utils/log'
 
@@ -111,9 +111,14 @@ export class WindowService extends IpcService {
     await openSettingsWindowMain()
   }
 
-  /** 打开设置独立窗口并导航到指定 tab（工作区标识卡片的「管理工作区」入口用）。 */
+  /**
+   * 打开设置独立窗口并导航到指定 tab（工作区标识卡片的「管理工作区」入口用）。
+   * 先持久化目标 tab，再经 URL query 同步注入初始 tab（新建窗口首帧即正确）；
+   * 推送事件（ui.settingsTab）仅兜底窗口已打开时的实时切换。
+   */
   async openSettingsTab(tab: SettingsTabKey): Promise<void> {
-    const settingsAw = await openSettingsWindowMain()
+    db.setSetting(SETTING_SETTINGS_TAB, tab)
+    const settingsAw = await openSettingsWindowMain(tab)
     rendererClientFor(settingsAw).ui.settingsTab(tab)
   }
   private getWindowState(aw?: AppWindow): WindowState {

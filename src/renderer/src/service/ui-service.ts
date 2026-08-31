@@ -3,6 +3,9 @@ import { useWindowStore } from '../store/useWindowStore'
 import type { WindowState } from 'src/main/service/window-service'
 import { showToast } from '../utils/toast'
 import type { ShowToastOptions } from '../utils/toast'
+import type { SettingsTabKey } from '@main/agent/types'
+
+export type { SettingsTabKey }
 
 /** 托盘动作 → 渲染侧事件名。App.vue 监听后执行导航/新建对话。
  * 不在此处直接 import vue-router/.vue：service/ 目录会被 tsconfig.node.json 纳入
@@ -10,22 +13,9 @@ import type { ShowToastOptions } from '../utils/toast'
  */
 export const TRAY_ACTION_EVENT = 'tray-action'
 
-/** 设置页 tab 导航 → 渲染侧事件名。SettingsView 监听后切换 activeTab（跨窗口导航用）。 */
+/** 设置页 tab 导航 → 渲染侧事件名。SettingsView 监听后切换 activeTab（跨窗口导航用）。
+ * 仅用于设置窗口已打开时的实时切换；首次创建由 settings 的 ui.settingsTab 恢复（见 openSettingsTab）。 */
 export const SETTINGS_TAB_EVENT = 'settings-tab'
-
-/** 设置页可导航的 tab 键（与 SettingsView.navItems 的 key 对应）。 */
-export type SettingsTabKey =
-  | 'general'
-  | 'workspace'
-  | 'models'
-  | 'usage'
-  | 'tools'
-  | 'skills'
-  | 'memory'
-  | 'knowledge'
-  | 'mcp'
-  | 'data'
-  | 'about'
 
 /** 托盘动作类型。 */
 export type TrayAction = 'new-chat' | 'open-settings'
@@ -51,6 +41,7 @@ export class UiService extends IpcService {
   /**
    * 设置窗口 tab 导航（跨窗口）：工作区窗口点击「管理工作区」等入口时，
    * main 进程确保设置窗口打开后定向推送，SettingsView 据此切换 activeTab。
+   * 首次创建设置窗口时的兜底由 settings 的 ui.settingsTab 持久化承担（见 window.openSettingsTab）。
    */
   settingsTab(tab: SettingsTabKey): void {
     window.dispatchEvent(new CustomEvent<SettingsTabKey>(SETTINGS_TAB_EVENT, { detail: tab }))

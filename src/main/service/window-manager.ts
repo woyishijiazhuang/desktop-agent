@@ -9,7 +9,7 @@ import winIcon from '../../../build/icon.ico?asset'
 import { createLogger } from '../utils/log'
 import { fileUrlToPath } from '../utils/file-url'
 import { db, resolveDefaultWorkdir } from '../database'
-import { SETTING_TITLE_BAR_MODE, type TitleBarMode } from '../agent/types'
+import { SETTING_TITLE_BAR_MODE, SETTING_SETTINGS_TAB, SETTINGS_TAB_KEYS, type TitleBarMode, type SettingsTabKey } from '../agent/types'
 
 const log = createLogger('window')
 
@@ -234,20 +234,28 @@ function layout(aw: AppWindow): void {
   })
 }
 
-/** 加载应用视图：工作区窗口加载聊天页；设置窗口加载 #/settings。 */
-function loadAppViews(aw: AppWindow): void {
+/** 加载应用视图：工作区窗口加载聊天页；设置窗口加载 #/settings（可带 ?tab= 同步注入初始 tab）。 */
+function loadAppViews(aw: AppWindow, settingsTab?: SettingsTabKey): void {
   const isSettings = aw.workdir === null
+  // 设置窗口初始 tab 经 URL query 同步注入：渲染层首帧即读到配置值，避免先渲染默认 tab 再切换
+  const settingsHash = settingsTab ? `/settings?tab=${settingsTab}` : '/settings'
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const base = process.env['ELECTRON_RENDERER_URL']
     aw.headerView.webContents.loadURL(`${base}/header/index.html`)
-    aw.contentView.webContents.loadURL(isSettings ? `${base}/#/settings` : base)
+    aw.contentView.webContents.loadURL(isSettings ? `${base}/#${settingsHash}` : base)
   } else {
     aw.headerView.webContents.loadFile(join(__dirname, '../renderer/header/index.html'))
     aw.contentView.webContents.loadFile(
       join(__dirname, '../renderer/index.html'),
-      isSettings ? { hash: '/settings' } : undefined
+      isSettings ? { hash: settingsHash } : undefined
     )
   }
+}
+
+/** 取设置窗口上次激活 tab（settings 的 ui.settingsTab；无记录/非法值返回 undefined）。 */
+function resolveStoredSettingsTab(): SettingsTabKey | undefined {
+  const v = db.getSetting<string>(SETTING_SETTINGS_TAB)
+  return SETTINGS_TAB_KEYS.includes(v as SettingsTabKey) ? (v as SettingsTabKey) : undefined
 }
 
 /**
@@ -255,7 +263,11 @@ function loadAppViews(aw: AppWindow): void {
  * - 位置/尺寸变更写回 workspaces.bounds（重启恢复）；
  * - 聚焦时登记为 activeWorkspace（托盘动作目标）。
  */
-function createAppWindow(workdir: string | null, bounds?: MainWindowBounds): AppWindow {
+function createAppWindow(
+  workdir: string | null,
+  bounds?: MainWindowBounds,
+  settingsTab?: SettingsTabKey
+): AppWindow {
   const initialBounds = bounds ?? computeInitialBounds()
   const isMac = process.platform === 'darwin'
   // 标题栏模式（默认 native：优先当前平台原生窗口栏，设置页可切回自绘）
@@ -442,7 +454,11 @@ function createAppWindow(workdir: string | null, bounds?: MainWindowBounds): App
   layout(aw)
   wireViewShortcuts(aw)
   updateAppWindowTitle(aw)
-  loadAppViews(aw)
+  // 设置窗口初始 tab：显式指定优先（openSettingsTab），否则恢复配置上次位置；
+  // 经 URL query 同步注入，渲染层首帧即读到正确 tab，避免默认→配置的跳动
+  const initialSettingsTab =
+    workdir === null ? (settingsTab ?? resolveStoredSettingsTab()) : undefined
+  loadAppViews(aw, initialSettingsTab)
   return aw
 }
 
@@ -502,14 +518,15 @@ export function getActiveWorkspaceWindow(): AppWindow | undefined {
 
 // ==================== 设置窗口 ====================
 
-/** 打开设置窗口（单例；已存在则显示聚焦）。窗口尺寸取专用初始值，明显小于工作区窗口。 */
-export async function openSettingsWindow(): Promise<AppWindow> {
+/** 打开设置窗口（单例；已存在则显示聚焦）。窗口尺寸取专用初始值，明显小于工作区窗口。
+ * settingsTab 指定时经 URL query 注入初始 tab（「管理工作区」入口）；未指定则恢复配置上次位置。 */
+export async function openSettingsWindow(settingsTab?: SettingsTabKey): Promise<AppWindow> {
   const existing = appWindows.find((aw) => aw.workdir === null)
   if (existing) {
     showWindow(existing)
     return existing
   }
-  const aw = createAppWindow(null, computeSettingsBounds())
+  const aw = createAppWindow(null, computeSettingsBounds(), settingsTab)
   showWindow(aw)
   await waitForReady(aw)
   return aw

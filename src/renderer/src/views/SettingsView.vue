@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
+import type { Component } from 'vue'
 import { NCard, NIcon, NScrollbar } from 'naive-ui'
 import {
   OptionsOutline,
@@ -28,15 +29,30 @@ import AboutPanel from '@renderer/components/settings/AboutPanel.vue'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
 import { useModelConfigsStore } from '@renderer/store/useModelConfigsStore'
 import { SETTINGS_TAB_EVENT } from '@renderer/service/ui-service'
+import { mainClient } from '@renderer/utils/main-client'
+import { useRoute } from 'vue-router'
+import { SETTING_SETTINGS_TAB, SETTINGS_TAB_KEYS, type SettingsTabKey } from '@main/agent/types'
 
 const settings = useSettingsStore()
 const modelConfigs = useModelConfigsStore()
+const route = useRoute()
 
-/** 当前激活的分类。 */
-const activeTab = ref('general')
+/**
+ * 初始 tab 同步取自 URL query：主进程创建设置窗口时把目标 tab / 上次位置经 ?tab= 注入，
+ * 首帧即读到正确值，无需等待异步 IPC（否则先渲染默认 tab 再切换到配置值造成跳动）。
+ */
+function initialSettingsTab(): SettingsTabKey {
+  const t = route.query.tab
+  return typeof t === 'string' && SETTINGS_TAB_KEYS.includes(t as SettingsTabKey)
+    ? (t as SettingsTabKey)
+    : 'general'
+}
 
-/** 左侧导航分类。 */
-const navItems = [
+/** 当前激活的分类（持久化于 settings 的 ui.settingsTab，打开设置窗口时恢复上次位置）。 */
+const activeTab = ref<SettingsTabKey>(initialSettingsTab())
+
+/** 左侧导航分类（key 与 SettingsTabKey 对齐，用于 tab 持久化与合法性校验）。 */
+const navItems: { key: SettingsTabKey; label: string; icon: Component }[] = [
   { key: 'general', label: '通用', icon: OptionsOutline },
   { key: 'workspace', label: '工作区', icon: LayersOutline },
   { key: 'models', label: '模型', icon: CubeOutline },
@@ -50,10 +66,15 @@ const navItems = [
   { key: 'about', label: '关于', icon: InformationCircleOutline }
 ]
 
+// 切换 tab 时持久化：打开设置窗口时恢复上次位置（跨窗口导航的配置载体）
+watch(activeTab, (tab) => {
+  void mainClient.db.setSetting(SETTING_SETTINGS_TAB, tab)
+})
+
 onMounted(async () => {
   // 共享引导：设置 + 模型配置（各 Panel 自行加载自身数据）
   await Promise.all([settings.loadSettings(), modelConfigs.load()])
-  // 跨窗口 tab 导航（工作区窗口「管理工作区」入口经 ui.settingsTab 推送）
+  // 跨窗口 tab 导航（工作区窗口「管理工作区」入口经 ui.settingsTab 推送，窗口已打开时实时切换）
   window.addEventListener(SETTINGS_TAB_EVENT, onSettingsTabEvent)
 })
 
@@ -65,7 +86,7 @@ onUnmounted(() => {
 function onSettingsTabEvent(e: Event): void {
   const tab = (e as CustomEvent<string>).detail
   if (navItems.some((i) => i.key === tab)) {
-    activeTab.value = tab
+    activeTab.value = tab as SettingsTabKey
   }
 }
 </script>
