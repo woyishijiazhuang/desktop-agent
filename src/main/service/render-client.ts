@@ -30,6 +30,8 @@ const VIEW_ROUTES: Record<string, ViewTarget> = {
   // toast / 托盘动作只由内容视图处理
   'ui.showToast': 'content',
   'ui.trayAction': 'content',
+  // 设置变更只由内容视图消费（标题栏视图仅注册 ui 服务）
+  'settingsSync.settingChanged': 'content',
   // agent 事件只由内容视图消费
   'agentEvent.onEvent': 'content',
   'agentEvent.onSessionUpdate': 'content',
