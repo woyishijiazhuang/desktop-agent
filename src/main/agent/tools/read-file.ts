@@ -1,5 +1,6 @@
 import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
+import { nativeImage } from 'electron'
 import { readFile } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 import { isDocumentFile, readAndExtractDocument } from '../../utils/doc-parser'
@@ -12,6 +13,12 @@ const MAX_LINES = 2000
 const MAX_BYTES = 50 * 1024
 /** 图片大小上限：超过则不注入（各提供方 base64 上限约 5MB）。 */
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
+/** 超限图片压缩目标：最长边上限（视觉模型按固定图块缩放理解，超高分辨率增益有限）。 */
+const COMPRESS_MAX_EDGE = 2048
+/** 超限图片压缩 JPEG 质量。 */
+const COMPRESS_JPEG_QUALITY = 85
+/** 可自动压缩的图片格式（GIF 动图不压缩：展平为单帧会丢动画语义，直接按超限拒绝）。 */
+const COMPRESSIBLE_MIME = new Set(['image/png', 'image/jpeg', 'image/webp'])
 /** 二进制检测窗口：开头 8KB 内含 NUL 字节即判定为二进制。 */
 const BINARY_SNIFF_BYTES = 8192
 
@@ -103,10 +110,31 @@ export function createReadFileTool(
             details: { path: p.path, bytes, image: true }
           }
         }
-        // 不支持图片 / 图片过大：返回文本提示而非 image block（image block 发给纯文本模型会被提供方 400 拒绝）
+        // 超限但可压缩：自动降分辨率 + 转 JPEG 后注入（视觉模型按图块缩放理解，压缩无损于理解）
+        if (supportsImages && COMPRESSIBLE_MIME.has(mime)) {
+          const compressed = compressImage(buf)
+          if (compressed && compressed.byteLength < bytes && compressed.byteLength <= MAX_IMAGE_BYTES) {
+            log.debug('读取图片（超限已自动压缩）', {
+              path: p.path,
+              originalBytes: bytes,
+              compressedBytes: compressed.byteLength
+            })
+            return {
+              content: [
+                { type: 'image', data: compressed.toString('base64'), mimeType: 'image/jpeg' },
+                {
+                  type: 'text',
+                  text: `[图片：${basename(p.path)}，原 ${Math.round(bytes / 1024 / 1024)}MB，已自动压缩至 ${Math.round(compressed.byteLength / 1024)}KB 以适配模型上限]`
+                }
+              ],
+              details: { path: p.path, bytes, image: true, compressed: true }
+            }
+          }
+        }
+        // 不支持图片 / 图片过大且无法压缩：返回文本提示而非 image block（image block 发给纯文本模型会被提供方 400 拒绝）
         const text = !supportsImages
           ? `(当前模型不支持图片输入，无法查看图片内容。\n文件：${basename(p.path)}（${Math.round(bytes / 1024)}KB，${mime}）。\n建议：请用户切换多模态模型后重试，或请用户用文字描述图片内容。)`
-          : `(图片过大：${basename(p.path)} 为 ${Math.round(bytes / 1024 / 1024)}MB，超过 ${MAX_IMAGE_BYTES / 1024 / 1024}MB 上限，未注入。建议压缩或缩小分辨率后重试。)`
+          : `(图片过大：${basename(p.path)} 为 ${Math.round(bytes / 1024 / 1024)}MB，超过 ${MAX_IMAGE_BYTES / 1024 / 1024}MB 上限，且无法自动压缩（可能是动图或非可转码格式），未注入。建议压缩或缩小分辨率后重试。)`
         log.debug('读取图片被拦截', { path: p.path, bytes, supportsImages })
         return { content: [{ type: 'text', text }], details: { path: p.path, bytes } }
       }
@@ -138,6 +166,31 @@ export function createReadFileTool(
 
 /** 注册表占位实例（仅用于 UI 展示 name/label/description，实际执行走 buildTools 按模型能力创建的实例）。 */
 export const readFileTool = createReadFileTool(false)
+
+/**
+ * 超限图片自动压缩：降分辨率（最长边 ≤ COMPRESS_MAX_EDGE）+ 转 JPEG。
+ * 视觉模型内部按固定图块缩放理解，超高分辨率对理解增益有限，压缩基本无损于可用性。
+ * 解码失败（nativeImage 不支持的编码）返回 null，调用方回退原拒绝提示。
+ */
+function compressImage(buf: Buffer): Buffer | null {
+  try {
+    const img = nativeImage.createFromBuffer(buf)
+    if (img.isEmpty()) return null
+    const { width, height } = img.getSize()
+    if (width <= 0 || height <= 0) return null
+    const longest = Math.max(width, height)
+    const scale = Math.min(1, COMPRESS_MAX_EDGE / longest)
+    const resized =
+      scale < 1
+        ? img.resize({ width: Math.round(width * scale), height: Math.round(height * scale) })
+        : img
+    const jpeg = resized.toJPEG(COMPRESS_JPEG_QUALITY)
+    return jpeg.byteLength > 0 ? jpeg : null
+  } catch (err) {
+    log.warn('图片自动压缩失败', { error: err instanceof Error ? err.message : String(err) })
+    return null
+  }
+}
 
 /** 魔数校验：扩展名声称是图片时验证真实格式，防止文本文件伪装成图片破坏请求。 */
 function looksLikeImage(buf: Buffer): boolean {
