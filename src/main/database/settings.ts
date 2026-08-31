@@ -1,5 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { SettingRow } from './types'
+import { isThemeColorKey } from '../service/theme-palettes'
 
 /**
  * settings 表写入白名单 + 值类型校验。
@@ -45,6 +46,8 @@ const SETTING_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   'window.titleBarMode': (v) => v === 'custom' || v === 'native',
   /** 主题模式：light / dark / system（主进程 nativeTheme.themeSource 唯一真源）。 */
   'appearance.theme': (v) => v === 'light' || v === 'dark' || v === 'system',
+  /** 全局默认主题色（ThemeColorKey；未自定义主题色的工作区跟随）。 */
+  'appearance.themeColor': isThemeColorKey,
   /** bash 持久白名单（权限弹窗点「总是允许」的命令，string[]）。 */
   bashAllowlist: (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'),
   /** 跳过工具确认（危险工具免确认；破坏性命令除外，见 agent/types.ts SETTING_PERMISSION_AUTO_APPROVE）。 */

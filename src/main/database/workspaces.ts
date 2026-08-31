@@ -6,6 +6,7 @@ function toWorkspace(row: WorkspaceRow): Workspace {
     workdir: row.workdir,
     name: row.name,
     bounds: row.bounds,
+    themeColor: row.theme_color,
     lastOpenedAt: row.last_opened_at,
     createdAt: row.created_at
   }
@@ -19,6 +20,8 @@ export interface WorkspacesApi {
   upsertWorkspace(workdir: string, params?: UpsertWorkspaceParams): Workspace
   /** 刷新 last_opened_at（窗口打开/聚焦时调用，用于启动恢复顺序）。 */
   touchWorkspace(workdir: string): void
+  /** 设置工作区自定义主题色（ThemeColorKey；null = 恢复跟随全局默认）。 */
+  setWorkspaceThemeColor(workdir: string, color: string | null): void
   /** 删除工作区行（会话删除由调用方负责：workspace.remove 先删会话再删行）。 */
   deleteWorkspace(workdir: string): void
 }
@@ -67,6 +70,10 @@ export function createWorkspacesApi(db: DatabaseSync): WorkspacesApi {
         Date.now(),
         workdir
       )
+    },
+
+    setWorkspaceThemeColor(workdir: string, color: string | null): void {
+      db.prepare('UPDATE workspaces SET theme_color = ? WHERE workdir = ?').run(color, workdir)
     },
 
     deleteWorkspace(workdir: string): void {

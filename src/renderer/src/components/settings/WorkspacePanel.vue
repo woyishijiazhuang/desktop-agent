@@ -3,6 +3,7 @@ import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { NButton, NInput, NPopconfirm, NSpace, NTag, useMessage } from 'naive-ui'
 import { mainClient } from '@renderer/utils/main-client'
 import { useWindowStore } from '@renderer/store/useWindowStore'
+import ThemeColorPicker from './ThemeColorPicker.vue'
 import type { WorkspaceWithStats } from '@main/database'
 
 const message = useMessage()
@@ -37,6 +38,17 @@ async function onCreate(): Promise<void> {
 
 async function onOpen(workdir: string): Promise<void> {
   await mainClient.workspace.open(workdir)
+}
+
+/** 设置工作区自定义主题色（null = 恢复跟随全局默认）。 */
+async function onThemeColorChange(ws: WorkspaceWithStats, color: string | null): Promise<void> {
+  try {
+    await mainClient.theme.setColor(ws.workdir, color)
+    ws.themeColor = color
+    message.success(color ? '该工作区主题色已更新' : '已恢复跟随全局默认主题色')
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : String(err))
+  }
 }
 
 async function onRemove(workdir: string): Promise<void> {
@@ -172,6 +184,16 @@ onMounted(load)
             {{ ws.sessionCount }} 个会话（消息无法恢复）。确定吗？
           </NPopconfirm>
         </div>
+
+        <!-- 主题色：工作区自定义，未设置时跟随全局默认 -->
+        <div class="workspace-item__theme">
+          <span class="workspace-item__theme-label">主题色</span>
+          <ThemeColorPicker
+            :model-value="ws.themeColor"
+            allow-default
+            @update:model-value="onThemeColorChange(ws, $event)"
+          />
+        </div>
       </div>
     </div>
 
@@ -284,6 +306,17 @@ onMounted(load)
   gap: 8px;
   padding-top: 8px;
   border-top: 1px dashed var(--border);
+}
+/* 主题色行：与操作行同样分隔，标签 + 色板 */
+.workspace-item__theme {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.workspace-item__theme-label {
+  font-size: 12px;
+  color: var(--text-3);
+  flex-shrink: 0;
 }
 .workspace-panel__editor {
   margin-top: 20px;

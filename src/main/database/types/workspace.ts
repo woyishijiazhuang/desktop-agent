@@ -5,6 +5,8 @@ export interface Workspace {
   name: string
   /** 窗口位置/尺寸（JSON 字符串，如 {"x":100,"y":80,"width":1200,"height":800}；null = 未记录）。 */
   bounds: string | null
+  /** 自定义主题色（ThemeColorKey；null = 跟随全局默认，见 settings 的 appearance.themeColor）。 */
+  themeColor: string | null
   /** unix ms 时间戳，用于启动时恢复顺序。 */
   lastOpenedAt: number
   createdAt: number
@@ -20,6 +22,7 @@ export interface WorkspaceRow {
   workdir: string
   name: string
   bounds: string | null
+  theme_color: string | null
   last_opened_at: number
   created_at: number
 }

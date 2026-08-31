@@ -2,20 +2,38 @@ import '@renderer/assets/base.css'
 import './index.css'
 import { initializeIpcRendererServices, IpcService } from 'electron-ipc-service/renderer'
 import type { WindowState } from '@main/service/window-service'
+import type { ThemePalette } from '@main/service/theme-palettes'
 import { mainClient } from '@renderer/utils/main-client'
 
 /**
  * 标题栏视图（独立 webContents，位于窗口顶部 32px）。
  * - 纯 HTML/CSS/JS，不引入 Vue/Pinia/Naive UI，保持轻量；
  * - 主题：主进程 nativeTheme 为唯一真源，本视图经 prefers-color-scheme 同步跟随，
- *   据此维护 <html>.dark 翻转 base.css token；
+ *   据此维护 <html>.dark 翻转 base.css token；主题色经 theme.getPalette 拉取、
+ *   theme.colorChanged 推送后注入 --primary* CSS 变量；
  * - 窗口状态：主进程广播 windowStateChange 到全部视图，本视图只消费 ui 服务。
  */
 
 /** 生效主题随主进程 themeSource 变化，给 <html> 落 .dark。 */
 const themeMq = window.matchMedia('(prefers-color-scheme: dark)')
+/** 本窗口生效主题色 palette（浅/深两套 token，按 themeMq 取生效组）。 */
+let colorPalette: ThemePalette | null = null
+
 function applyTheme(): void {
   document.documentElement.classList.toggle('dark', themeMq.matches)
+  applyColorTokens()
+}
+
+/** 注入 --primary* CSS 变量（inline style 优先级高于 base.css 默认紫罗兰）。 */
+function applyColorTokens(): void {
+  const p = colorPalette
+  if (!p) return
+  const t = themeMq.matches ? p.dark : p.light
+  const s = document.documentElement.style
+  s.setProperty('--primary', t.primary)
+  s.setProperty('--primary-hover', t.hover)
+  s.setProperty('--primary-pressed', t.pressed)
+  s.setProperty('--primary-soft', t.soft)
 }
 applyTheme()
 // 主进程切换主题模式 / system 下系统外观变化时同步本视图
@@ -48,10 +66,26 @@ class HeaderUiService extends IpcService {
   }
 }
 
-initializeIpcRendererServices([HeaderUiService])
+/** 主题色变更推送（主进程 setColor 后定向投递到本窗口）：更新 palette 并注入 CSS 变量。 */
+class HeaderThemeService extends IpcService {
+  static override readonly namespace = 'theme'
+  colorChanged(palette: ThemePalette): void {
+    colorPalette = palette
+    applyColorTokens()
+  }
+}
+
+initializeIpcRendererServices([HeaderUiService, HeaderThemeService])
 
 // 初始状态（广播可能早于注册到达，故主动拉取一次）
-void mainClient.window.initWindow().then(render)
+void mainClient.window.initWindow().then((state) => {
+  render(state)
+  // 拉取本窗口生效主题色（工作区自定义优先，否则全局默认）并注入 --primary* token
+  return mainClient.theme.getPalette(state.workdir)
+}).then((palette) => {
+  colorPalette = palette
+  applyColorTokens()
+})
 
 const pinBtn = document.getElementById('btn-pin') as HTMLButtonElement
 const minimizeBtn = document.getElementById('btn-minimize') as HTMLButtonElement

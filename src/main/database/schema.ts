@@ -194,6 +194,8 @@ export function initSchema(db: DatabaseSync): void {
       name TEXT NOT NULL,
       -- 窗口位置/尺寸记忆（JSON 字符串；null = 未记录）。
       bounds TEXT,
+      -- 自定义主题色（ThemeColorKey；null = 跟随全局默认，见 settings 的 appearance.themeColor）。
+      theme_color TEXT,
       last_opened_at INTEGER NOT NULL,
       created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
     ) STRICT;
@@ -255,5 +257,12 @@ export function initSchema(db: DatabaseSync): void {
   // 轻量列补齐：老库 sessions 无 workdir 列时补列（默认空串，由迁移逻辑回填，见 database/index.ts）。
   if (!sessionCols.includes('workdir')) {
     db.exec("ALTER TABLE sessions ADD COLUMN workdir TEXT NOT NULL DEFAULT ''")
+  }
+  // 轻量列补齐：老库 workspaces 无 theme_color 列时补列（可空列，null = 跟随全局默认主题色）。
+  const workspaceCols = (
+    db.prepare('PRAGMA table_info(workspaces)').all() as unknown as { name: string }[]
+  ).map((c) => c.name)
+  if (!workspaceCols.includes('theme_color')) {
+    db.exec('ALTER TABLE workspaces ADD COLUMN theme_color TEXT')
   }
 }

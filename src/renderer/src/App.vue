@@ -16,12 +16,8 @@ import { TRAY_ACTION_EVENT, type TrayAction } from './service/ui-service'
 const themeStore = useThemeStore()
 const router = useRouter()
 
-/** 品牌通用覆盖（浅/深色共享）：主色紫罗兰、圆角、字体族。主色用真实 hex，Naive UI 据此派生相关色。 */
-const brand: GlobalThemeOverrides['common'] = {
-  primaryColor: '#7c3aed',
-  primaryColorHover: '#6d28d9',
-  primaryColorPressed: '#5b21b6',
-  primaryColorSuppl: '#7c3aed',
+/** 品牌静态覆盖（非主色部分，浅/深共享）：圆角、字体族。主色随主题色 palette 动态取。 */
+const brandStatic: GlobalThemeOverrides['common'] = {
   borderRadius: '8px',
   borderRadiusSmall: '6px',
   fontFamily:
@@ -29,17 +25,20 @@ const brand: GlobalThemeOverrides['common'] = {
   fontWeightStrong: '600'
 }
 
-/**
- * 深色模式额外覆盖：把 Naive UI 表面色对齐到 base.css 的 zinc 炭灰暗色调，
- * 避免与 --bg(#18181b) 不一致。文字/边框/悬停色同样对齐 token，
- * 保证 Naive UI 组件与自绘组件视觉统一，呈现代码编辑器式中性暗色。
- */
-const darkSurface: GlobalThemeOverrides['common'] = {
-  ...brand,
-  primaryColor: '#a78bfa',
-  primaryColorHover: '#c4b5fd',
-  primaryColorPressed: '#8b5cf6',
-  primaryColorSuppl: '#a78bfa',
+/** 浅色主色覆盖：取自主题色 palette 的 light 组（默认紫罗兰），Naive UI 据此派生相关色。 */
+const brand = computed<GlobalThemeOverrides['common']>(() => {
+  const t = themeStore.tokensFor('light')
+  return {
+    ...brandStatic,
+    primaryColor: t.primary,
+    primaryColorHover: t.hover,
+    primaryColorPressed: t.pressed,
+    primaryColorSuppl: t.primary
+  }
+})
+
+/** 深色模式表面色对齐（与浅色共享的非色 token 之外）。 */
+const darkSurfaceStatic: GlobalThemeOverrides['common'] = {
   bodyColor: '#18181b',
   cardColor: '#1f1f23',
   modalColor: '#1f1f23',
@@ -55,8 +54,25 @@ const darkSurface: GlobalThemeOverrides['common'] = {
   tableHeaderColor: '#1f1f23'
 }
 
+/**
+ * 深色模式额外覆盖：把 Naive UI 表面色对齐到 base.css 的 zinc 炭灰暗色调，
+ * 避免与 --bg(#18181b) 不一致。主色取主题色 palette 的 dark 组（保证暗底对比度）。
+ * 文字/边框/悬停色同样对齐 token，保证 Naive UI 组件与自绘组件视觉统一。
+ */
+const darkSurface = computed<GlobalThemeOverrides['common']>(() => {
+  const t = themeStore.tokensFor('dark')
+  return {
+    ...brand.value,
+    ...darkSurfaceStatic,
+    primaryColor: t.primary,
+    primaryColorHover: t.hover,
+    primaryColorPressed: t.pressed,
+    primaryColorSuppl: t.primary
+  }
+})
+
 const themeOverrides = computed<GlobalThemeOverrides>(() => ({
-  common: themeStore.isDark ? darkSurface : brand
+  common: themeStore.isDark ? darkSurface.value : brand.value
 }))
 
 const theme = computed(() => (themeStore.isDark ? darkTheme : null))

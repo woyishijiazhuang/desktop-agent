@@ -14,6 +14,7 @@ import { useSettingsStore } from '@renderer/store/useSettingsStore'
 import { useThemeStore, type ThemeMode } from '@renderer/store/useThemeStore'
 import { useWindowStore } from '@renderer/store/useWindowStore'
 import { mainClient } from '@renderer/utils/main-client'
+import ThemeColorPicker from './ThemeColorPicker.vue'
 import type { TitleBarMode } from '@main/agent/types'
 
 const settings = useSettingsStore()
@@ -166,8 +167,24 @@ function onThemeChange(mode: ThemeMode): void {
   theme.setMode(mode)
 }
 
+/** 全局默认主题色（工作区未单独设置时跟随）。 */
+const defaultColor = ref<string | null>(null)
+
+async function onDefaultColorChange(key: string | null): Promise<void> {
+  if (!key || key === defaultColor.value) return
+  try {
+    await mainClient.theme.setColor(null, key)
+    defaultColor.value = key
+    message.success('默认主题色已更新')
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : String(err))
+  }
+}
+
 onMounted(async () => {
   autoLaunch.value = await mainClient.app.getAutoLaunch()
+  // 设置窗口不绑定工作区：getPalette(null) 即全局默认
+  defaultColor.value = (await mainClient.theme.getPalette(null)).key
 })
 </script>
 
@@ -188,6 +205,16 @@ onMounted(async () => {
           <NRadioButton value="dark">深色</NRadioButton>
           <NRadioButton value="system">跟随系统</NRadioButton>
         </NRadioGroup>
+      </div>
+      <div class="data-row data-row--gap">
+        <div class="data-row__info">
+          <span class="data-row__label">默认主题色</span>
+          <span class="data-row__hint">未单独设置主题色的工作区使用此颜色</span>
+        </div>
+        <ThemeColorPicker
+          :model-value="defaultColor"
+          @update:model-value="onDefaultColorChange"
+        />
       </div>
       <div class="data-row data-row--gap">
         <div class="data-row__info">
