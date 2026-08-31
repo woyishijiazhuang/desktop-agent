@@ -9,6 +9,7 @@ import {
 import { applyStoredThemeMode } from './service/theme-service'
 import { createTray } from './service/tray-service'
 import { createAppMenu } from './service/app-menu-service'
+import { registerVoiceAssetScheme, installVoiceAssetProtocol } from './service/asset-protocol'
 import icon from '../../resources/icon.png?asset'
 // 副作用：初始化主进程文件日志（electron-log，捕获 console 写入 userData/logs/main.log）
 import { createLogger } from './utils/log'
@@ -24,11 +25,14 @@ const log = createLogger('app')
 // 注意需在 whenReady 之前设置；userData 路径在 db 模块 import 时已按旧名缓存，不受影响。
 app.setName('桌面助手')
 
-// 崩溃收集：本地落盘（不上报），dump 位于 app.getPath('crashDumps')，可在设置页打开查看
+// 崩溃收集：本地落盘（不上报），dump 位于 app.getPath('crashDumps'），可在设置页打开查看
 crashReporter.start({
   uploadToServer: false,
   compress: true
 })
+
+// 语音 VAD 资源协议（appasset://）：须在 app ready 前注册 scheme
+registerVoiceAssetScheme()
 
 app.whenReady().then(() => {
   log.info('应用启动', {
@@ -52,6 +56,9 @@ app.whenReady().then(() => {
   // 应用主题唯一真源：启动时按 settings 恢复 nativeTheme.themeSource，
   // 渲染层（含标题栏视图）经 prefers-color-scheme 自动跟随
   applyStoredThemeMode()
+
+  // 安装语音 VAD 资源协议处理器（appasset:// 供渲染进程 fetch onnx / ort wasm）
+  installVoiceAssetProtocol()
 
   // 恢复工作区窗口：按 last_opened_at 倒序为每个工作区建窗口（无工作区时创建默认工作区）
   void restoreStartupWindows()

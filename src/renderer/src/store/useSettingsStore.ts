@@ -6,7 +6,9 @@ import type {
   InstalledSkill,
   ThinkingLevel,
   TitleBarMode,
-  ToolInfo
+  ToolInfo,
+  VoiceRegion,
+  VoiceLanguage
 } from '@main/agent/types'
 import {
   SETTING_DEFAULT_SYSTEM_PROMPT,
@@ -24,11 +26,24 @@ import {
   SETTING_AGENT_ENV,
   SETTING_PERMISSION_AUTO_APPROVE,
   SETTING_PERMISSION_TIMEOUT_SEC,
+  SETTING_VOICE_REGION,
+  SETTING_VOICE_LANGUAGE,
+  SETTING_VOICE_TTS_VOICE,
+  SETTING_VOICE_TTS_STYLE,
+  SETTING_VOICE_SILENCE_SEC,
+  SETTING_VOICE_FAST_CHANNEL,
+  SETTING_VOICE_API_KEY,
   DEFAULT_MAX_TURNS_PER_RUN,
   DEFAULT_FIND_SKILL_SOURCE,
   DEFAULT_AUTO_COMPRESS_ENABLED,
   DEFAULT_AUTO_COMPRESS_THRESHOLD,
-  DEFAULT_PERMISSION_TIMEOUT_SEC
+  DEFAULT_PERMISSION_TIMEOUT_SEC,
+  DEFAULT_VOICE_REGION,
+  DEFAULT_VOICE_LANGUAGE,
+  DEFAULT_VOICE_TTS_VOICE,
+  DEFAULT_VOICE_SILENCE_SEC,
+  DEFAULT_VOICE_FAST_CHANNEL,
+  VOICE_PRESETS
 } from '@main/agent/types'
 
 /** 思考级别可选项（renderer 选择器用）。须与 @main/agent/types 的 ThinkingLevel 一一对应。 */
@@ -78,6 +93,21 @@ export const useSettingsStore = defineStore('settings', () => {
   const permissionAutoApprove = ref(false)
   /** 工具确认超时（秒；0 = 一直等待，默认 60）。 */
   const permissionTimeoutSec = ref(DEFAULT_PERMISSION_TIMEOUT_SEC)
+  // ---- 语音对话 ----
+  /** MiMo 语音 API key 是否已配置（明文不进入渲染进程）。 */
+  const voiceHasApiKey = ref(false)
+  /** MiMo 语音接入区域。 */
+  const voiceRegion = ref<VoiceRegion>(DEFAULT_VOICE_REGION)
+  /** ASR 识别语言。 */
+  const voiceLanguage = ref<VoiceLanguage>(DEFAULT_VOICE_LANGUAGE)
+  /** TTS 音色 id。 */
+  const voiceTtsVoice = ref(DEFAULT_VOICE_TTS_VOICE)
+  /** TTS 风格指令（自然语言描述，如「温柔、口语化」；空 = 不传）。 */
+  const voiceTtsStyle = ref('')
+  /** VAD 断句静音阈值（秒）。 */
+  const voiceSilenceSec = ref(DEFAULT_VOICE_SILENCE_SEC)
+  /** 语音快通道（跳过工具 + 关思考）。 */
+  const voiceFastChannel = ref(DEFAULT_VOICE_FAST_CHANNEL)
   /** 关闭窗口时最小化到托盘（默认关闭：关窗即退出/关闭窗口）。 */
   const closeToTray = ref(false)
   /** 标题栏模式（默认 native：优先当前平台原生窗口栏）。 */
@@ -108,7 +138,8 @@ export const useSettingsStore = defineStore('settings', () => {
       titleBarModeVal,
       agentEnvVal,
       permissionAutoApproveVal,
-      permissionTimeoutSecVal
+      permissionTimeoutSecVal,
+      voiceConfig
     ] = await Promise.all([
       mainClient.db.getSetting(SETTING_DEFAULT_SYSTEM_PROMPT),
       mainClient.db.getSetting(SETTING_DEFAULT_THINKING_LEVEL),
@@ -127,7 +158,8 @@ export const useSettingsStore = defineStore('settings', () => {
       mainClient.db.getSetting(SETTING_TITLE_BAR_MODE),
       mainClient.db.getSetting(SETTING_AGENT_ENV),
       mainClient.db.getSetting(SETTING_PERMISSION_AUTO_APPROVE),
-      mainClient.db.getSetting(SETTING_PERMISSION_TIMEOUT_SEC)
+      mainClient.db.getSetting(SETTING_PERMISSION_TIMEOUT_SEC),
+      mainClient.voice.getConfig()
     ])
     tools.value = toolList
     installedSkills.value = skills
@@ -148,6 +180,32 @@ export const useSettingsStore = defineStore('settings', () => {
       typeof permTimeout === 'number' && Number.isFinite(permTimeout) && permTimeout >= 0
         ? Math.floor(permTimeout)
         : DEFAULT_PERMISSION_TIMEOUT_SEC
+    // 语音配置（voice.getConfig 返回聚合配置，无 key 明文）
+    const vc = voiceConfig as
+      | {
+          hasApiKey: boolean
+          region: VoiceRegion
+          language: VoiceLanguage
+          ttsVoice: string
+          ttsStyle: string
+          silenceSec: number
+          fastChannel: boolean
+        }
+      | undefined
+    voiceHasApiKey.value = vc?.hasApiKey ?? false
+    voiceRegion.value = vc?.region ?? DEFAULT_VOICE_REGION
+    voiceLanguage.value = vc?.language ?? DEFAULT_VOICE_LANGUAGE
+    voiceTtsVoice.value =
+      vc?.ttsVoice && VOICE_PRESETS.some((v) => v.id === vc.ttsVoice)
+        ? vc.ttsVoice
+        : DEFAULT_VOICE_TTS_VOICE
+    voiceTtsStyle.value = vc?.ttsStyle ?? ''
+    const sil = vc?.silenceSec
+    voiceSilenceSec.value =
+      typeof sil === 'number' && Number.isFinite(sil) && sil >= 0.1 && sil <= 5
+        ? sil
+        : DEFAULT_VOICE_SILENCE_SEC
+    voiceFastChannel.value = vc?.fastChannel ?? DEFAULT_VOICE_FAST_CHANNEL
     memoryEnabled.value = (memoryEnabledVal as boolean | undefined) ?? true
     skillsEnabled.value = (skillsEnabledVal as boolean | undefined) ?? true
     kbEnabled.value = (kbEnabledVal as boolean | undefined) ?? true
@@ -267,6 +325,66 @@ export const useSettingsStore = defineStore('settings', () => {
     permissionTimeoutSec.value = v
   }
 
+  // ---- 语音设置保存 ----
+
+  /** 保存 MiMo 语音 API key（main 进程 safeStorage 加密存储）。 */
+  async function saveVoiceApiKey(key: string): Promise<void> {
+    await mainClient.voice.setApiKey(key)
+    voiceHasApiKey.value = true
+  }
+
+  /** 清除 MiMo 语音 API key。 */
+  async function clearVoiceApiKey(): Promise<void> {
+    await mainClient.voice.clearApiKey()
+    voiceHasApiKey.value = false
+  }
+
+  /** 测试 MiMo 语音连通性（短文本 TTS）。 */
+  async function testVoice(): Promise<{ ok: boolean; error?: string }> {
+    return mainClient.voice.test()
+  }
+
+  /** 保存语音接入区域。 */
+  async function saveVoiceRegion(v: VoiceRegion): Promise<void> {
+    await mainClient.db.setSetting(SETTING_VOICE_REGION, v)
+    voiceRegion.value = v
+  }
+
+  /** 保存 ASR 识别语言。 */
+  async function saveVoiceLanguage(v: VoiceLanguage): Promise<void> {
+    await mainClient.db.setSetting(SETTING_VOICE_LANGUAGE, v)
+    voiceLanguage.value = v
+  }
+
+  /** 保存 TTS 音色 id（须为内置音色之一）。变更后清空工具提示语音频缓存，强制按新音色重建。 */
+  async function saveVoiceTtsVoice(id: string): Promise<void> {
+    if (!VOICE_PRESETS.some((v) => v.id === id)) return
+    if (voiceTtsVoice.value !== id) await mainClient.voice.clearTtsCache()
+    await mainClient.db.setSetting(SETTING_VOICE_TTS_VOICE, id)
+    voiceTtsVoice.value = id
+  }
+
+  /** 保存 TTS 风格指令（自然语言描述）。变更后清空工具提示语音频缓存，强制按新风格重建。 */
+  async function saveVoiceTtsStyle(style: string): Promise<void> {
+    if (voiceTtsStyle.value !== style) await mainClient.voice.clearTtsCache()
+    await mainClient.db.setSetting(SETTING_VOICE_TTS_STYLE, style)
+    voiceTtsStyle.value = style
+  }
+
+  /** 保存 VAD 断句静音阈值（秒，0.1~5）。非法值拒绝写库。 */
+  async function saveVoiceSilenceSec(n: number): Promise<void> {
+    const v = Math.round(n * 10) / 10
+    if (!Number.isFinite(v) || v < 0.1 || v > 5) return
+    await mainClient.db.setSetting(SETTING_VOICE_SILENCE_SEC, v)
+    voiceSilenceSec.value = v
+  }
+
+  /** 切换语音快通道（跳过工具 + 关思考）。无需驱逐 Agent：语音 run 按请求实时生效。 */
+  async function saveVoiceFastChannel(v: boolean): Promise<void> {
+    await mainClient.db.setSetting(SETTING_VOICE_FAST_CHANNEL, v)
+    voiceFastChannel.value = v
+  }
+
   /**
    * 切换「关闭窗口时最小化到托盘」。无需驱逐 Agent：
    * main 侧窗口 close 时实时读取该设置决定拦截隐藏或放行。
@@ -344,6 +462,28 @@ export const useSettingsStore = defineStore('settings', () => {
         break
       case SETTING_PERMISSION_TIMEOUT_SEC:
         permissionTimeoutSec.value = value as number
+        break
+      case SETTING_VOICE_REGION:
+        voiceRegion.value = (value as VoiceRegion) ?? DEFAULT_VOICE_REGION
+        break
+      case SETTING_VOICE_API_KEY:
+        // key 以加密 base64 广播，仅更新「是否已配置」标记
+        voiceHasApiKey.value = !!value
+        break
+      case SETTING_VOICE_LANGUAGE:
+        voiceLanguage.value = (value as VoiceLanguage) ?? DEFAULT_VOICE_LANGUAGE
+        break
+      case SETTING_VOICE_TTS_VOICE:
+        voiceTtsVoice.value = (value as string) ?? DEFAULT_VOICE_TTS_VOICE
+        break
+      case SETTING_VOICE_TTS_STYLE:
+        voiceTtsStyle.value = (value as string) ?? ''
+        break
+      case SETTING_VOICE_SILENCE_SEC:
+        voiceSilenceSec.value = (value as number) ?? DEFAULT_VOICE_SILENCE_SEC
+        break
+      case SETTING_VOICE_FAST_CHANNEL:
+        voiceFastChannel.value = (value as boolean) ?? DEFAULT_VOICE_FAST_CHANNEL
         break
     }
   }
@@ -429,6 +569,13 @@ export const useSettingsStore = defineStore('settings', () => {
     agentEnv,
     permissionAutoApprove,
     permissionTimeoutSec,
+    voiceHasApiKey,
+    voiceRegion,
+    voiceLanguage,
+    voiceTtsVoice,
+    voiceTtsStyle,
+    voiceSilenceSec,
+    voiceFastChannel,
     loadSettings,
     saveDefaultSystemPrompt,
     setLastUsedThinkingLevel,
@@ -436,6 +583,15 @@ export const useSettingsStore = defineStore('settings', () => {
     saveNotificationsEnabled,
     savePermissionAutoApprove,
     savePermissionTimeoutSec,
+    saveVoiceApiKey,
+    clearVoiceApiKey,
+    testVoice,
+    saveVoiceRegion,
+    saveVoiceLanguage,
+    saveVoiceTtsVoice,
+    saveVoiceTtsStyle,
+    saveVoiceSilenceSec,
+    saveVoiceFastChannel,
     saveMemoryEnabled,
     saveSkillsEnabled,
     saveKbEnabled,

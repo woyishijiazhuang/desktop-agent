@@ -150,10 +150,14 @@ export function clearRunAutoAllow(sessionId: string): void {
 
 /**
  * 创建 beforeToolCall 钩子（绑定 sessionId，用于推送权限请求）。
+ * isVoiceAutoApprove：语音 run 判定（由 agent-manager 传入，实时查询 voiceRuns 标记）。
+ * 语音会话没有人工确认入口（用户在说话，无法点确认卡片），因此语音 run 内非破坏性
+ * 危险工具自动放行；破坏性命令（deny 兜底）与全局「跳过工具确认」一致，仍要求人工确认。
  * 返回 undefined = 放行；返回 { block } = 拦截（含用户拒绝/中止）。
  */
 export function createBeforeToolCallHook(
-  sessionId: string
+  sessionId: string,
+  isVoiceAutoApprove?: () => boolean
 ): (ctx: BeforeToolCallContext, signal?: AbortSignal) => Promise<BeforeToolCallResult | undefined> {
   return async (ctx, signal) => {
     const { toolCall } = ctx
@@ -184,6 +188,15 @@ export function createBeforeToolCallHook(
       decision = evaluateFile(sessionId, path)
     }
     if (decision === 'allow') return undefined
+    // 语音模式：自动放行非破坏性危险工具（语音会话无人工确认入口）。
+    // 复用「跳过工具确认」的语义：破坏性命令（denyHit）仍走人工确认/超时拒绝，不跳过。
+    if (!denyHit && isVoiceAutoApprove?.()) {
+      log.info('语音模式自动放行危险工具（破坏性命令除外）', {
+        sessionId,
+        toolName: toolCall.name
+      })
+      return undefined
+    }
     // 全局「跳过工具确认」开关：开启时危险工具免确认直接放行；
     // 破坏性命令（deny 兜底）不可被覆盖，始终人工确认。实时读取，改后下一轮立即生效。
     if (!denyHit && db.getSetting<boolean>(SETTING_PERMISSION_AUTO_APPROVE)) {

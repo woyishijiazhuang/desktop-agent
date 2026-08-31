@@ -208,7 +208,8 @@ export class AgentService extends IpcService {
     text: string,
     images?: ImageContent[],
     files?: { name: string; text: string }[],
-    skills?: string[]
+    skills?: string[],
+    options?: { voice?: boolean; voiceFast?: boolean }
   ): Promise<void> {
     log.info('发送消息', {
       sessionId,
@@ -216,7 +217,8 @@ export class AgentService extends IpcService {
       textLength: text.length,
       imageCount: images?.length ?? 0,
       fileCount: files?.length ?? 0,
-      skillCount: skills?.length ?? 0
+      skillCount: skills?.length ?? 0,
+      voice: options?.voice === true
     })
     // 自动压缩：未压缩上下文接近模型窗口上限时静默摘要旧历史（失败不阻断对话）
     await this.autoCompressIfNeeded(sessionId)
@@ -246,6 +248,11 @@ export class AgentService extends IpcService {
     if (agent.signal) {
       log.warn('检测到向运行中的 Agent 重复发送消息，已拒绝', { sessionId })
       throw new Error('该会话正在生成中，请等待完成或先中止')
+    }
+    // 语音模式：注入口语化指令（transformContext）+ 快通道临时去工具/关思考。
+    // 放在 signal 检查之后，避免拒绝路径残留语音 run 标记。
+    if (options?.voice === true) {
+      this.manager.beginVoiceRun(sessionId, options.voiceFast === true)
     }
     const blocks: (
       | ImageContent

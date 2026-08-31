@@ -1,7 +1,17 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { SettingRow } from './types'
 import { isThemeColorKey } from '../service/theme-palettes'
-import { SETTINGS_TAB_KEYS, type SettingsTabKey } from '../agent/types'
+import {
+  SETTINGS_TAB_KEYS,
+  SETTING_VOICE_API_KEY,
+  SETTING_VOICE_REGION,
+  SETTING_VOICE_LANGUAGE,
+  SETTING_VOICE_TTS_VOICE,
+  SETTING_VOICE_TTS_STYLE,
+  SETTING_VOICE_SILENCE_SEC,
+  SETTING_VOICE_FAST_CHANNEL,
+  type SettingsTabKey
+} from '../agent/types'
 
 /**
  * settings 表写入白名单 + 值类型校验。
@@ -71,7 +81,23 @@ const SETTING_VALIDATORS: Record<string, (v: unknown) => boolean> = {
     !Array.isArray(v) &&
     Object.entries(v).every(
       ([k, val]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && typeof val === 'string'
-    )
+    ),
+  // ---- 语音对话（key 见 agent/types.ts SETTING_VOICE_*）----
+  /** MiMo 语音 API Key（safeStorage 加密后的 base64 字符串，明文不进渲染进程）。 */
+  [SETTING_VOICE_API_KEY]: (v) => typeof v === 'string',
+  /** MiMo 语音接入区域。 */
+  [SETTING_VOICE_REGION]: (v) => v === 'cn' || v === 'global',
+  /** ASR 识别语言。 */
+  [SETTING_VOICE_LANGUAGE]: (v) => v === 'auto' || v === 'zh' || v === 'en',
+  /** TTS 音色 id（VOICE_PRESETS 之一；写库不强制枚举，回读时按预设兜底）。 */
+  [SETTING_VOICE_TTS_VOICE]: (v) => typeof v === 'string',
+  /** TTS 风格指令（自然语言描述，可为空串）。 */
+  [SETTING_VOICE_TTS_STYLE]: (v) => typeof v === 'string',
+  /** VAD 断句静音阈值（秒，0.1~5）。 */
+  [SETTING_VOICE_SILENCE_SEC]: (v) =>
+    typeof v === 'number' && Number.isFinite(v) && v >= 0.1 && v <= 5,
+  /** 语音快通道（跳过工具 + 关思考）。 */
+  [SETTING_VOICE_FAST_CHANNEL]: (v) => typeof v === 'boolean'
 }
 
 /** 设置项域 API（index.ts 组装进 db 门面）。 */

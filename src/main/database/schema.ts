@@ -200,6 +200,18 @@ export function initSchema(db: DatabaseSync): void {
       created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
     ) STRICT;
 
+    -- 语音工具提示语 TTS 缓存：固定短语预生成多个语气变体存库随机播放，首个音节零合成等待。
+    -- 缓存键 = (phrase, voice, style)：音色/风格指令变更即自然失效，重建时不残留旧键数据。
+    CREATE TABLE IF NOT EXISTS voice_tts_cache (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      phrase TEXT NOT NULL,
+      voice TEXT NOT NULL,
+      style TEXT NOT NULL,
+      variant INTEGER NOT NULL,
+      audio TEXT NOT NULL,
+      created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+    ) STRICT;
+
     -- 单用户应用，无 user_id 概念。
     CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(last_active_at);
     CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
@@ -218,6 +230,8 @@ export function initSchema(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_kb_chunks_doc ON kb_chunks(doc_id, seq);
     CREATE INDEX IF NOT EXISTS idx_kb_chunks_emb ON kb_chunks(embedding_model);
     CREATE INDEX IF NOT EXISTS idx_kb_embedding_logs_ts ON kb_embedding_logs(timestamp);
+    -- 语音 TTS 缓存唯一键（含变体序号），供 upsert 与按 key 查询。
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_tts_cache_key ON voice_tts_cache(phrase, voice, style, variant);
   `)
 
   // 轻量列清理：token 统计已由 usage_logs 取代，物理移除 messages 的 token 用量列与

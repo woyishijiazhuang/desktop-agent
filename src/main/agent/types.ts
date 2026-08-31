@@ -116,6 +116,61 @@ export const SETTING_PERMISSION_TIMEOUT_SEC = 'permission.timeoutSec'
 /** 工具确认超时默认值（秒）。 */
 export const DEFAULT_PERMISSION_TIMEOUT_SEC = 60
 
+// ==================== 语音对话（Voice）====================
+
+/**
+ * settings 表中存储的语音能力相关 key。
+ * - apiKey：MiMo 语音 API key（safeStorage 加密后的 base64，明文不进渲染进程）
+ * - region：MiMo 接入区域（cn = Token Plan 中国大陆，global = 全球 API）
+ * - language：ASR 识别语言（auto/zh/en）
+ * - ttsVoice：TTS 音色 id（mimo_default 等）
+ * - ttsStyle：TTS 可选风格指令（自然语言描述，如「温柔、口语化」；空 = 不传）
+ * - silenceSec：VAD 断句静音阈值（秒，判断用户说完的停顿长度）
+ * - fastChannel：语音快通道（关闭思考、回复更快；工具保留——清空工具会让模型回退到
+ *   XML 文本格式调工具而无法执行，详见 VOICE_MODE_INSTRUCTION 注释）
+ */
+export const SETTING_VOICE_API_KEY = 'voice.apiKey'
+export const SETTING_VOICE_REGION = 'voice.region'
+export const SETTING_VOICE_LANGUAGE = 'voice.language'
+export const SETTING_VOICE_TTS_VOICE = 'voice.ttsVoice'
+export const SETTING_VOICE_TTS_STYLE = 'voice.ttsStyle'
+export const SETTING_VOICE_SILENCE_SEC = 'voice.silenceSec'
+export const SETTING_VOICE_FAST_CHANNEL = 'voice.fastChannel'
+
+/** MiMo 语音接入区域：cn = Token Plan 中国大陆，global = 全球 API。 */
+export type VoiceRegion = 'cn' | 'global'
+
+/** ASR 识别语言（MiMo asr_options.language 取值）。 */
+export type VoiceLanguage = 'auto' | 'zh' | 'en'
+
+/** 默认值：中国大陆接入、自动识别语言、默认音色、0.8s 静音断句、快通道开。 */
+export const DEFAULT_VOICE_REGION: VoiceRegion = 'cn'
+export const DEFAULT_VOICE_LANGUAGE: VoiceLanguage = 'auto'
+export const DEFAULT_VOICE_TTS_VOICE = 'mimo_default'
+export const DEFAULT_VOICE_SILENCE_SEC = 0.8
+export const DEFAULT_VOICE_FAST_CHANNEL = true
+
+/** 内置 TTS 音色选项（renderer 设置页选择器用）。 */
+export const VOICE_PRESETS: { id: string; name: string; lang: string }[] = [
+  { id: 'mimo_default', name: '默认（自动）', lang: 'auto' },
+  { id: '冰糖', name: '冰糖（女）', lang: 'zh' },
+  { id: '茉莉', name: '茉莉（女）', lang: 'zh' },
+  { id: '苏打', name: '苏打（男）', lang: 'zh' },
+  { id: '白桦', name: '白桦（男）', lang: 'zh' },
+  { id: 'Mia', name: 'Mia（女）', lang: 'en' },
+  { id: 'Chloe', name: 'Chloe（女）', lang: 'en' },
+  { id: 'Milo', name: 'Milo（男）', lang: 'en' },
+  { id: 'Dean', name: 'Dean（男）', lang: 'en' }
+]
+
+/** 语音风格：回答要口语化、精简，适配 TTS 朗读（请求级动态注入，不进 systemPrompt 快照）。
+ * 注意：快通道不会清空工具（清空会导致 MiMo 等模型回退到 XML 文本格式调工具，无法执行），
+ * 因此指令明确「需要实时/外部信息时正常调用工具」；工具保留才可能拿到真实数据而非编造。 */
+export const VOICE_MODE_INSTRUCTION =
+  '【语音模式】当前对话通过语音进行，请用口语化、简洁的方式回答：控制在 2~3 句话以内；' +
+  '避免 markdown 标题、代码块、表格和长列表；需要实时或外部信息（天气、时间、文件、命令执行等）时正常调用工具，' +
+  '纯知识性问答直接作答，不要反复解释。'
+
 /**
  * 计划审批请求（exit_plan_mode 提交计划后 main 推给 renderer 展示）。
  * renderer 在计划卡片上批准/拒绝后调 agent.respondPlan 回传。
@@ -244,6 +299,7 @@ export type SettingsTabKey =
   | 'memory'
   | 'knowledge'
   | 'mcp'
+  | 'voice'
   | 'data'
   | 'about'
 
@@ -263,6 +319,7 @@ export const SETTINGS_TAB_KEYS: SettingsTabKey[] = [
   'memory',
   'knowledge',
   'mcp',
+  'voice',
   'data',
   'about'
 ]

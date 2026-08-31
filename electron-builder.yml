@@ -15,6 +15,20 @@ files:
   - '!**/*.map'
   - '!**/*.{d.ts,d.mts,d.cts}'
   - '!node_modules/@modelcontextprotocol/sdk/dist/**/examples/**'
+  # 语音 VAD：JS 已由 vite 打进渲染产物，运行时仅需 wasm / onnx 资源（appasset:// 协议读取），
+  # onnxruntime-web 全量 dist ~133MB，排除后只保留 4 个 wasm 变体 + 4 个 Emscripten 胶水 .mjs
+  - '!node_modules/onnxruntime-web/**'
+  - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm'
+  - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm'
+  - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jspi.wasm'
+  - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm'
+  - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs'
+  - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs'
+  - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jspi.mjs'
+  - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.mjs'
+  - '!node_modules/@ricky0123/vad-web/**'
+  - 'node_modules/@ricky0123/vad-web/dist/silero_vad_legacy.onnx'
+  - 'node_modules/@ricky0123/vad-web/dist/silero_vad_v5.onnx'
 asarUnpack:
   - resources/**
 win:
@@ -35,6 +49,7 @@ mac:
   extendInfo:
     - NSDocumentsFolderUsageDescription: 桌面助手需要访问"文稿"文件夹以读写文件。
     - NSDownloadsFolderUsageDescription: 桌面助手需要访问"下载"文件夹以读写文件。
+    - NSMicrophoneUsageDescription: 桌面助手需要使用麦克风进行语音对话。
   notarize: false
   category: public.app-category.productivity
 dmg:

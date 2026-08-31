@@ -26,13 +26,14 @@ import {
 import { readAgentMdForInjection } from './agent-md'
 import { createLogger } from '../utils/log'
 import { notifyAgentFinished } from '../service/notifier'
-import type { AgentEventPayload } from './types'
+import type { AgentEventPayload, ThinkingLevel } from './types'
 import {
   SETTING_DEFAULT_MODEL,
   SETTING_DEFAULT_SYSTEM_PROMPT,
   SETTING_DEFAULT_THINKING_LEVEL,
   SETTING_MAX_TURNS_PER_RUN,
   DEFAULT_MAX_TURNS_PER_RUN,
+  VOICE_MODE_INSTRUCTION,
   maxTurnsReachedMessage,
   buildDefaultSystemPrompt,
   buildSystemCapabilitySections,
@@ -94,6 +95,16 @@ export class AgentManager {
   private lruPaused = new Map<string, string>()
   /** 正在生成标题的会话集合（并发保护，避免重复生成）。 */
   private generatingTitle = new Set<string>()
+  /**
+   * 正在语音 run 的会话（key = sessionId）。
+   * - fast：快通道开启时本轮临时关闭思考（agent_end 恢复）
+   * - savedThinkingLevel：快通道前的原始思考级别（恢复用）
+   * 语音指令（VOICE_MODE_INSTRUCTION）在 transformContext 按此标记请求级注入，
+   * 不改动 systemPrompt 快照，LLM 前缀缓存不受影响。
+   * 注意：快通道不会清空工具——工具清空会让 MiMo 等模型回退到 XML 文本格式调工具，
+   * agent 循环无法识别导致不执行 + 编造答案；工具保留才能拿到真实数据。
+   */
+  private voiceRuns = new Map<string, { fast: boolean; savedThinkingLevel?: ThinkingLevel }>()
   /** 串行化 Agent 创建/淘汰慢路径的锁（promise-chain），避免并发 cache-miss 竞争。 */
   private createLock: Promise<void> = Promise.resolve()
 
@@ -134,6 +145,29 @@ export class AgentManager {
     this.turnCounts.set(sessionId, 0)
     this.maxTurnsReached.delete(sessionId)
     this.endedRuns.delete(sessionId)
+  }
+
+  /**
+   * 标记一次语音 run：transformContext 据此注入语音风格指令。
+   * fast 为 true 时（快通道）本轮临时关闭思考，agent_end 恢复原状——
+   * 不重建 Agent、不破坏会话上下文，仅影响本 run 的模型行为。
+   * 工具不在此清空：清空会让模型回退 XML 文本格式调工具而无法执行（详见 voiceRuns 注释）。
+   */
+  beginVoiceRun(sessionId: string, fast: boolean): void {
+    const agent = this.agents.get(sessionId)
+    if (!agent) return
+    const prev = this.voiceRuns.get(sessionId)
+    // 快通道：保存原始 thinkingLevel 后关闭思考
+    if (fast && !prev?.fast) {
+      this.voiceRuns.set(sessionId, {
+        fast: true,
+        savedThinkingLevel: agent.state.thinkingLevel
+      })
+      agent.state.thinkingLevel = 'off'
+    } else if (!fast) {
+      this.voiceRuns.set(sessionId, { fast: false })
+    }
+    log.debug('开始语音 run', { sessionId, fast })
   }
 
   async getOrCreateAgent(sessionId: string): Promise<Agent> {
@@ -322,6 +356,8 @@ export class AgentManager {
     this.turnCounts.delete(sessionId)
     this.maxTurnsReached.delete(sessionId)
     this.endedRuns.delete(sessionId)
+    // 语音 run 标记随 Agent 生命周期清理（agent_end 正常路径已消费；驱逐时防残留误注入）
+    this.voiceRuns.delete(sessionId)
     // 子代理宿主随 Agent 一并注销，防悬挂引用
     unregisterSubagentHost(sessionId)
     // 清理会话工作目录缓存（会话被驱逐后事件路由/工具解析不再命中内存缓存）
@@ -485,7 +521,7 @@ export class AgentManager {
         }
       },
       toolExecution: 'parallel',
-      beforeToolCall: createBeforeToolCallHook(sessionId),
+      beforeToolCall: createBeforeToolCallHook(sessionId, () => this.voiceRuns.has(sessionId)),
       transformContext: async (messages) => {
         // 动态上下文注入（不修改 systemPrompt，不失效 LLM 前缀缓存）：
         // 1) 压缩摘要前置为 role=user 标记块；
@@ -510,6 +546,14 @@ export class AgentManager {
                   text: '[系统提醒] 当前处于计划模式（规划阶段）：bash（只读命令除外）/ write_file / edit_file 等操作会被拦截。规划期间请：1) 用 ask_user 澄清需求中的不确定性；2) 用 task(subagentType="plan") 委派只读规划子代理探索代码库并产出实施计划；3) 完成规划后用 exit_plan_mode 提交计划等待用户批准。'
                 }
               ],
+              timestamp: 0
+            })
+          }
+          // 语音模式：请求级注入口语化/精简指令（不改 systemPrompt 快照，前缀缓存不失效）
+          if (this.voiceRuns.has(sessionId)) {
+            blocks.push({
+              role: 'user',
+              content: [{ type: 'text', text: VOICE_MODE_INSTRUCTION }],
               timestamp: 0
             })
           }
@@ -673,6 +717,14 @@ export class AgentManager {
       if (event.type === 'agent_end') {
         // 记录本轮已结束（prompt 兜底 catch 据此避免重复补发 agent_end）。
         this.endedRuns.add(sessionId)
+        // 语音 run 收尾：恢复快通道临时关闭的思考级别，清除 run 标记。
+        const voiceRun = this.voiceRuns.get(sessionId)
+        if (voiceRun) {
+          this.voiceRuns.delete(sessionId)
+          if (voiceRun.fast && voiceRun.savedThinkingLevel !== undefined) {
+            agent.state.thinkingLevel = voiceRun.savedThinkingLevel
+          }
+        }
         // 释放本批自动放行（配合 agent_start 重置，双保险防泄漏）。
         clearRunAutoAllow(sessionId)
         // 清理该会话残留的挂起提问（中止/结束时未获回答的 ask_user 挂起 Promise）

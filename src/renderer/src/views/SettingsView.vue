@@ -13,6 +13,7 @@ import {
   BookOutline,
   LibraryOutline,
   LayersOutline,
+  MicOutline,
   InformationCircleOutline
 } from '@vicons/ionicons5'
 import GeneralPanel from '@renderer/components/settings/GeneralPanel.vue'
@@ -24,6 +25,7 @@ import SkillsPanel from '@renderer/components/settings/SkillsPanel.vue'
 import MemoryPanel from '@renderer/components/settings/MemoryPanel.vue'
 import KnowledgePanel from '@renderer/components/settings/KnowledgePanel.vue'
 import McpPanel from '@renderer/components/settings/McpPanel.vue'
+import VoicePanel from '@renderer/components/settings/VoicePanel.vue'
 import DataPanel from '@renderer/components/settings/DataPanel.vue'
 import AboutPanel from '@renderer/components/settings/AboutPanel.vue'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
@@ -62,6 +64,7 @@ const navItems: { key: SettingsTabKey; label: string; icon: Component }[] = [
   { key: 'memory', label: '记忆', icon: BookOutline },
   { key: 'knowledge', label: '知识库', icon: LibraryOutline },
   { key: 'mcp', label: 'MCP', icon: GitNetworkOutline },
+  { key: 'voice', label: '语音', icon: MicOutline },
   { key: 'data', label: '数据与诊断', icon: FolderOpenOutline },
   { key: 'about', label: '关于', icon: InformationCircleOutline }
 ]
@@ -164,6 +167,10 @@ function onSettingsTabEvent(e: Event): void {
 
       <div v-show="activeTab === 'mcp'" class="settings-content__inner">
         <McpPanel />
+      </div>
+
+      <div v-show="activeTab === 'voice'" class="settings-content__inner">
+        <VoicePanel />
       </div>
 
       <div v-show="activeTab === 'data'" class="settings-content__inner">

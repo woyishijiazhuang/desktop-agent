@@ -17,12 +17,15 @@ import {
   ImageOutline,
   DocumentTextOutline,
   CloseOutline,
-  ExtensionPuzzleOutline
+  ExtensionPuzzleOutline,
+  MicOutline,
+  MicOffOutline
 } from '@vicons/ionicons5'
 import { useChatStore, type ComposerAttachment } from '@renderer/store/useChatStore'
 import { useModelConfigsStore } from '@renderer/store/useModelConfigsStore'
 import { useSettingsStore, THINKING_LEVEL_OPTIONS } from '@renderer/store/useSettingsStore'
 import { useAttachments } from '@renderer/composables/useAttachments'
+import { useVoiceChat, type VoicePhase } from '@renderer/composables/useVoiceChat'
 import { mainClient } from '@renderer/utils/main-client'
 import type { ThinkingLevel, InstalledSkill } from '@main/agent/types'
 import { formatModelKey, isThinkingLevel, parseModelKey } from '@main/agent/types'
@@ -39,6 +42,22 @@ const modelConfigs = useModelConfigsStore()
 const settings = useSettingsStore()
 const message = useMessage()
 const fileInputRef = ref<HTMLInputElement | null>(null)
+
+// 语音对话（点击一次持续对话：VAD 断句 + ASR 转写 + TTS 朗读，可打断）
+const voice = useVoiceChat()
+
+/** 语音状态展示文案（麦克风按钮旁的实时状态提示）。 */
+const VOICE_PHASE_LABELS: Record<VoicePhase, string> = {
+  off: '',
+  listening: '聆听中…',
+  recording: '正在听…',
+  transcribing: '转写中…',
+  waiting: '思考中…',
+  speaking: '朗读中，可打断'
+}
+
+/** 忙碌且未开启语音会话时禁用麦克风按钮（会话进行中保持可点，用于关闭）。 */
+const voiceDisabled = computed(() => props.isBusy && voice.phase.value === 'off')
 
 /** 模型选择器当前值（ModelKey JSON 字符串）。 */
 const modelValue = computed(() =>
@@ -344,6 +363,37 @@ function onKeydown(e: KeyboardEvent): void {
           accept="image/*,.txt,.md,.json,.js,.ts,.py,.html,.css,.xml,.csv,.log,.yml,.yaml,.ini,.toml,.docx,.pdf,.xlsx,.pptx"
           @change="onFileInputChange"
         />
+        <!-- 语音对话开关：点击一次开启持续对话（VAD 断句 + 自动朗读，可打断） -->
+        <NButton
+          quaternary
+          circle
+          size="small"
+          class="composer__voice"
+          :class="{ 'composer__voice--active': voice.phase.value !== 'off' }"
+          :title="
+            voice.phase.value !== 'off'
+              ? '关闭语音对话'
+              : voiceDisabled
+                ? '生成中不可开启语音'
+                : '开启语音对话（说话即发，回复自动朗读）'
+          "
+          :disabled="voiceDisabled"
+          @click="voice.toggle"
+        >
+          <template #icon>
+            <NIcon :size="17">
+              <MicOutline v-if="voice.phase.value === 'off'" />
+              <MicOffOutline v-else />
+            </NIcon>
+          </template>
+        </NButton>
+        <span
+          v-if="voice.phase.value !== 'off'"
+          class="composer__voice-status"
+          :class="`composer__voice-status--${voice.phase.value}`"
+        >
+          {{ VOICE_PHASE_LABELS[voice.phase.value] }}
+        </span>
         <NButton
           quaternary
           circle
@@ -459,8 +509,9 @@ function onKeydown(e: KeyboardEvent): void {
     box-shadow 0.15s ease;
 }
 .composer:focus-within {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 2px var(--primary-soft);
+  /* 聚焦仅轻微染色边框（主色 30% 混入边框色），无外发光光环 */
+  border-color: color-mix(in srgb, var(--primary) 50%, var(--border));
+  /* box-shadow: 0 0 0 1px color-mix(in srgb, var(--primary) 10%, transparent); */
 }
 .composer--busy {
   border-color: var(--border);
@@ -582,6 +633,65 @@ function onKeydown(e: KeyboardEvent): void {
 .composer__attach:hover {
   color: var(--primary);
 }
+/* 语音对话开关：关闭态灰色；开启态主色填充 + 呼吸光环 */
+.composer__voice {
+  --n-size: 28px;
+  color: var(--text-3);
+}
+.composer__voice:hover:not(.composer__voice--active) {
+  color: var(--primary);
+}
+.composer__voice--active {
+  color: var(--primary);
+  background: color-mix(in srgb, var(--primary) 12%, transparent) !important;
+  animation: composer-voice-pulse 1.6s ease-in-out infinite;
+}
+@keyframes composer-voice-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 25%, transparent);
+  }
+  50% {
+    box-shadow: 0 0 0 4px color-mix(in srgb, var(--primary) 8%, transparent);
+  }
+}
+/* 语音状态提示：聆听/录音呼吸点 + 阶段文案 */
+.composer__voice-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  color: var(--text-2);
+  user-select: none;
+  white-space: nowrap;
+}
+.composer__voice-status::before {
+  content: '';
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+.composer__voice-status--listening::before,
+.composer__voice-status--recording::before,
+.composer__voice-status--speaking::before {
+  animation: composer-voice-dot 1.2s ease-in-out infinite;
+}
+@keyframes composer-voice-dot {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.composer__voice-status--recording {
+  color: var(--primary);
+}
+.composer__voice-status--speaking {
+  color: var(--primary);
+}
 .composer__input {
   /* 让 NInput 无边框后铺满，行高舒适 */
   font-size: 14px;
@@ -634,21 +744,21 @@ function onKeydown(e: KeyboardEvent): void {
 .composer__thinking-level {
   width: 92px;
 }
-/* 统一内层控件聚焦表现：
-   - 文字输入框：聚焦不做背景变色（亮/暗保持一致），仅保留统一的紫色光环
-   - 两个 select：聚焦/展开为紫色淡染背景 + 紫色光环（替代 naive 亮色白底无感、暗色紫底+8px 光晕的差异）
+/* 统一内层控件聚焦表现（与容器一致：无外发光光环）：
+   - 文字输入框：聚焦不做背景变色（亮/暗保持一致），无光晕
+   - 两个 select：聚焦/展开为紫色淡染背景，无光晕
    注意：输入框变量内联在 .n-input 根元素（即 .composer__input 自身），须直接作用于该元素；
    select 变量内联在子元素 .n-base-selection 上，用 :deep 后代选择器。均需 !important 压过内联。 */
 .composer__input {
-  /* 聚焦背景 = 输入框自身背景（任何主题都不变色），仅保留紫色光环 */
+  /* 聚焦背景 = 输入框自身背景（任何主题都不变色），无外发光 */
   --n-color-focus: var(--n-color) !important;
-  --n-box-shadow-focus: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent) !important;
+  --n-box-shadow-focus: none !important;
 }
 .composer__model :deep(.n-base-selection),
 .composer__thinking-level :deep(.n-base-selection) {
   --n-color-focus: color-mix(in srgb, var(--primary) 8%, var(--bg)) !important;
   --n-color-active: color-mix(in srgb, var(--primary) 8%, var(--bg)) !important;
-  --n-box-shadow-focus: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent) !important;
+  --n-box-shadow-focus: none !important;
 }
 /* select 选中值文字：默认更淡（--text-3，接近占位符），hover/聚焦时加深为 --text-2 提供反馈 */
 .composer__model :deep(.n-base-selection),

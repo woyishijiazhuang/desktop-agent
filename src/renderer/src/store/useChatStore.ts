@@ -445,7 +445,8 @@ export const useChatStore = defineStore('chat', () => {
   async function send(
     text: string,
     attachments?: ComposerAttachment[],
-    skills?: string[]
+    skills?: string[],
+    options?: { voice?: boolean; voiceFast?: boolean }
   ): Promise<void> {
     const trimmed = text.trim()
     const images = toImageBlocks(attachments)
@@ -513,7 +514,10 @@ export const useChatStore = defineStore('chat', () => {
         trimmed,
         images.length > 0 ? images : undefined,
         files.length > 0 ? files.map((f) => ({ name: f.file_name, text: f.text })) : undefined,
-        skills && skills.length > 0 ? skills : undefined
+        skills && skills.length > 0 ? skills : undefined,
+        options?.voice
+          ? { voice: true, voiceFast: options.voiceFast === true }
+          : undefined
       )
     } catch (err) {
       state.error = err instanceof Error ? err.message : String(err)

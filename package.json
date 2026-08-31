@@ -29,9 +29,11 @@
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
+    "@ricky0123/vad-web": "^0.0.30",
     "adm-zip": "^0.6.0",
     "electron-ipc-service": "^0.1.1",
     "electron-log": "^5.4.4",
+    "onnxruntime-web": "^1.29.0",
     "picomatch": "^4.0.5"
   },
   "devDependencies": {
