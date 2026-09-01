@@ -35,6 +35,9 @@ files:
   - '!node_modules/@ricky0123/vad-web/**'
   - 'node_modules/@ricky0123/vad-web/dist/silero_vad_legacy.onnx'
   - 'node_modules/@ricky0123/vad-web/dist/silero_vad_v5.onnx'
+  # VAD 的 AudioWorklet 模块：MicVAD 以 AudioWorklet 模式运行时经
+  # appasset://voice/vad.worklet.bundle.min.js addModule 加载（独立 webpack bundle，自包含）
+  - 'node_modules/@ricky0123/vad-web/dist/vad.worklet.bundle.min.js'
 asarUnpack:
   - resources/**
 win:

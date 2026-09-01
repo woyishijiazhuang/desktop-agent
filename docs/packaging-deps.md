@@ -40,12 +40,13 @@ files:
   - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.{wasm,mjs,jsep.mjs,jspi.mjs,asyncify.mjs}'
   - '!node_modules/@ricky0123/vad-web/**'
   - 'node_modules/@ricky0123/vad-web/dist/silero_vad_{legacy,v5}.onnx'
+  - 'node_modules/@ricky0123/vad-web/dist/vad.worklet.bundle.min.js'
 ```
 
 关键点：
 
 - **onnxruntime-web 全量 ~133MB，只保留运行时实际加载的 5 个文件**（`appasset://` 协议会把一切 wasm 请求回退到 `ort-wasm-simd-threaded.wasm`，其余 jsep/jspi/asyncify 变体不需要）。
-- **vad-web 只保留 2 个 onnx 模型**（Silero VAD 推理用，JS 已被渲染 bundle 内联）。
+- **vad-web 保留 3 个文件**：2 个 onnx 模型（Silero VAD 推理）+ `vad.worklet.bundle.min.js`（MicVAD 以 AudioWorklet 模式运行时经 `appasset://voice/vad.worklet.bundle.min.js` addModule 加载的模块，独立 webpack bundle，自包含）。若漏掉 worklet 文件，打包后语音会报「语音引擎初始化失败：Unable to load a worklet's module」（dev 下 node_modules 完整不报，打包产物才暴露）。
 - 添加/调整这些规则时，务必用第 4 节的验证命令核对白名单文件仍存在。
 
 ---
@@ -149,4 +150,57 @@ ls -lh dist/*.dmg dist/*.zip
 du -sh "dist/mac-arm64/桌面助手.app/Contents/Resources/app.asar"
 du -sh "dist/mac-arm64/桌面助手.app/Contents/Frameworks/Electron Framework.framework"
 ```
+
+---
+
+## 8. 框架无法静态解析的包清单（bundle 外运行时 require）
+
+Rollup 打包时若无法把某包的 `require` 静态内联（包用了动态/条件 require、或无法 CJS→ESM 转换等），会在 bundle 里**保留为运行时 `require("pkg")`**。这类包必须能在运行时（打包后的 `app.asar/node_modules`）解析到，否则 dev 正常、打包后对应功能报 `Cannot find module`。
+
+### 8.1 扫描方法
+
+```bash
+# 列出 out/main + out/preload 中所有非 Node 内置的运行时 require 模块（去重）
+grep -ohE 'require\(["'"'"'][^"'"'"']+["'"'"']\)' out/main/*.js out/preload/*.js \
+  | sed -E 's/require\(["'"'"']([^"'"'"']+)["'"'"']\)/\1/' | sort -u \
+  | grep -vE '^(node:|fs|path|stream|buffer|events|util|url|http|https|zlib|os|net|tls|crypto|child_process|assert|querystring|string_decoder|module|worker_threads|perf_hooks|async_hooks|diagnostics_channel|timers|dns|console|sqlite)$' \
+  | grep -vE '^\./|^/'
+# 对每个结果核对是否在产物 node_modules（应存在）
+npx asar list "dist/mac-arm64/桌面助手.app/Contents/Resources/app.asar" | grep -E "^/node_modules/<pkg>"
+```
+
+### 8.2 清单（2026-09 实测）
+
+**A. 运行时需解析、已随 `dependencies` 进入产物（正常）**
+
+| 包 | bundle 位置 | 说明 |
+|---|---|---|
+| `@electron-toolkit/preload` | out/preload | preload 运行时 |
+| `@electron-toolkit/utils` | out/main | 主进程工具 |
+| `@modelcontextprotocol/sdk/client/{index,stdio,streamableHttp}` | out/main | MCP SDK 子路径 |
+| `adm-zip` | out/main | 附件/解压 |
+| `electron` | out/main | Electron 运行时自身提供 |
+| `electron-ipc-service`、`electron-ipc-service/preload` | out/main + out/preload | IPC 基础设施 |
+| `electron-log/main` | out/main | 日志 |
+| `picomatch` | out/main | 路径匹配 |
+| `@mixmark-io/domino` | out/main | 见 §3.1，已修复进 dependencies |
+
+**B. 运行时需解析、但**不在 `dependencies`**（潜在打包后报错）**
+
+| 包 | bundle 位置 | 来源链 | 触发路径 | 处置 |
+|---|---|---|---|---|
+| `google-auth-library` | `google-shared-*.js`（pi-ai Google provider 共享块） | pi-ai → @google/genai → google-auth-library | 配置/调用 Google（Gemini）模型，走 OAuth/服务账号认证 | 未修复：建议按 domino 同法加入 `dependencies`；若 Google 模型不作为发布功能，可忽略 |
+| `encoding` | `index-*.js` | pi-ai → @google/genai → google-auth-library → gaxios → encoding | gaxios 响应解码（与上同路径） | 同上 |
+
+> 注：`google-auth-library`/`encoding` 均来自 devDependencies（pi-ai）被打包后其内部无法内联的传递依赖。dev 下经 pnpm 嵌套布局可解析，打包产物中没有 → 属**潜在**问题，仅在触发对应路径时报错，未触发不影响现有功能。
+
+**C. 已确认无需产物的包**：`vue`/`naive-ui`/`mdize`/`pdfjs-dist`/`turndown`/`@thednp/dommatrix` 等 devDependencies —— 已被 Rollup 完全内联进 bundle，无运行时 require。
+
+### 8.3 处理规则
+
+新增依赖时，对 §8.1 扫描结果逐个分类：
+
+1. **在 `dependencies` 里** → 已进产物，正常。
+2. **不在 `dependencies`、但 bundle 里有它的运行时 `require`** → 必须加入 `dependencies`（否则打包后对应功能报 Module not found）。
+3. **bundle 里没有它的 require**（被内联）→ 保持 devDependencies，不占产物。
 
