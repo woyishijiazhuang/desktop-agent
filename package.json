@@ -28,6 +28,7 @@
   "dependencies": {
     "@electron-toolkit/preload": "^3.0.2",
     "@electron-toolkit/utils": "^4.0.0",
+    "@mixmark-io/domino": "^2.2.0",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@ricky0123/vad-web": "^0.0.30",
     "adm-zip": "^0.6.0",
@@ -42,6 +43,7 @@
     "@electron-toolkit/eslint-config-prettier": "3.0.0",
     "@electron-toolkit/eslint-config-ts": "^3.1.0",
     "@electron-toolkit/tsconfig": "^2.0.0",
+    "@thednp/dommatrix": "^3.1.1",
     "@types/adm-zip": "^0.5.8",
     "@types/node": "^22.19.1",
     "@types/picomatch": "^4.0.3",

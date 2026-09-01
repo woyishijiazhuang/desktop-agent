@@ -5,11 +5,12 @@
     <title>桌面助手</title>
     <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP -->
     <!-- appasset: 为语音 VAD 自定义资源协议（见 main/service/asset-protocol.ts）：
-         connect-src 放行 onnx 模型 / ort wasm 的 fetch；script-src 放行 ort 胶水 .mjs 的动态 import；
+         connect-src 放行 onnx 模型 / ort wasm 的 fetch；script-src 放行 ort 胶水 .mjs 的动态 import、
+         blob:（mic-collector AudioWorklet 经内联源码 + Blob URL 注册，见 useVoiceChat.ts）；
          'wasm-unsafe-eval' 放行 WebAssembly 编译；media-src data: 放行 TTS 音频（data URL）播放 -->
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' appasset:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; connect-src 'self' appasset:"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval' appasset: blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; connect-src 'self' appasset:"
     />
   </head>
 

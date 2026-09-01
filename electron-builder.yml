@@ -17,6 +17,9 @@ files:
   # node_modules 内的开发内容：源码映射 / 类型声明 / SDK 自带示例，运行时均不需要
   - '!**/*.map'
   - '!**/*.{d.ts,d.mts,d.cts}'
+  # 纯类型声明包（含经 protobufjs → @types/node 带入的 undici-types），运行时绝不 require
+  - '!node_modules/@types/**'
+  - '!node_modules/undici-types/**'
   - '!node_modules/@modelcontextprotocol/sdk/dist/**/examples/**'
   # 语音 VAD：JS 已由 vite 打进渲染产物，运行时仅需 wasm / onnx 资源（appasset:// 协议读取），
   # onnxruntime-web 全量 dist ~133MB，排除后只保留实际会被加载的文件：

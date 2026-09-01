@@ -20,6 +20,22 @@ export type VoicePhase =
 const ASSET_BASE = 'appasset://voice/'
 const ORT_BASE = 'appasset://voice/ort/'
 
+/**
+ * mic-collector AudioWorklet 处理器源码（替代已弃用的 ScriptProcessor）：
+ * 在音频线程把每帧输入拷贝后 postMessage 回主线程，供录音兜底缓冲使用。
+ * 以内联源码 + Blob URL 注册，避免新增构建产物；CSP script-src 已放行 blob:。
+ */
+const MIC_COLLECTOR_WORKLET = `
+class MicCollectorProcessor extends AudioWorkletProcessor {
+  process(inputs) {
+    const data = inputs[0] && inputs[0][0]
+    if (data) this.port.postMessage(new Float32Array(data))
+    return true
+  }
+}
+registerProcessor('mic-collector', MicCollectorProcessor)
+`
+
 /** 单次录音最长时长（ms）：VAD 未判断句时的兜底截断。 */
 const MAX_UTTERANCE_MS = 15_000
 /** VAD 预滚（ms）：语音起始前补录，避免丢开头字音。 */
@@ -60,7 +76,7 @@ export function useVoiceChat(): {
   let mic: MicVAD | null = null
   let stream: MediaStream | null = null
   let audioCtx: AudioContext | null = null
-  let collector: ScriptProcessorNode | null = null
+  let collector: AudioWorkletNode | null = null
   let collectorSource: MediaStreamAudioSourceNode | null = null
 
   // ---- 朗读播放（AudioContext BufferSource）----
@@ -668,15 +684,21 @@ export function useVoiceChat(): {
     audioCtx = new AudioContext()
     await audioCtx.resume()
     try {
-      // 兜底缓冲采集：仅在录音期间把本机采样率 PCM 追加到 chunks
+      // 兜底缓冲采集：AudioWorklet 在音频线程拷贝输入帧、postMessage 回主线程，
+      // 仅在录音期间追加到 chunks（替代已弃用的 ScriptProcessor）
       collectorSource = audioCtx.createMediaStreamSource(stream)
-      collector = audioCtx.createScriptProcessor(4096, 1, 1)
-      collector.onaudioprocess = (e) => {
-        if (recordingFlag) chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)))
+      await audioCtx.audioWorklet.addModule(
+        URL.createObjectURL(new Blob([MIC_COLLECTOR_WORKLET], { type: 'application/javascript' }))
+      )
+      collector = new AudioWorkletNode(audioCtx, 'mic-collector', {
+        numberOfInputs: 1,
+        numberOfOutputs: 0,
+        channelCount: 1
+      })
+      collector.port.onmessage = (e) => {
+        if (recordingFlag) chunks.push(e.data as Float32Array)
       }
       collectorSource.connect(collector)
-      // ScriptProcessor 需连接 destination 才会持续触发（输出静音即可）
-      collector.connect(audioCtx.destination)
 
       mic = await MicVAD.new({
         model: 'legacy',
@@ -684,7 +706,9 @@ export function useVoiceChat(): {
         // ort 会经此动态 import 胶水 .mjs + fetch wasm；appasset:// 协议已放行
         //（CSP connect-src/script-src + 协议 ACAO 头 + host/path 路由，见 asset-protocol.ts）
         onnxWASMBasePath: ORT_BASE,
-        processorType: 'ScriptProcessor',
+        // VAD 用 AudioWorklet：vad-web 从 baseAssetPath 加载 vad.worklet.bundle.min.js
+        //（appasset:// 提供），帧数据经 port.postMessage 回主线程推理，无需跨源隔离
+        processorType: 'AudioWorklet',
         audioContext: audioCtx,
         getStream: () => Promise.resolve(stream!),
         // 会话期间麦克风常开（供 barge-in），不随 VAD pause 停流
@@ -733,7 +757,12 @@ export function useVoiceChat(): {
     announcedTools.clear()
     try {
       if (collector) {
-        collector.onaudioprocess = null
+        collector.port.onmessage = null
+        try {
+          collector.port.close()
+        } catch {
+          /* 忽略端口关闭异常 */
+        }
         collector.disconnect()
       }
       if (collectorSource) collectorSource.disconnect()

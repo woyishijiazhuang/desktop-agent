@@ -1,5 +1,9 @@
 import { app, BaseWindow, crashReporter } from 'electron'
 import { electronApp } from '@electron-toolkit/utils'
+// pdfjs-dist（mdize 解析 PDF 用，主进程 Node 环境）依赖浏览器几何 API DOMMatrix，
+// 其自带 polyfill 仅从 node-canvas 取（未安装）→ 提前注入第三方实现，避免解析 PDF 报
+// 「DOMMatrix is not defined」。mdize 惰性加载，此处先注入即可覆盖后续所有文档解析。
+import DOMMatrixPolyfill from '@thednp/dommatrix'
 import { ipcMainServices } from './service'
 import {
   getActiveWorkspaceWindow,
@@ -19,6 +23,11 @@ import { SETTING_CLOSE_TO_TRAY } from './agent/types'
 import { db } from './database'
 
 const log = createLogger('app')
+
+// Node 主进程无 DOMMatrix 全局；注入 polyfill（仅当未定义时，避免覆盖未来 Electron 自带实现）
+if (!('DOMMatrix' in globalThis)) {
+  ;(globalThis as Record<string, unknown>).DOMMatrix = DOMMatrixPolyfill
+}
 
 // 应用显示名与打包产物（electron-builder productName）保持一致：
 // 使菜单栏/Dock/任务栏/通知等各处不再以默认的 Electron 或包名 my-app 呈现。
