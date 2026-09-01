@@ -1,6 +1,6 @@
 {
   "name": "desktop-agent",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "桌面助手：基于 Electron 与 Vue 的桌面 AI 助手应用",
   "main": "./out/main/index.js",
   "author": "example.com",

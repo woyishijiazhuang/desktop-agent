@@ -3,6 +3,9 @@ productName: 桌面助手
 directories:
   buildResources: build
 files:
+  # 显式声明全量模式：files 存在正向 include（onnx/vad 资源）时不会自动补 **/*，
+  # 否则 out/、resources/ 等运行时文件会被漏打包（asar 校验报 entry 缺失）
+  - '**/*'
   - '!**/.vscode/*'
   - '!src/*'
   - '!{scripts,docs,.trae}/*'
