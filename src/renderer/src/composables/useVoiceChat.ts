@@ -33,11 +33,25 @@ const VOICE_IDLE_TIMEOUT_MS = 60_000
 /** 空闲超时检查周期（ms）。 */
 const IDLE_CHECK_INTERVAL_MS = 10_000
 
+// ---- barge-in 回响参考抑制参数 ----
+/** 判定窗口（ms）：取麦克风最近这段时长与正在播放的 TTS 参考采样比对。 */
+const ECHO_WIN_MS = 200
+/** 回声时延扫描范围（ms）：覆盖音箱直达/蓝牙缓冲等回声路径延迟与采集缓冲偏差。 */
+const ECHO_MAX_DELAY_MS = 700
+/** 时延扫描步长（ms）。 */
+const ECHO_DELAY_STEP_MS = 5
+/** 判定为回声的归一化互相关阈值：麦克风与参考高度相关 → 视为自己的声音，忽略。 */
+const ECHO_CORR_THRESHOLD = 0.5
+/** 挂起 barge-in 判定的等待时长（ms）：等麦克风积累足够判定窗口、参考也播过相应时延。 */
+const ECHO_DECIDE_MS = 200
+
 /**
  * 语音对话会话状态机（点击一次持续对话）：
  * 麦克风 → Silero VAD 自动断句 → MiMo ASR 转写 → 现有发送链路（voice 标记，
  * 口语化精简 + 可选快通道）→ 回复完成 → MiMo TTS 朗读 → 回到监听；朗读期间
- * VAD 继续运行，检测到用户开口即掐断（barge-in）并进入新一轮录音。
+ * VAD 继续运行，检测到用户开口即掐断（barge-in）并进入新一轮录音。barge-in 前
+ * 会把麦克风近窗与正在播放的 TTS 参考做相关性判定，过滤音箱外放传回麦克风的
+ * 自身回声，避免 AI 被自己的声音打断。
  */
 export function useVoiceChat(): {
   phase: Ref<VoicePhase>
@@ -57,9 +71,25 @@ export function useVoiceChat(): {
   let mic: MicVAD | null = null
   let stream: MediaStream | null = null
   let audioCtx: AudioContext | null = null
-  let ttsAudio: HTMLAudioElement | null = null
   let collector: ScriptProcessorNode | null = null
   let collectorSource: MediaStreamAudioSourceNode | null = null
+
+  // ---- 朗读播放（AudioContext BufferSource）与回声参考 ----
+  let activeSource: AudioBufferSourceNode | null = null
+  /** 正在播放的 TTS 采样（回声判定的参考信号）。 */
+  let activeRefBuffer: AudioBuffer | null = null
+  /** 正在播放项的 resolve：barge-in 掐断时同步放行 playOnce，避免 TTS 队列卡死。 */
+  let resolveCurrentPlay: (() => void) | null = null
+  /** 参考音频开始播放的时刻（audioCtx.currentTime），用于把麦克风采样对齐到参考时间轴。 */
+  let refStartTime = 0
+
+  // ---- barge-in 回响参考抑制状态 ----
+  /** 朗读期间麦克风采样近窗（含各自捕获窗口的结束时刻），供回声相关性判定。 */
+  let echoChunks: { samples: Float32Array; endTime: number }[] = []
+  /** 是否正挂起一次 barge-in 判定（避免回声连续触发时叠加判定）。 */
+  let pendingBargeIn = false
+  /** 判定代际令牌：取消挂起判定 / 停止会话时自增作废旧回调。 */
+  let bargeInCheckToken = 0
 
   // 录音兜底缓冲（VAD 断句超时用；正常路径直接用 VAD 提供的 16k 音频）
   let recordingFlag = false
@@ -76,6 +106,8 @@ export function useVoiceChat(): {
   let spokenUpTo = 0
   /** 已播报过开始提示语的工具（toolCallId，避免同轮重复播报）。 */
   const announcedTools = new Set<string>()
+  /** 本会话内已预热过 DB 缓存变体的工具（避免每轮重复预热同一工具触发多余 TTS 合成）。 */
+  const prewarmedTools = new Set<string>()
   /** TTS 播放项：text 为朗读文本；audio 为已生成好的音频（工具提示语缓存），无则现场合成。 */
   interface TtsItem {
     text: string
@@ -84,8 +116,8 @@ export function useVoiceChat(): {
   /** TTS 队列：逐句入队、顺序播放；barge-in 时清空。 */
   let ttsQueue: TtsItem[] = []
   let ttsPlaying = false
-  /** 预生成流水线：播放当前项期间并行合成队内下一条，避免逐条串行等 TTS。 */
-  let prefetch: { text: string; promise: Promise<string> } | null = null
+  /** 预生成流水线：播放当前项期间并行合成并解码队内下一条，避免逐条串行等 TTS。 */
+  let prefetch: { text: string; promise: Promise<AudioBuffer> } | null = null
 
   function toast(type: 'info' | 'warning' | 'error', content: string): void {
     message[type](content, { duration: 3500 })
@@ -117,17 +149,115 @@ export function useVoiceChat(): {
     clearWatchdog()
   }
 
-  /** 掐断正在播放的 TTS（barge-in / 关闭语音会话时）。 */
+  /** 掐断正在播放的 TTS（barge-in / 关闭语音会话时）：先放行 playOnce 避免队列卡死。 */
   function stopTtsPlayback(): void {
-    if (ttsAudio) {
-      ttsAudio.onended = null
-      try {
-        ttsAudio.pause()
-      } catch {
-        /* 忽略播放停止异常 */
-      }
-      ttsAudio = null
+    if (resolveCurrentPlay) {
+      const done = resolveCurrentPlay
+      resolveCurrentPlay = null
+      done()
     }
+    if (activeSource) {
+      activeSource.onended = null
+      try {
+        activeSource.stop()
+      } catch {
+        /* 已自然结束 */
+      }
+      try {
+        activeSource.disconnect()
+      } catch {
+        /* 忽略断开异常 */
+      }
+      activeSource = null
+    }
+    activeRefBuffer = null
+    echoChunks = []
+  }
+
+  // ---------- barge-in 回响参考抑制 ----------
+  // 音箱外放时 AI 朗读声会传回麦克风，Silero VAD 会把回声误判为「用户开口」而自我打断。
+  // 回声就是正在播放的 TTS 采样本身：把麦克风最近一段与参考音频做时延扫描的归一化
+  // 互相关，高度相关 → 自己的声音，忽略继续朗读；不相关 → 用户真的开口，才打断。
+
+  /** 收集麦克风最近 winLen 个采样（从旧到新）；数据不足返回 null。 */
+  function collectMicWindow(winLen: number): Float32Array | null {
+    const out = new Float32Array(winLen)
+    let remaining = winLen
+    let writeAt = winLen
+    for (let i = echoChunks.length - 1; i >= 0 && remaining > 0; i--) {
+      const c = echoChunks[i].samples
+      if (c.length >= remaining) {
+        out.set(c.subarray(c.length - remaining), writeAt - remaining)
+        remaining = 0
+      } else {
+        out.set(c, writeAt - c.length)
+        writeAt -= c.length
+        remaining -= c.length
+      }
+    }
+    return remaining > 0 ? null : out
+  }
+
+  /** 判定麦克风最近窗口是否与正在播放的参考音频高度相关（即是否只是回声）。 */
+  function isEchoNow(): boolean {
+    if (!audioCtx || !activeRefBuffer || echoChunks.length === 0) return false
+    const rate = audioCtx.sampleRate
+    const winLen = Math.round((ECHO_WIN_MS / 1000) * rate)
+    const micWin = collectMicWindow(winLen)
+    if (!micWin) return false
+    const micEnd = echoChunks[echoChunks.length - 1].endTime
+    const elapsedMs = (micEnd - refStartTime) * 1000
+    if (elapsedMs < ECHO_WIN_MS) return false // 参考才开始播放，尚无法判定
+    const maxDelayMs = Math.min(ECHO_MAX_DELAY_MS, elapsedMs)
+    const ref = activeRefBuffer.getChannelData(0)
+    const refLen = activeRefBuffer.length
+    const scratch = new Float32Array(winLen)
+    // 重叠不足（该时延下参考还没播到/已播完窗口大部）的时延跳过，避免空窗噪声误判
+    const minOverlap = Math.max(64, winLen >> 2)
+    let best = 0
+    for (let dMs = 0; dMs <= maxDelayMs; dMs += ECHO_DELAY_STEP_MS) {
+      // 麦克风第 0 个采样（最旧）的参考索引：其捕获时刻 t0 对应的参考播放时刻 t0 - d
+      const baseIdx = Math.round((micEnd - dMs / 1000 - refStartTime) * rate) - (winLen - 1)
+      const refStart = Math.max(0, baseIdx)
+      const refEnd = Math.min(refLen, baseIdx + winLen)
+      const overlap = refEnd - refStart
+      if (overlap < minOverlap) continue
+      const micStart = Math.max(0, -baseIdx)
+      for (let i = 0; i < overlap; i++) scratch[i] = ref[refStart + i]
+      const c = pearson(micWin.subarray(micStart, micStart + overlap), scratch.subarray(0, overlap))
+      if (c > best) best = c
+    }
+    return best >= ECHO_CORR_THRESHOLD
+  }
+
+  /** 真正执行打断：掐断朗读、清空队列并立即开始新一轮录音。 */
+  function doBargeIn(): void {
+    if (!voiceActive) return
+    bargeInCheckToken++
+    pendingBargeIn = false
+    stopTtsPlayback()
+    ttsQueue = []
+    prefetch = null
+    startRecording()
+  }
+
+  /** 朗读期间检测到开口：先做回声判定再决定是否打断（判定期内继续朗读）。 */
+  function tryBargeIn(): void {
+    if (!voiceActive || pendingBargeIn) return
+    // 尚无参考音频（还没开始播 / 采集数据不足）→ 退化为立即打断，保持原行为
+    if (!activeRefBuffer || !audioCtx || echoChunks.length === 0) {
+      doBargeIn()
+      return
+    }
+    pendingBargeIn = true
+    const token = ++bargeInCheckToken
+    setTimeout(() => {
+      if (!voiceActive || token !== bargeInCheckToken) return
+      pendingBargeIn = false
+      if (phase.value !== 'speaking') return
+      // 判定为回声 → 继续朗读；否则用户真的开口 → 打断
+      if (!isEchoNow()) doBargeIn()
+    }, ECHO_DECIDE_MS)
   }
 
   // ---------- VAD 回调 ----------
@@ -136,12 +266,9 @@ export function useVoiceChat(): {
     if (!voiceActive) return
     // 检测到开口即视为有效输入，刷新空闲超时
     lastInputAt = Date.now()
-    // 朗读期间检测到用户开口 → barge-in：掐断朗读、清空队列并立即录音
+    // 朗读期间检测到开口 → 先做回响参考判定：自己的回声则忽略，用户真的开口才打断
     if (phase.value === 'speaking') {
-      stopTtsPlayback()
-      ttsQueue = []
-      prefetch = null
-      startRecording()
+      void tryBargeIn()
       return
     }
     // 等待回复期间用户开口 → 打断当前生成（丢弃未读完的回复），立即进入新一轮录音。
@@ -159,7 +286,15 @@ export function useVoiceChat(): {
   }
 
   function onSpeechEnd(audio: Float32Array): void {
-    if (!voiceActive || phase.value !== 'recording') return
+    if (!voiceActive) return
+    // 朗读期间的非录音开口结束（回声/误触发，未进入录音）→ 作废挂起的打断判定
+    if (phase.value !== 'recording') {
+      if (phase.value === 'speaking') {
+        pendingBargeIn = false
+        bargeInCheckToken++
+      }
+      return
+    }
     stopRecording()
     void handleUtterance(audio)
   }
@@ -225,40 +360,68 @@ export function useVoiceChat(): {
 
   // ---------- 朗读：流式逐句（第一句出来即开始）+ 工具调用口语化提示语 ----------
 
-  /** 工具开始执行时的口语化提示语（toolName → 一句话；未知工具走兜底）。
-   * 打破工具执行期间的静默，让语音对话有节奏感。 */
-  const TOOL_START_PHRASES: Record<string, string> = {
-    bash: '我执行一下命令',
-    web_search: '我帮你搜索一下',
-    'web-search': '我帮你搜索一下',
-    grep: '我搜索一下相关内容',
-    find_file: '我帮你找一下文件',
-    list_files: '我看看目录里有什么',
-    read_file: '我先看一下这个文件',
-    write_file: '我帮你写入这个文件',
-    edit_file: '我帮你修改这个文件',
-    memory: '我先查一下记忆',
-    search_knowledge: '我检索一下知识库'
+  /** 工具开始执行时的口语化提示语（toolName → 多条变体，每次随机取一；未知工具走兜底）。
+   * 打破工具执行期间的静默，让语音对话有节奏感；多文本变体叠加 main 侧风格变体出听感差异。 */
+  const TOOL_START_PHRASES: Record<string, string[]> = {
+    bash: ['我执行一下命令', '我来运行一下命令', '正在执行命令', '好的，我跑一下命令'],
+    web_search: ['我帮你搜索一下', '我去网上查一下', '我搜索一下相关信息', '我在网上找一下'],
+    'web-search': ['我帮你搜索一下', '我去网上查一下', '我搜索一下相关信息', '我在网上找一下'],
+    grep: ['我搜索一下相关内容', '我在代码里搜一下', '我来检索一下相关内容'],
+    find_file: ['我帮你找一下文件', '我找一下这个文件在哪', '我去定位一下这个文件'],
+    list_files: ['我看看目录里有什么', '我列一下目录内容', '我看一下文件夹里有什么'],
+    read_file: ['我先看一下这个文件', '我打开这个文件看看', '我先读取一下文件内容'],
+    write_file: ['我帮你写入这个文件', '我把内容写入文件', '我来创建并写入文件'],
+    edit_file: ['我帮你修改这个文件', '我来编辑一下这个文件', '我修改一下文件内容'],
+    memory: ['我先查一下记忆', '我回忆一下之前的记录', '我查一下长期记忆'],
+    search_knowledge: ['我检索一下知识库', '我去知识库里找一下', '我查一下知识库内容']
   }
-  const DEFAULT_TOOL_PHRASE = '我帮你处理一下'
+  const DEFAULT_TOOL_PHRASES = ['我帮你处理一下', '我来处理一下', '好的，正在处理']
 
-  /** 播放一段音频：播放结束 / 被打断（barge-in）/ 出错均 resolve，避免队列卡死。 */
-  function playOnce(dataUrl: string): Promise<void> {
+  /** data URL → ArrayBuffer（TTS 音频均为 wav，直接用 atob 解码，避免 fetch data: 受 CSP 限制）。 */
+  function wavDataUrlToBuffer(dataUrl: string): ArrayBuffer {
+    const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+    const bin = atob(b64)
+    const buf = new ArrayBuffer(bin.length)
+    const view = new Uint8Array(buf)
+    for (let i = 0; i < bin.length; i++) view[i] = bin.charCodeAt(i)
+    return buf
+  }
+
+  /** 解码 TTS data URL → AudioBuffer（重采样到 audioCtx 采样率，与麦克风同频便于比对）。 */
+  async function decodeWav(dataUrl: string): Promise<AudioBuffer> {
+    if (!audioCtx) throw new Error('音频上下文不可用')
+    return audioCtx.decodeAudioData(wavDataUrlToBuffer(dataUrl))
+  }
+
+  /**
+   * 播放一段音频：经 AudioContext BufferSource 播放，从而拿到精确的参考时间轴
+   * （refStartTime / activeRefBuffer）供 barge-in 回声判定。结束 / 被打断均 resolve。
+   */
+  function playOnce(buf: AudioBuffer): Promise<void> {
     return new Promise((resolve) => {
-      const audio = new Audio(dataUrl)
-      ttsAudio = audio
+      if (!audioCtx) {
+        resolve()
+        return
+      }
+      const src = audioCtx.createBufferSource()
+      src.buffer = buf
+      src.connect(audioCtx.destination)
+      activeSource = src
+      activeRefBuffer = buf
+      refStartTime = audioCtx.currentTime
+      echoChunks = []
       const done = (): void => {
-        audio.onended = null
-        audio.onpause = null
-        audio.onerror = null
-        if (ttsAudio === audio) ttsAudio = null
+        if (resolveCurrentPlay === done) resolveCurrentPlay = null
+        src.onended = null
+        if (activeSource === src) {
+          activeSource = null
+          activeRefBuffer = null
+        }
         resolve()
       }
-      audio.onended = done
-      audio.onerror = () => done()
-      // barge-in 会 pause 当前音频，需放行以退出播放（剩余文本随队列清空丢弃）
-      audio.onpause = done
-      audio.play().catch(() => done())
+      resolveCurrentPlay = done
+      src.onended = done
+      src.start(refStartTime)
     })
   }
 
@@ -283,22 +446,28 @@ export function useVoiceChat(): {
     const next = ttsQueue.find((i) => !i.audio)
     if (!next) return
     const text = next.text
-    prefetch = { text, promise: mainClient.voice.tts(text).then((r) => r.dataUrl) }
+    prefetch = {
+      text,
+      promise: mainClient.voice
+        .tts(text)
+        .then((r) => r.dataUrl)
+        .then(decodeWav)
+    }
     prefetch.promise.catch(() => {
       if (prefetch?.text === text) prefetch = null
     })
   }
 
-  /** 取某项的音频：已带音频（缓存）直接返回 → 预生成命中即等它在途结果 → 现场合成。 */
-  async function obtainAudio(item: TtsItem): Promise<string> {
-    if (item.audio) return item.audio
+  /** 取某项的音频：已带音频（缓存）直接解码 → 预生成命中即等它在途结果 → 现场合成。 */
+  async function obtainAudio(item: TtsItem): Promise<AudioBuffer> {
+    if (item.audio) return decodeWav(item.audio)
     if (prefetch?.text === item.text) {
       const p = prefetch
       prefetch = null
       return p.promise
     }
     const { dataUrl } = await mainClient.voice.tts(item.text)
-    return dataUrl
+    return decodeWav(dataUrl)
   }
 
   async function drainTts(): Promise<void> {
@@ -308,11 +477,12 @@ export function useVoiceChat(): {
       while (ttsQueue.length > 0 && voiceActive) {
         const item = ttsQueue.shift()!
         phase.value = 'speaking'
-        const dataUrl = await obtainAudio(item)
-        if (!voiceActive) return
+        const audio = await obtainAudio(item)
+        // 合成/解码期间发生 barge-in（用户开口 → 已进入录音）则放弃播放，避免 AI 声音灌进录音
+        if (!voiceActive || phase.value !== 'speaking') return
         // 本句播放期间并行合成下一条，衔接处无合成等待
         prefetchNext()
-        await playOnce(dataUrl)
+        await playOnce(audio)
       }
     } catch (err) {
       toast('error', `朗读失败：${err instanceof Error ? err.message : String(err)}`)
@@ -397,7 +567,8 @@ export function useVoiceChat(): {
   /**
    * 监听最后一条 assistant 消息里的工具调用块：toolCall 的 name 一出现（参数可能仍在
    * 流式生成）即播报口语化提示语，不必等工具执行结束。固定短语走 main 侧 DB 预缓存
-   * 音频（toolPhrase 随机变体），首个音节零合成等待；缓存未命中回退现场合成。
+   * 音频（toolPhrase 按文本缓存），首个音节零合成等待；缓存未命中回退现场合成。
+   * 多文本变体随机取一，并在触发时把同工具其余变体一并预热缓存，保证后续随机命中。
    * 同轮同工具只播一次（announcedTools）。
    */
   watch(
@@ -423,7 +594,8 @@ export function useVoiceChat(): {
         const name = pair.slice(sep + 2)
         if (!id || !name || announcedTools.has(id)) continue
         announcedTools.add(id)
-        const phrase = `${TOOL_START_PHRASES[name] ?? DEFAULT_TOOL_PHRASE}，稍等一下`
+        const variants = TOOL_START_PHRASES[name] ?? DEFAULT_TOOL_PHRASES
+        const phrase = variants[Math.floor(Math.random() * variants.length)]
         void mainClient.voice.toolPhrase(phrase).then(
           ({ dataUrl }) => {
             if (voiceActive) enqueueAudio(phrase, dataUrl)
@@ -433,6 +605,15 @@ export function useVoiceChat(): {
             if (voiceActive) enqueueTts(phrase)
           }
         )
+        // 首次触发该工具时预热其余变体的 DB 缓存：之后随机切换都能命中，避免现场合成
+        const toolKey = TOOL_START_PHRASES[name] ? name : '__default__'
+        if (!prewarmedTools.has(toolKey)) {
+          prewarmedTools.add(toolKey)
+          for (const v of variants) {
+            if (v === phrase) continue
+            void mainClient.voice.toolPhrase(v).catch(() => {})
+          }
+        }
       }
     }
   )
@@ -511,7 +692,17 @@ export function useVoiceChat(): {
       collectorSource = audioCtx.createMediaStreamSource(stream)
       collector = audioCtx.createScriptProcessor(4096, 1, 1)
       collector.onaudioprocess = (e) => {
-        if (recordingFlag) chunks.push(new Float32Array(e.inputBuffer.getChannelData(0)))
+        const mic = e.inputBuffer.getChannelData(0)
+        if (recordingFlag) chunks.push(new Float32Array(mic))
+        // 朗读期间持续缓冲麦克风近窗（供 barge-in 回声判定）；判定窗+最大时延之外可丢弃
+        if (phase.value === 'speaking' && activeRefBuffer && audioCtx) {
+          const now = audioCtx.currentTime
+          echoChunks.push({ samples: new Float32Array(mic), endTime: now })
+          const cutoff = now - (ECHO_DECIDE_MS + ECHO_MAX_DELAY_MS + ECHO_WIN_MS + 200) / 1000
+          while (echoChunks.length > 1 && echoChunks[0].endTime < cutoff) {
+            echoChunks.shift()
+          }
+        }
       }
       collectorSource.connect(collector)
       // ScriptProcessor 需连接 destination 才会持续触发（输出静音即可）
@@ -563,12 +754,17 @@ export function useVoiceChat(): {
     awaitingReply = false
     clearWatchdog()
     stopTtsPlayback()
+    // 复位 barge-in 回声判定状态（作废挂起的判定回调）
+    pendingBargeIn = false
+    bargeInCheckToken++
+    echoChunks = []
     // 复位流式朗读状态
     ttsQueue = []
     ttsPlaying = false
     prefetch = null
     spokenUpTo = 0
     announcedTools.clear()
+    prewarmedTools.clear()
     try {
       if (collector) {
         collector.onaudioprocess = null
@@ -660,4 +856,29 @@ function downsample(input: Float32Array, fromRate: number, toRate: number): Floa
     out[i] = input[Math.min(idx, input.length - 1)]
   }
   return out
+}
+
+/** 归一化互相关（Pearson 相关系数）：两段等长信号高度线性相关时接近 ±1。 */
+function pearson(a: Float32Array, b: Float32Array): number {
+  const n = a.length
+  let sa = 0
+  let sb = 0
+  for (let i = 0; i < n; i++) {
+    sa += a[i]
+    sb += b[i]
+  }
+  const ma = sa / n
+  const mb = sb / n
+  let num = 0
+  let da = 0
+  let db = 0
+  for (let i = 0; i < n; i++) {
+    const x = a[i] - ma
+    const y = b[i] - mb
+    num += x * y
+    da += x * x
+    db += y * y
+  }
+  const den = Math.sqrt(da * db)
+  return den === 0 ? 0 : num / den
 }
