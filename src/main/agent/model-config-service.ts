@@ -22,6 +22,7 @@ import {
 } from './model-config'
 import { getModelsInstance } from './models'
 import { createLogger } from '../utils/log'
+import { rendererClient } from '../service/render-client'
 
 const log = createLogger('modelConfig')
 
@@ -54,6 +55,8 @@ export class ModelConfigService extends IpcService {
       source: input.source,
       hasApiKey: !!apiKey?.trim()
     })
+    // 广播到全部窗口：首次启动在设置窗口添加模型后，聊天窗口立即刷新（hasModel 生效）。
+    rendererClient.modelConfigSync.changed()
     return toSummary(db.getModelConfig(config.id)!)
   }
 
@@ -75,6 +78,7 @@ export class ModelConfigService extends IpcService {
       apiKeyAction:
         patch.apiKey === undefined ? 'unchanged' : patch.apiKey === null ? 'cleared' : 'updated'
     })
+    rendererClient.modelConfigSync.changed()
     return toSummary(fresh)
   }
 
@@ -85,6 +89,7 @@ export class ModelConfigService extends IpcService {
     unregisterModelConfig(getModelsInstance(), id)
     db.deleteModelConfig(id)
     log.info('删除模型配置', { configId: id, displayName: config?.displayName })
+    rendererClient.modelConfigSync.changed()
   }
 
   /** 测试某模型配置的连通性（收到首个非 error 事件即判成功，8s 超时）。 */

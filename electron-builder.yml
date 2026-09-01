@@ -19,12 +19,12 @@ files:
   - '!**/*.{d.ts,d.mts,d.cts}'
   - '!node_modules/@modelcontextprotocol/sdk/dist/**/examples/**'
   # 语音 VAD：JS 已由 vite 打进渲染产物，运行时仅需 wasm / onnx 资源（appasset:// 协议读取），
-  # onnxruntime-web 全量 dist ~133MB，排除后只保留 4 个 wasm 变体 + 4 个 Emscripten 胶水 .mjs
+  # onnxruntime-web 全量 dist ~133MB，排除后只保留实际会被加载的文件：
+  #  - asset-protocol 会把一切 wasm 请求回退到 ort-wasm-simd-threaded.wasm（唯一运行时加载的 wasm），
+  #    故 jsep/jspi/asyncify 三个变体（~66MB）不打包；
+  #  - 4 个 Emscripten 胶水 .mjs 按名直接服务，保留以兼容动态 import。
   - '!node_modules/onnxruntime-web/**'
   - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.wasm'
-  - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.wasm'
-  - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jspi.wasm'
-  - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.asyncify.wasm'
   - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.mjs'
   - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jsep.mjs'
   - 'node_modules/onnxruntime-web/dist/ort-wasm-simd-threaded.jspi.mjs'

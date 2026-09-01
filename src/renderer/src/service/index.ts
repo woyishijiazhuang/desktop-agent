@@ -3,13 +3,15 @@ import { UiService } from './ui-service'
 import { AgentEventService } from './agent-event-service'
 import { SettingsSyncService } from './settings-sync-service'
 import { ThemeSyncService } from './theme-sync-service'
+import { ModelConfigSyncService } from './model-config-sync-service'
 
 // Register all services — main 进程通过 rendererClient.<namespace>.* 反向调用
 export const ipcRendererServices = initializeIpcRendererServices([
   UiService,
   AgentEventService,
   SettingsSyncService,
-  ThemeSyncService
+  ThemeSyncService,
+  ModelConfigSyncService
 ])
 
 // Export the combined type for the main's createMainClient

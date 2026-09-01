@@ -34,6 +34,8 @@ const VIEW_ROUTES: Record<string, ViewTarget> = {
   'ui.settingsTab': 'content',
   // 设置变更只由内容视图消费（标题栏视图仅注册 ui 服务）
   'settingsSync.settingChanged': 'content',
+  // 模型配置变更只由内容视图消费（标题栏视图仅注册 ui 服务）
+  'modelConfigSync.changed': 'content',
   // agent 事件只由内容视图消费
   'agentEvent.onEvent': 'content',
   'agentEvent.onSessionUpdate': 'content',
