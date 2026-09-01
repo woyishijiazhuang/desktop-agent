@@ -108,6 +108,11 @@ async function onFastChannelChange(v: boolean): Promise<void> {
   message.success(v ? '已开启语音快通道（回复更快、更口语化）' : '已关闭语音快通道（保留工具与思考）')
 }
 
+async function onToolPhrasesChange(v: boolean): Promise<void> {
+  await settings.saveVoiceToolPhrases(v)
+  message.success(v ? '已开启工具调用播报' : '已关闭工具调用播报')
+}
+
 const regionOptions = [
   { label: '中国大陆（Token Plan）', value: 'cn' },
   { label: '全球（Global API）', value: 'global' }
@@ -252,6 +257,16 @@ const voiceOptions = VOICE_PRESETS.map((v) => ({ label: v.name, value: v.id }))
           </span>
         </div>
         <NSwitch :value="settings.voiceFastChannel" @update:value="onFastChannelChange" />
+      </div>
+
+      <div class="data-row data-row--gap">
+        <div class="data-row__info">
+          <span class="data-row__label">工具调用播报</span>
+          <span class="data-row__hint">
+            语音对话中工具开始执行时播报口语化提示语（如「我执行一下命令」）；关闭则保持静默直到回复完成
+          </span>
+        </div>
+        <NSwitch :value="settings.voiceToolPhrases" @update:value="onToolPhrasesChange" />
       </div>
     </NCard>
   </div>

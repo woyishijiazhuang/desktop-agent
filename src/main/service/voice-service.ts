@@ -10,11 +10,13 @@ import {
   SETTING_VOICE_TTS_STYLE,
   SETTING_VOICE_SILENCE_SEC,
   SETTING_VOICE_FAST_CHANNEL,
+  SETTING_VOICE_TOOL_PHRASES,
   DEFAULT_VOICE_REGION,
   DEFAULT_VOICE_LANGUAGE,
   DEFAULT_VOICE_TTS_VOICE,
   DEFAULT_VOICE_SILENCE_SEC,
   DEFAULT_VOICE_FAST_CHANNEL,
+  DEFAULT_VOICE_TOOL_PHRASES,
   type VoiceRegion,
   type VoiceLanguage
 } from '../agent/types'
@@ -92,6 +94,7 @@ export class VoiceService extends IpcService {
     ttsStyle: string
     silenceSec: number
     fastChannel: boolean
+    toolPhrases: boolean
   } {
     return {
       hasApiKey: !!db.getSetting(SETTING_VOICE_API_KEY),
@@ -100,7 +103,8 @@ export class VoiceService extends IpcService {
       ttsVoice: getSetting<string>(SETTING_VOICE_TTS_VOICE, DEFAULT_VOICE_TTS_VOICE),
       ttsStyle: getSetting<string>(SETTING_VOICE_TTS_STYLE, ''),
       silenceSec: getSetting<number>(SETTING_VOICE_SILENCE_SEC, DEFAULT_VOICE_SILENCE_SEC),
-      fastChannel: getSetting<boolean>(SETTING_VOICE_FAST_CHANNEL, DEFAULT_VOICE_FAST_CHANNEL)
+      fastChannel: getSetting<boolean>(SETTING_VOICE_FAST_CHANNEL, DEFAULT_VOICE_FAST_CHANNEL),
+      toolPhrases: getSetting<boolean>(SETTING_VOICE_TOOL_PHRASES, DEFAULT_VOICE_TOOL_PHRASES)
     }
   }
 

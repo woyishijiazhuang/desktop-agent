@@ -32,6 +32,7 @@ import {
   SETTING_VOICE_TTS_STYLE,
   SETTING_VOICE_SILENCE_SEC,
   SETTING_VOICE_FAST_CHANNEL,
+  SETTING_VOICE_TOOL_PHRASES,
   SETTING_VOICE_API_KEY,
   DEFAULT_MAX_TURNS_PER_RUN,
   DEFAULT_FIND_SKILL_SOURCE,
@@ -43,6 +44,7 @@ import {
   DEFAULT_VOICE_TTS_VOICE,
   DEFAULT_VOICE_SILENCE_SEC,
   DEFAULT_VOICE_FAST_CHANNEL,
+  DEFAULT_VOICE_TOOL_PHRASES,
   VOICE_PRESETS
 } from '@main/agent/types'
 
@@ -108,6 +110,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const voiceSilenceSec = ref(DEFAULT_VOICE_SILENCE_SEC)
   /** 语音快通道（跳过工具 + 关思考）。 */
   const voiceFastChannel = ref(DEFAULT_VOICE_FAST_CHANNEL)
+  /** 工具调用开始时播报口语化提示语（如「我执行一下命令」）。 */
+  const voiceToolPhrases = ref(DEFAULT_VOICE_TOOL_PHRASES)
   /** 关闭窗口时最小化到托盘（默认关闭：关窗即退出/关闭窗口）。 */
   const closeToTray = ref(false)
   /** 标题栏模式（默认 native：优先当前平台原生窗口栏）。 */
@@ -190,6 +194,7 @@ export const useSettingsStore = defineStore('settings', () => {
           ttsStyle: string
           silenceSec: number
           fastChannel: boolean
+          toolPhrases: boolean
         }
       | undefined
     voiceHasApiKey.value = vc?.hasApiKey ?? false
@@ -206,6 +211,7 @@ export const useSettingsStore = defineStore('settings', () => {
         ? sil
         : DEFAULT_VOICE_SILENCE_SEC
     voiceFastChannel.value = vc?.fastChannel ?? DEFAULT_VOICE_FAST_CHANNEL
+    voiceToolPhrases.value = vc?.toolPhrases ?? DEFAULT_VOICE_TOOL_PHRASES
     memoryEnabled.value = (memoryEnabledVal as boolean | undefined) ?? true
     skillsEnabled.value = (skillsEnabledVal as boolean | undefined) ?? true
     kbEnabled.value = (kbEnabledVal as boolean | undefined) ?? true
@@ -385,6 +391,12 @@ export const useSettingsStore = defineStore('settings', () => {
     voiceFastChannel.value = v
   }
 
+  /** 切换工具提示语播报。实时生效：朗读前逐次读取，无需缓存失效。 */
+  async function saveVoiceToolPhrases(v: boolean): Promise<void> {
+    await mainClient.db.setSetting(SETTING_VOICE_TOOL_PHRASES, v)
+    voiceToolPhrases.value = v
+  }
+
   /**
    * 切换「关闭窗口时最小化到托盘」。无需驱逐 Agent：
    * main 侧窗口 close 时实时读取该设置决定拦截隐藏或放行。
@@ -485,6 +497,9 @@ export const useSettingsStore = defineStore('settings', () => {
       case SETTING_VOICE_FAST_CHANNEL:
         voiceFastChannel.value = (value as boolean) ?? DEFAULT_VOICE_FAST_CHANNEL
         break
+      case SETTING_VOICE_TOOL_PHRASES:
+        voiceToolPhrases.value = (value as boolean) ?? DEFAULT_VOICE_TOOL_PHRASES
+        break
     }
   }
 
@@ -576,6 +591,7 @@ export const useSettingsStore = defineStore('settings', () => {
     voiceTtsStyle,
     voiceSilenceSec,
     voiceFastChannel,
+    voiceToolPhrases,
     loadSettings,
     saveDefaultSystemPrompt,
     setLastUsedThinkingLevel,
@@ -592,6 +608,7 @@ export const useSettingsStore = defineStore('settings', () => {
     saveVoiceTtsStyle,
     saveVoiceSilenceSec,
     saveVoiceFastChannel,
+    saveVoiceToolPhrases,
     saveMemoryEnabled,
     saveSkillsEnabled,
     saveKbEnabled,

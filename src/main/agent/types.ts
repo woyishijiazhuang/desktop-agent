@@ -128,6 +128,7 @@ export const DEFAULT_PERMISSION_TIMEOUT_SEC = 60
  * - silenceSec：VAD 断句静音阈值（秒，判断用户说完的停顿长度）
  * - fastChannel：语音快通道（关闭思考、回复更快；工具保留——清空工具会让模型回退到
  *   XML 文本格式调工具而无法执行，详见 VOICE_MODE_INSTRUCTION 注释）
+ * - toolPhrases：工具调用开始时是否播报口语化提示语（如「我执行一下命令」）
  */
 export const SETTING_VOICE_API_KEY = 'voice.apiKey'
 export const SETTING_VOICE_REGION = 'voice.region'
@@ -136,6 +137,7 @@ export const SETTING_VOICE_TTS_VOICE = 'voice.ttsVoice'
 export const SETTING_VOICE_TTS_STYLE = 'voice.ttsStyle'
 export const SETTING_VOICE_SILENCE_SEC = 'voice.silenceSec'
 export const SETTING_VOICE_FAST_CHANNEL = 'voice.fastChannel'
+export const SETTING_VOICE_TOOL_PHRASES = 'voice.toolPhrases'
 
 /** MiMo 语音接入区域：cn = Token Plan 中国大陆，global = 全球 API。 */
 export type VoiceRegion = 'cn' | 'global'
@@ -143,12 +145,13 @@ export type VoiceRegion = 'cn' | 'global'
 /** ASR 识别语言（MiMo asr_options.language 取值）。 */
 export type VoiceLanguage = 'auto' | 'zh' | 'en'
 
-/** 默认值：全球 API 接入、中文识别、默认音色、0.8s 静音断句、快通道开。 */
+/** 默认值：全球 API 接入、中文识别、默认音色、0.8s 静音断句、快通道开、工具提示语开。 */
 export const DEFAULT_VOICE_REGION: VoiceRegion = 'global'
 export const DEFAULT_VOICE_LANGUAGE: VoiceLanguage = 'zh'
 export const DEFAULT_VOICE_TTS_VOICE = 'mimo_default'
 export const DEFAULT_VOICE_SILENCE_SEC = 0.8
 export const DEFAULT_VOICE_FAST_CHANNEL = true
+export const DEFAULT_VOICE_TOOL_PHRASES = true
 
 /** 内置 TTS 音色选项（renderer 设置页选择器用）。 */
 export const VOICE_PRESETS: { id: string; name: string; lang: string }[] = [

@@ -32,6 +32,9 @@ const STREAM_CHUNK_FALLBACK = 40
 const VOICE_IDLE_TIMEOUT_MS = 60_000
 /** 空闲超时检查周期（ms）。 */
 const IDLE_CHECK_INTERVAL_MS = 10_000
+/** 批量合成窗口（ms）：当前播放剩余时间降到该值内且队内连续未就绪句 ≥2 时，
+ * 把它们合并为一次 TTS 合成——跨句合成韵律连贯，衔接比逐句拼接更自然，请求也更少。 */
+const BATCH_SYNTH_WINDOW_MS = 3000
 
 /**
  * 语音对话会话状态机（点击一次持续对话）：
@@ -57,9 +60,16 @@ export function useVoiceChat(): {
   let mic: MicVAD | null = null
   let stream: MediaStream | null = null
   let audioCtx: AudioContext | null = null
-  let ttsAudio: HTMLAudioElement | null = null
   let collector: ScriptProcessorNode | null = null
   let collectorSource: MediaStreamAudioSourceNode | null = null
+
+  // ---- 朗读播放（AudioContext BufferSource）----
+  let activeSource: AudioBufferSourceNode | null = null
+  /** 正在播放项的 resolve：barge-in 掐断时同步放行 playOnce，避免 TTS 队列卡死。 */
+  let resolveCurrentPlay: (() => void) | null = null
+  /** 正在播放的音频与起始时刻：估算剩余播放时间，决定何时批量合成后续句。 */
+  let activeBuffer: AudioBuffer | null = null
+  let activePlayStart = 0
 
   // 录音兜底缓冲（VAD 断句超时用；正常路径直接用 VAD 提供的 16k 音频）
   let recordingFlag = false
@@ -76,16 +86,20 @@ export function useVoiceChat(): {
   let spokenUpTo = 0
   /** 已播报过开始提示语的工具（toolCallId，避免同轮重复播报）。 */
   const announcedTools = new Set<string>()
-  /** TTS 播放项：text 为朗读文本；audio 为已生成好的音频（工具提示语缓存），无则现场合成。 */
+  /** TTS 播放项：text 为朗读文本；audio 为已生成好的音频 dataUrl（工具提示语缓存）；
+   * buffer 为已解码音频（预生成/播放前解码结果，命中即零等待）。 */
   interface TtsItem {
     text: string
     audio?: string
+    buffer?: AudioBuffer
   }
   /** TTS 队列：逐句入队、顺序播放；barge-in 时清空。 */
   let ttsQueue: TtsItem[] = []
   let ttsPlaying = false
-  /** 预生成流水线：播放当前项期间并行合成队内下一条，避免逐条串行等 TTS。 */
-  let prefetch: { text: string; promise: Promise<string> } | null = null
+  /** 预生成：合成+解码队内未就绪句（单句，或临播放结束时的批量合并）。 */
+  let prefetch: { item: TtsItem; promise: Promise<AudioBuffer> } | null = null
+  /** 批量合成定时器：播放剩余时间充足时等到临窗口再合并合成（期间新入队句一并合入）。 */
+  let prefetchTimer: ReturnType<typeof setTimeout> | null = null
 
   function toast(type: 'info' | 'warning' | 'error', content: string): void {
     message[type](content, { duration: 3500 })
@@ -117,16 +131,29 @@ export function useVoiceChat(): {
     clearWatchdog()
   }
 
-  /** 掐断正在播放的 TTS（barge-in / 关闭语音会话时）。 */
+  /** 掐断正在播放的 TTS（barge-in / 关闭语音会话时）：先停声源再放行 playOnce——
+   * done() 回调会把 activeSource 置 null，若先 resolve 后 stop 则永远停不掉（音频继续播）。 */
   function stopTtsPlayback(): void {
-    if (ttsAudio) {
-      ttsAudio.onended = null
+    const src = activeSource
+    activeSource = null
+    activeBuffer = null
+    if (src) {
+      src.onended = null
       try {
-        ttsAudio.pause()
+        src.stop()
       } catch {
-        /* 忽略播放停止异常 */
+        /* 已自然结束 */
       }
-      ttsAudio = null
+      try {
+        src.disconnect()
+      } catch {
+        /* 忽略断开异常 */
+      }
+    }
+    if (resolveCurrentPlay) {
+      const done = resolveCurrentPlay
+      resolveCurrentPlay = null
+      done()
     }
   }
 
@@ -136,11 +163,16 @@ export function useVoiceChat(): {
     if (!voiceActive) return
     // 检测到开口即视为有效输入，刷新空闲超时
     lastInputAt = Date.now()
-    // 朗读期间检测到用户开口 → barge-in：掐断朗读、清空队列并立即录音
+    // 朗读期间检测到用户开口 → barge-in：掐断朗读、清空队列并立即录音。
+    // 生成仍在进行（awaitingReply）则一并中止，否则后续句子会继续入队播放，
+    // AI 的声音盖在用户录音上、phase 被 drainTts 覆盖回 speaking，录音状态机被打断。
     if (phase.value === 'speaking') {
+      awaitingReply = false
       stopTtsPlayback()
       ttsQueue = []
       prefetch = null
+      clearPrefetchTimer()
+      if (chatStore.isBusy) void chatStore.abort()
       startRecording()
       return
     }
@@ -151,6 +183,7 @@ export function useVoiceChat(): {
       stopTtsPlayback()
       ttsQueue = []
       prefetch = null
+      clearPrefetchTimer()
       void chatStore.abort()
       startRecording()
       return
@@ -242,23 +275,48 @@ export function useVoiceChat(): {
   }
   const DEFAULT_TOOL_PHRASE = '我帮你处理一下'
 
-  /** 播放一段音频：播放结束 / 被打断（barge-in）/ 出错均 resolve，避免队列卡死。 */
-  function playOnce(dataUrl: string): Promise<void> {
+  /** data URL → ArrayBuffer（TTS 音频均为 wav，直接用 atob 解码，避免 fetch data: 受 CSP 限制）。 */
+  function wavDataUrlToBuffer(dataUrl: string): ArrayBuffer {
+    const b64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+    const bin = atob(b64)
+    const buf = new ArrayBuffer(bin.length)
+    const view = new Uint8Array(buf)
+    for (let i = 0; i < bin.length; i++) view[i] = bin.charCodeAt(i)
+    return buf
+  }
+
+  /** 解码 TTS data URL → AudioBuffer。 */
+  async function decodeWav(dataUrl: string): Promise<AudioBuffer> {
+    if (!audioCtx) throw new Error('音频上下文不可用')
+    return audioCtx.decodeAudioData(wavDataUrlToBuffer(dataUrl))
+  }
+
+  /** 播放一段已解码音频：BufferSource 直播，衔接处无元素创建/解码开销；
+   * 播放结束 / 被打断（barge-in）/ 出错均 resolve，避免队列卡死。 */
+  function playOnce(buf: AudioBuffer): Promise<void> {
     return new Promise((resolve) => {
-      const audio = new Audio(dataUrl)
-      ttsAudio = audio
+      if (!audioCtx) {
+        resolve()
+        return
+      }
+      const src = audioCtx.createBufferSource()
+      src.buffer = buf
+      src.connect(audioCtx.destination)
+      activeSource = src
       const done = (): void => {
-        audio.onended = null
-        audio.onpause = null
-        audio.onerror = null
-        if (ttsAudio === audio) ttsAudio = null
+        if (resolveCurrentPlay === done) resolveCurrentPlay = null
+        src.onended = null
+        if (activeSource === src) {
+          activeSource = null
+          activeBuffer = null
+        }
         resolve()
       }
-      audio.onended = done
-      audio.onerror = () => done()
-      // barge-in 会 pause 当前音频，需放行以退出播放（剩余文本随队列清空丢弃）
-      audio.onpause = done
-      audio.play().catch(() => done())
+      resolveCurrentPlay = done
+      src.onended = done
+      src.start()
+      activeBuffer = buf
+      activePlayStart = audioCtx.currentTime
     })
   }
 
@@ -268,7 +326,7 @@ export function useVoiceChat(): {
     if (!t) return
     ttsQueue.push({ text: t })
     if (!ttsPlaying) void drainTts()
-    else prefetchNext()
+    else schedulePrefetch()
   }
 
   /** 入队一段已生成好的音频（工具提示语 DB 缓存），首个音节零合成等待。 */
@@ -277,28 +335,114 @@ export function useVoiceChat(): {
     if (!ttsPlaying) void drainTts()
   }
 
-  /** 预生成：播放当前项期间并行合成队内第一条未合成文本（跳过已带音频的缓存项）。 */
-  function prefetchNext(): void {
-    if (prefetch || !voiceActive) return
-    const next = ttsQueue.find((i) => !i.audio)
-    if (!next) return
-    const text = next.text
-    prefetch = { text, promise: mainClient.voice.tts(text).then((r) => r.dataUrl) }
-    prefetch.promise.catch(() => {
-      if (prefetch?.text === text) prefetch = null
-    })
+  /** 当前播放剩余时间（s）；无播放中音频返回 null。 */
+  function activeRemainingSec(): number | null {
+    if (!audioCtx || !activeBuffer) return null
+    return Math.max(0, activeBuffer.duration - (audioCtx.currentTime - activePlayStart))
   }
 
-  /** 取某项的音频：已带音频（缓存）直接返回 → 预生成命中即等它在途结果 → 现场合成。 */
-  async function obtainAudio(item: TtsItem): Promise<string> {
-    if (item.audio) return item.audio
-    if (prefetch?.text === item.text) {
+  /** 队列中从 idx 开始的连续未就绪项（无 buffer/audio，DB 缓存项天然隔断批次）。 */
+  function unreadyRun(idx: number): TtsItem[] {
+    const run: TtsItem[] = []
+    for (let i = idx; i < ttsQueue.length; i++) {
+      const it = ttsQueue[i]
+      if (it.buffer || it.audio) break
+      run.push(it)
+    }
+    return run
+  }
+
+  function clearPrefetchTimer(): void {
+    if (prefetchTimer) {
+      clearTimeout(prefetchTimer)
+      prefetchTimer = null
+    }
+  }
+
+  /**
+   * 预生成调度（首句快出 + 后续合批）：
+   * - 无播放（首轮第一句）→ 立即单独合成，最快出声；
+   * - 播放中剩余时间充足且连续未就绪句 ≥2 → 定时到「剩余 BATCH_SYNTH_WINDOW_MS」
+   *   再合并批量合成（期间新入队的句子一并合入，跨句韵律连贯、请求更少）；
+   * - 其余情况（仅 1 句未就绪 / 已临窗口）→ 立即合成首条未就绪句。
+   */
+  function schedulePrefetch(): void {
+    if (!voiceActive || prefetch || prefetchTimer) return
+    const idx = ttsQueue.findIndex((i) => !i.buffer && !i.audio)
+    if (idx < 0) return
+    const remaining = activeRemainingSec()
+    if (
+      remaining !== null &&
+      unreadyRun(idx).length >= 2 &&
+      remaining * 1000 > BATCH_SYNTH_WINDOW_MS
+    ) {
+      prefetchTimer = setTimeout(() => {
+        prefetchTimer = null
+        startPrefetch()
+      }, remaining * 1000 - BATCH_SYNTH_WINDOW_MS)
+      return
+    }
+    startPrefetch()
+  }
+
+  /** 实际发起合成：播放中（含临窗口）且连续未就绪句 ≥2 → 合并为一次 TTS 调用，
+   * 原位替换队列项；否则单独合成首条未就绪句。 */
+  function startPrefetch(): void {
+    if (!voiceActive || prefetch) return
+    const idx = ttsQueue.findIndex((i) => !i.buffer && !i.audio)
+    if (idx < 0) return
+    const run = unreadyRun(idx)
+    if (run.length >= 2 && activeRemainingSec() !== null) {
+      // 合并批量：从队列摘出这些句，原位替换为一个批量项（保持 FIFO 位置）
+      const merged: TtsItem = { text: run.map((i) => i.text).join('\n') }
+      ttsQueue.splice(idx, run.length, merged)
+      prefetch = {
+        item: merged,
+        promise: mainClient.voice.tts(merged.text).then((r) => decodeWav(r.dataUrl))
+      }
+      prefetch.promise.then(
+        (buffer) => {
+          if (prefetch?.item === merged) prefetch = null
+          merged.buffer = buffer
+          schedulePrefetch()
+        },
+        () => {
+          if (prefetch?.item === merged) prefetch = null
+          // 批量失败：拆回单句项，退回逐句合成
+          const at = ttsQueue.indexOf(merged)
+          if (at >= 0) ttsQueue.splice(at, 1, ...run)
+          schedulePrefetch()
+        }
+      )
+      return
+    }
+    const item = run[0]
+    prefetch = {
+      item,
+      promise: mainClient.voice.tts(item.text).then((r) => decodeWav(r.dataUrl))
+    }
+    prefetch.promise.then(
+      (buffer) => {
+        if (prefetch?.item === item) prefetch = null
+        item.buffer = buffer
+        schedulePrefetch()
+      },
+      () => {
+        if (prefetch?.item === item) prefetch = null
+      }
+    )
+  }
+
+  /** 取某项的音频：已解码直接返回 → DB 缓存现场解码（本地，快）→ 预生成在途即等结果 → 现场合成。 */
+  async function obtainAudio(item: TtsItem): Promise<AudioBuffer> {
+    if (item.buffer) return item.buffer
+    if (item.audio) return (item.buffer = await decodeWav(item.audio))
+    if (prefetch?.item === item) {
       const p = prefetch
       prefetch = null
-      return p.promise
+      return (item.buffer = await p.promise)
     }
-    const { dataUrl } = await mainClient.voice.tts(item.text)
-    return dataUrl
+    return (item.buffer = await decodeWav((await mainClient.voice.tts(item.text)).dataUrl))
   }
 
   async function drainTts(): Promise<void> {
@@ -306,16 +450,24 @@ export function useVoiceChat(): {
     ttsPlaying = true
     try {
       while (ttsQueue.length > 0 && voiceActive) {
-        const item = ttsQueue.shift()!
         phase.value = 'speaking'
-        const dataUrl = await obtainAudio(item)
-        if (!voiceActive) return
-        // 本句播放期间并行合成下一条，衔接处无合成等待
-        prefetchNext()
-        await playOnce(dataUrl)
+        // 队首未就绪且无在途合成（首轮刚入队 / 预生成失败）→ 立即发起（快出第一句）；
+        // startPrefetch 可能把队首与后续句合并为批量项，shift 在其后再取
+        const head = ttsQueue[0]
+        if (!head.buffer && !head.audio && prefetch?.item !== head) startPrefetch()
+        const item = ttsQueue.shift()!
+        try {
+          const buffer = await obtainAudio(item)
+          // 合成/解码期间发生 barge-in（已进入录音）则放弃播放，避免 AI 声音灌进录音
+          if (!voiceActive || phase.value !== 'speaking') return
+          await playOnce(buffer)
+        } catch (err) {
+          // 单句合成/解码失败：跳过该句继续读后续，不中断整个队列
+          toast('error', `朗读失败：${err instanceof Error ? err.message : String(err)}`)
+        }
+        // 本句播放期间调度后续句的合成（临窗口批量合并）
+        schedulePrefetch()
       }
-    } catch (err) {
-      toast('error', `朗读失败：${err instanceof Error ? err.message : String(err)}`)
     } finally {
       ttsPlaying = false
       // 队列清空后：本轮已结束 → 回监听；否则回到等待（生成间隙保持静默）
@@ -417,6 +569,15 @@ export function useVoiceChat(): {
     },
     (toolCalls) => {
       if (!voiceActive || !awaitingReply) return
+      // 设置关闭工具播报则跳过（仍登记 announcedTools，避免开启后同轮补播）
+      if (!settings.voiceToolPhrases) {
+        for (const pair of toolCalls.split(',').filter(Boolean)) {
+          const sep = pair.indexOf('::')
+          const id = pair.slice(0, sep)
+          if (id) announcedTools.add(id)
+        }
+        return
+      }
       for (const pair of toolCalls.split(',').filter(Boolean)) {
         const sep = pair.indexOf('::')
         const id = pair.slice(0, sep)
@@ -567,6 +728,7 @@ export function useVoiceChat(): {
     ttsQueue = []
     ttsPlaying = false
     prefetch = null
+    clearPrefetchTimer()
     spokenUpTo = 0
     announcedTools.clear()
     try {
@@ -620,10 +782,15 @@ export function useVoiceChat(): {
 /**
  * 朗读前剥离 markdown 符号：只读干净正文，避免 TTS 把 **、#、```、[链接](url) 等
  * 原样念出来。工具调用/工具结果本来就不进入朗读文本（onReplyFinished 只取最终 assistant 文本）。
+ * 同时剥除 emoji——TTS 会把表情念成英文单词（如 👍 → "thumbs up"）。
  */
 function stripMarkdownForTts(text: string): string {
   let s = text.trim()
   if (!s) return ''
+  // emoji 及其修饰符（象形/符号区、变体选择符、零宽连接符、键帽）
+  // eslint-disable-next-line no-misleading-character-class -- ZWJ/变体选择符是 emoji 组合的必要部分
+  const emojiRe = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/gu
+  s = s.replace(emojiRe, ' ')
   // 代码围栏整体移除（``` 或 ```lang ... ```）
   s = s.replace(/```[\s\S]*?```/g, ' ')
   // 行首标题/列表/引用/分割线符号
