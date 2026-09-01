@@ -143,9 +143,9 @@ export type VoiceRegion = 'cn' | 'global'
 /** ASR 识别语言（MiMo asr_options.language 取值）。 */
 export type VoiceLanguage = 'auto' | 'zh' | 'en'
 
-/** 默认值：中国大陆接入、自动识别语言、默认音色、0.8s 静音断句、快通道开。 */
-export const DEFAULT_VOICE_REGION: VoiceRegion = 'cn'
-export const DEFAULT_VOICE_LANGUAGE: VoiceLanguage = 'auto'
+/** 默认值：全球 API 接入、中文识别、默认音色、0.8s 静音断句、快通道开。 */
+export const DEFAULT_VOICE_REGION: VoiceRegion = 'global'
+export const DEFAULT_VOICE_LANGUAGE: VoiceLanguage = 'zh'
 export const DEFAULT_VOICE_TTS_VOICE = 'mimo_default'
 export const DEFAULT_VOICE_SILENCE_SEC = 0.8
 export const DEFAULT_VOICE_FAST_CHANNEL = true
