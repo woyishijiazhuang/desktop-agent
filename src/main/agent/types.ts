@@ -330,6 +330,9 @@ export const SETTINGS_TAB_KEYS: SettingsTabKey[] = [
 /** settings 表中存储的「桌面通知」开关 key（默认开启；关闭后不弹系统通知）。 */
 export const SETTING_NOTIFICATIONS_ENABLED = 'notificationsEnabled'
 
+/** settings 表中存储的「启动时自动检查更新」开关 key（默认开启；仅打包版生效）。 */
+export const SETTING_AUTO_UPDATE_ENABLED = 'autoUpdate.enabled'
+
 /** settings 表中存储的「长期记忆」开关 key（控制记忆工具可用性；记忆注入不受影响，默认开启）。 */
 export const SETTING_MEMORY_ENABLED = 'memoryEnabled'
 

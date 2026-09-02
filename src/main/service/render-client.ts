@@ -43,7 +43,9 @@ const VIEW_ROUTES: Record<string, ViewTarget> = {
   'agentEvent.onPlanRequest': 'content',
   'agentEvent.onPlanProgress': 'content',
   'agentEvent.onAskUserRequest': 'content',
-  'agentEvent.onBackgroundSessions': 'content'
+  'agentEvent.onBackgroundSessions': 'content',
+  // 自动更新状态只由内容视图消费（标题栏视图未注册 updateEvents 服务）
+  'updateEvents.onStatus': 'content'
 }
 
 function resolveViewTarget(service: string, method: string): ViewTarget {

@@ -13,6 +13,7 @@ import {
 import { applyStoredThemeMode } from './service/theme-service'
 import { createTray } from './service/tray-service'
 import { createAppMenu } from './service/app-menu-service'
+import { initAutoUpdateService } from './service/update-service'
 import { registerVoiceAssetScheme, installVoiceAssetProtocol } from './service/asset-protocol'
 import icon from '../../resources/icon.png?asset'
 // 副作用：初始化主进程文件日志（electron-log，捕获 console 写入 userData/logs/main.log）
@@ -73,6 +74,8 @@ app.whenReady().then(() => {
   void restoreStartupWindows()
   createTray()
   createAppMenu()
+  // 自动更新：注册 electron-updater 事件；打包版开启时做启动延迟检查 + 周期兜底
+  initAutoUpdateService()
   // 兜底清理孤儿附件（软删会话已到期/清空后残留的附件目录）
   void cleanupOrphanAttachments()
   // 启动时连接已启用的 MCP server（失败不影响启动，状态可在设置页查看）

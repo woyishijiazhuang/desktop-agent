@@ -55,6 +55,10 @@ nsis:
 mac:
   # 未签名/notarize=false 时 entitlements 不生效，保留 JIT 兼容项以备开发签名
   entitlementsInherit: build/entitlements.mac.plist
+  # zip 是 electron-updater（Squirrel.Mac）的更新校验包，必须随 dmg 一起产出
+  target:
+    - dmg
+    - zip
   extendInfo:
     - NSDocumentsFolderUsageDescription: 桌面助手需要访问"文稿"文件夹以读写文件。
     - NSDownloadsFolderUsageDescription: 桌面助手需要访问"下载"文件夹以读写文件。
@@ -76,8 +80,15 @@ npmRebuild: false
 electronLanguages:
   - zh-CN
   - en-US
+# 更新发布源：GitHub Releases（仓库 woyishijiazhuang/desktop-agent）。
+# 发布时在 CI/本机设置 GH_TOKEN（或个人访问令牌）后执行
+#   electron-builder --win --publish always / electron-builder --mac --publish always
+# 产物与 latest*.yml / .blockmap 会上传到该仓库的 Release（electron-updater 据此增量更新）。
 publish:
-  provider: generic
-  url: https://example.com/auto-updates
+  provider: github
+  owner: woyishijiazhuang
+  repo: desktop-agent
+  # 默认发布到正式 release（可改 draft/prerelease 做灰度）
+  releaseType: release
 electronDownload:
   mirror: https://npmmirror.com/mirrors/electron/

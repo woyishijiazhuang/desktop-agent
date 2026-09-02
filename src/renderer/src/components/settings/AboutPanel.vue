@@ -1,18 +1,126 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { NCard, NTag } from 'naive-ui'
-import { mainClient } from '@renderer/utils/main-client'
+import { computed, onMounted } from 'vue'
+import { NButton, NCard, NProgress, NSwitch, NTag } from 'naive-ui'
+import { useUpdateStore } from '@renderer/store/useUpdateStore'
 
-/** 应用版本。 */
-const appVersion = ref('')
+const update = useUpdateStore()
 
-onMounted(async () => {
-  appVersion.value = await mainClient.app.getAppVersion()
+/** 状态机阶段 → 中文文案（设置页展示）。 */
+const phaseLabel = computed(() => {
+  switch (update.phase) {
+    case 'checking':
+      return '正在检查更新…'
+    case 'available':
+      return update.availableVersion ? `发现新版本 v${update.availableVersion}` : '发现新版本'
+    case 'downloading':
+      return `下载中 ${update.percent ?? 0}%`
+    case 'downloaded':
+      return `更新已下载（v${update.availableVersion ?? ''}），重启后生效`
+    case 'upToDate':
+      return '已是最新版本'
+    case 'error':
+      return '检查更新失败'
+    default:
+      return '尚未检查更新'
+  }
+})
+
+function onCheck(): void {
+  void update.checkNow()
+}
+
+function onDownload(): void {
+  void update.download()
+}
+
+function onInstall(): void {
+  update.install()
+}
+
+async function onAutoCheckChange(enabled: boolean): Promise<void> {
+  await update.setAutoCheckEnabled(enabled)
+}
+
+onMounted(() => {
+  // 主动拉一次快照：状态推送可能早于本面板挂载（如启动自动检查已完成）
+  void update.refresh()
 })
 </script>
 
 <template>
   <div>
+    <NCard size="small" class="settings-card">
+      <template #header>
+        <span>软件更新</span>
+      </template>
+      <div class="data-row">
+        <div class="data-row__info">
+          <span class="data-row__label">启动时自动检查</span>
+          <span class="data-row__hint">每次启动应用后自动检查 GitHub Releases 是否有新版本</span>
+        </div>
+        <NSwitch
+          :value="update.autoCheckEnabled"
+          :disabled="!update.supported"
+          @update:value="onAutoCheckChange"
+        />
+      </div>
+
+      <div class="update-status">
+        <div class="update-status__line">
+          <span class="update-status__version">当前版本 v{{ update.currentVersion }}</span>
+          <NTag v-if="!update.supported" size="small" type="warning" :bordered="false">
+            安装版支持自动更新
+          </NTag>
+          <span
+            v-else-if="update.phase !== 'idle'"
+            class="update-status__state"
+            :class="{ 'update-status__state--error': update.phase === 'error' }"
+          >
+            {{ phaseLabel }}
+          </span>
+        </div>
+
+        <div v-if="update.phase === 'downloading'" class="update-progress">
+          <NProgress type="line" :percentage="update.percent ?? 0" :show-text="false" />
+        </div>
+
+        <div class="update-actions">
+          <NButton
+            size="small"
+            secondary
+            :loading="update.phase === 'checking'"
+            :disabled="!update.supported || update.isBusy"
+            @click="onCheck"
+          >
+            {{ update.phase === 'error' ? '重试检查' : '检查更新' }}
+          </NButton>
+          <NButton
+            v-if="update.phase === 'available'"
+            size="small"
+            type="primary"
+            @click="onDownload"
+          >
+            下载更新
+          </NButton>
+          <NButton
+            v-if="update.phase === 'downloaded'"
+            size="small"
+            type="primary"
+            @click="onInstall"
+          >
+            立即重启安装
+          </NButton>
+        </div>
+
+        <p v-if="update.error" class="update-error">{{ update.error }}</p>
+
+        <div v-if="update.releaseNotes" class="update-notes">
+          <div class="update-notes__title">更新说明</div>
+          <pre class="update-notes__body">{{ update.releaseNotes }}</pre>
+        </div>
+      </div>
+    </NCard>
+
     <NCard size="small" class="settings-card">
       <template #header>
         <span>关于</span>
@@ -24,7 +132,9 @@ onMounted(async () => {
             <h2 class="about__title">桌面助手</h2>
             <p class="about__subtitle">
               本地优先的 AI 对话助手
-              <span v-if="appVersion" class="about__version">v{{ appVersion }}</span>
+              <span v-if="update.currentVersion" class="about__version"
+                >v{{ update.currentVersion }}</span
+              >
             </p>
           </div>
         </div>
@@ -32,9 +142,9 @@ onMounted(async () => {
         <section class="about__section">
           <h3 class="about__heading">简介</h3>
           <p class="about__text">
-            基于 <code>Electron</code> + <code>Vue 3</code> +
-            <code>TypeScript</code> 构建的桌面端 AI 对话助手。支持多家模型服务商与自定义
-            OpenAI/Anthropic 兼容端点，API Key 经系统安全存储加密，不会离开你的设备。
+            基于 <code>Electron</code> + <code>Vue 3</code> + <code>TypeScript</code> 构建的桌面端
+            AI 对话助手。支持多家模型服务商与自定义 OpenAI/Anthropic 兼容端点，API Key
+            经系统安全存储加密，不会离开你的设备。
           </p>
           <p class="about__text">
             内置文件读写、命令执行、网页搜索、技能市场、MCP
@@ -82,6 +192,96 @@ onMounted(async () => {
   font-size: 13px;
   line-height: 1.6;
   color: var(--text-3);
+}
+
+/* 更新 */
+.data-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 -8px;
+  padding: 0 8px 12px;
+}
+.data-row--gap {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.data-row__info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.data-row__label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-1);
+}
+.data-row__hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-3);
+}
+
+.update-status {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.update-status__line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.update-status__version {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.update-status__state {
+  font-size: 12px;
+  color: var(--text-2);
+}
+.update-status__state--error {
+  color: var(--error, #d03050);
+}
+.update-progress {
+  margin-top: 8px;
+}
+.update-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+.update-error {
+  margin: 10px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--error, #d03050);
+}
+.update-notes {
+  margin-top: 12px;
+}
+.update-notes__title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.update-notes__body {
+  margin: 6px 0 0;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+  font-family: inherit;
 }
 
 /* 关于 */

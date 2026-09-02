@@ -1,0 +1,7 @@
+# 开发态联调 electron-updater 的更新源（仅 dev 生效，不打进安装包）。
+# 用法：本地起一个静态文件服务托管「打好的安装包 + latest*.yml + blockmap」，
+# 例如把 electron-builder --dir 产物目录用 `python3 -m http.server 8080` 暴露后填入 url。
+# 验证「有新版本可下载」需要本地已有比当前 package.json version 更高的产物。
+provider: generic
+url: http://localhost:8080
+updaterCacheDirName: desktop-agent-updater

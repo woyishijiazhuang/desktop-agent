@@ -11,6 +11,7 @@ import { KnowledgeService } from './knowledge-service'
 import { BashService } from './bash-service'
 import { WorkspaceService } from './workspace-service'
 import { VoiceService } from './voice-service'
+import { UpdateService } from './update-service'
 import { setWindowCloseGuard } from './window-manager'
 import { createLogger } from '../utils/log'
 
@@ -28,7 +29,8 @@ export const ipcMainServices = initializeIpcMainServices([
   KnowledgeService,
   BashService,
   WorkspaceService,
-  VoiceService
+  VoiceService,
+  UpdateService
 ])
 void ipcMainServices
 log.debug('IPC services 已注册', {
@@ -43,7 +45,8 @@ log.debug('IPC services 已注册', {
     'knowledge',
     'bash',
     'workspace',
-    'voice'
+    'voice',
+    'update'
   ]
 })
 
