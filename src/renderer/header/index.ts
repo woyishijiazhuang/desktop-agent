@@ -1,6 +1,10 @@
 import '@renderer/assets/base.css'
 import './index.css'
-import { initializeIpcRendererServices, IpcService } from 'electron-ipc-service/renderer'
+import { initializeIpcRendererServices } from 'electron-ipc-service/renderer'
+import {
+  HeaderThemeService as HeaderThemeServiceBase,
+  HeaderUiService as HeaderUiServiceBase
+} from '@renderer/service/header-view-services'
 import type { WindowState } from '@main/service/window-service'
 import type { ThemePalette } from '@main/service/theme-palettes'
 import { mainClient } from '@renderer/utils/main-client'
@@ -55,21 +59,19 @@ function render(state: WindowState): void {
 }
 
 /**
- * 接收 main 推送的窗口状态。
- * 路由表（render-client.ts VIEW_ROUTES）已保证只有 ui.windowStateChange 会发给本视图，
- * showToast / trayAction / agentEvent.* 均定向发往内容视图，无需空实现兜底。
+ * 接收 main 推送：以子类 override 注入 header-view-services.ts 骨架声明的真实实现。
+ * main 侧按骨架类推导投递目标，本视图未注册的推送（showToast / trayAction /
+ * agentEvent.* 等）只会发往内容视图，不会到达标题栏，无需空实现兜底。
+ * 新增接收方法需同时改骨架类（方法签名）与本文件（override 实现）。
  */
-class HeaderUiService extends IpcService {
-  static override readonly namespace = 'ui'
-  windowStateChange(state: WindowState): void {
+class HeaderUiService extends HeaderUiServiceBase {
+  override windowStateChange(state: WindowState): void {
     render(state)
   }
 }
 
-/** 主题色变更推送（主进程 setColor 后定向投递到本窗口）：更新 palette 并注入 CSS 变量。 */
-class HeaderThemeService extends IpcService {
-  static override readonly namespace = 'theme'
-  colorChanged(palette: ThemePalette): void {
+class HeaderThemeService extends HeaderThemeServiceBase {
+  override colorChanged(palette: ThemePalette): void {
     colorPalette = palette
     applyColorTokens()
   }
