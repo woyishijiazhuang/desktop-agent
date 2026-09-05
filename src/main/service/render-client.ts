@@ -1,4 +1,5 @@
 import type { IpcRendererServices } from '@renderer/service'
+import { headerViewServiceDefs } from '@renderer/service/header-view-services'
 import {
   broadcastToViews,
   sendToAppWindow,
@@ -17,39 +18,29 @@ import { resolveSessionWorkdir } from '../agent/workdir'
 const IPC_RENDERER_SERVICE_CHANNEL = '__ELECTRON_IPC_SERVICE_RENDERER_SERVICE_CHANNEL__'
 
 /**
- * 视图路由表：哪些 service.method 需要发给哪个视图。
- * - 'all'    标题栏 + 内容视图（默认）
- * - 'header' 仅标题栏（窗口状态同步等）
- * - 'content' 仅内容视图（toast / agent 事件等）
+ * 推送目标推导：不维护手写路由表，从各视图「实际注册的服务」推导发给谁。
  *
- * 未列出的 method 默认走 'all'，保持向后兼容。
+ * - 内容视图注册了 IpcRendererServices 的全部方法 → 任何推送内容视图都能消费，
+ *   故默认只发 'content'（方向安全：新增方法即使忘配也只会发内容视图，不会报错）；
+ * - 标题栏视图只接收 header-view-services.ts 骨架类声明的方法，命中才以 'all'
+ *   同时投递标题栏 + 内容视图。
+ *
+ * 因此新增推送方法零配置：内容侧加方法自动只发内容视图；要让标题栏也能收到，
+ * 只需在骨架类（header-view-services.ts）加同名方法并在 header/index.ts 子类实现，
+ * main 侧在模块加载时自动推导，无需改任何路由表。
  */
-const VIEW_ROUTES: Record<string, ViewTarget> = {
-  // 标题栏只消费窗口状态
-  'ui.windowStateChange': 'all',
-  // toast / 托盘动作只由内容视图处理
-  'ui.showToast': 'content',
-  'ui.trayAction': 'content',
-  // 设置 tab 导航只由内容视图消费（标题栏视图未注册 settingsTab 方法）
-  'ui.settingsTab': 'content',
-  // 设置变更只由内容视图消费（标题栏视图仅注册 ui 服务）
-  'settingsSync.settingChanged': 'content',
-  // 模型配置变更只由内容视图消费（标题栏视图仅注册 ui 服务）
-  'modelConfigSync.changed': 'content',
-  // agent 事件只由内容视图消费
-  'agentEvent.onEvent': 'content',
-  'agentEvent.onSessionUpdate': 'content',
-  'agentEvent.onPermissionRequest': 'content',
-  'agentEvent.onPlanRequest': 'content',
-  'agentEvent.onPlanProgress': 'content',
-  'agentEvent.onAskUserRequest': 'content',
-  'agentEvent.onBackgroundSessions': 'content',
-  // 自动更新状态只由内容视图消费（标题栏视图未注册 updateEvents 服务）
-  'updateEvents.onStatus': 'content'
+/** header 视图注册的方法集合（'service.method'），由骨架类一次性推导。 */
+const headerReachableMethods = new Set<string>()
+for (const Service of headerViewServiceDefs) {
+  const namespace = Service.namespace
+  for (const name of Object.getOwnPropertyNames(Service.prototype)) {
+    if (name === 'constructor') continue
+    headerReachableMethods.add(`${namespace}.${name}`)
+  }
 }
 
 function resolveViewTarget(service: string, method: string): ViewTarget {
-  return VIEW_ROUTES[`${service}.${method}`] ?? 'all'
+  return headerReachableMethods.has(`${service}.${method}`) ? 'all' : 'content'
 }
 
 /**

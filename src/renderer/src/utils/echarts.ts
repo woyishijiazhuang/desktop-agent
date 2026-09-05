@@ -38,6 +38,7 @@ import {
   DataZoomComponent,
   ToolboxComponent
 } from 'echarts/components'
+import { LegacyGridContainLabel } from 'echarts/features'
 import { CanvasRenderer } from 'echarts/renderers'
 
 // 注册聊天/用量图表实际用到的图表类型、组件与渲染器（dark 主题已随 core 内置注册）。
@@ -61,6 +62,7 @@ echarts.use([
   VisualMapComponent,
   DataZoomComponent,
   ToolboxComponent,
+  LegacyGridContainLabel,
   CanvasRenderer
 ])
 
