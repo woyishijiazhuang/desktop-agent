@@ -8,6 +8,310 @@
       http-equiv="Content-Security-Policy"
       content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
     />
+    <!--
+      标题栏样式整体内联在此：header 是独立 WebContentsView，若样式经 index.ts 的模块 import
+      在脚本执行后才注入，HTML 会先于样式解析并渲染首帧，未样式化的 svg（默认 300×150）
+      会把 32px 视图撑出竖向滚动条、布局抖动（切换原生/自定义标题栏重建窗口时尤其明显）。
+      内联于 head 随 HTML 同步解析，先于 body 渲染生效。
+
+      ⚠ 主题 token 与全局重置自 src/renderer/src/assets/base.css 内联而来（变更 base.css
+      需同步本块）；标题栏自身样式（原 src/renderer/header/index.css，已并入本块、源文件
+      已删除）以后续直接编辑本内联块为准。
+    -->
+    <style>
+      /* ===== base.css（src/renderer/src/assets/base.css）===== */
+      :root {
+        /* 背景层级（zinc 中性灰，不带蓝调） */
+        --bg: #ffffff;
+        --bg-soft: #fafafa;
+        --bg-mute: #f4f4f5;
+
+        /* 边框 */
+        --border: #e4e4e7;
+        --border-soft: #ececef;
+
+        /* 文字层级 */
+        --text-1: #18181b;
+        --text-2: #52525b;
+        --text-3: #a1a1aa;
+
+        /* 主题色：紫罗兰（Naive UI themeOverrides.primaryColor 对齐） */
+        --primary: #7c3aed;
+        --primary-hover: #6d28d9;
+        --primary-pressed: #5b21b6;
+        --primary-soft: #ede9fe;
+
+        /* 语义色 */
+        --success: #16a34a;
+        --success-soft: #dcfce7;
+        --warning: #d97706;
+        --warning-soft: #fef3c7;
+        --error: #dc2626;
+        --error-soft: #fee2e2;
+
+        /* 代码 */
+        --code-bg: #f6f6f7;
+        --code-border: #e4e4e7;
+
+        /* 阴影 / 圆角 */
+        --shadow-sm: 0 1px 2px rgba(24, 24, 27, 0.06);
+        --shadow-md: 0 4px 12px rgba(24, 24, 27, 0.08);
+        --radius: 8px;
+        --radius-lg: 12px;
+
+        /* 消息行 / 头像 / 悬停 */
+        --user-msg-bg: var(--bg-mute);
+        --hover-bg: #f4f4f5;
+        --hover-bg-strong: #e9e9ec;
+        --msg-max-width: 768px;
+        --avatar-size: 30px;
+        --avatar-bg: var(--bg-mute);
+        --avatar-fg: var(--text-2);
+        --row-gap: 22px;
+
+        /* 兼容旧引用（main.css body 仍用 --color-background / --color-text） */
+        --color-background: var(--bg);
+        --color-background-soft: var(--bg-soft);
+        --color-background-mute: var(--bg-mute);
+        --color-text: var(--text-1);
+      }
+      :root.dark {
+        --bg: #18181b;
+        --bg-soft: #1f1f23;
+        --bg-mute: #27272a;
+
+        --border: #2a2a2e;
+        --border-soft: #232327;
+
+        --text-1: #f4f4f5;
+        --text-2: #a1a1aa;
+        --text-3: #71717a;
+
+        --primary: #a78bfa;
+        --primary-hover: #c4b5fd;
+        --primary-pressed: #8b5cf6;
+        --primary-soft: rgba(167, 139, 250, 0.16);
+
+        --success: #34d399;
+        --success-soft: rgba(52, 211, 153, 0.15);
+        --warning: #fbbf24;
+        --warning-soft: rgba(251, 191, 36, 0.15);
+        --error: #f87171;
+        --error-soft: rgba(248, 113, 113, 0.15);
+
+        --code-bg: #0c0c0e;
+        --code-border: #27272a;
+
+        --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+        --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
+
+        --user-msg-bg: #27272a;
+        --hover-bg: #27272a;
+        --hover-bg-strong: #2f2f33;
+        --avatar-bg: #27272a;
+        --avatar-fg: #a1a1aa;
+      }
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        font-weight: normal;
+      }
+
+      body {
+        color: var(--color-text);
+        font-family:
+          Inter,
+          -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          Roboto,
+          Oxygen,
+          Ubuntu,
+          Cantarell,
+          'Fira Sans',
+          'Droid Sans',
+          'Helvetica Neue',
+          sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      /* ===== index.css（src/renderer/header/index.css）===== */
+      /*
+       * 标题栏视图样式：高度与主进程 HEADER_HEIGHT(32px) 一致。
+       * 主题 token 内联自 base.css（见上方），随 <html>.dark 翻转。
+       */
+      html,
+      body {
+        height: 32px;
+        overflow: hidden;
+      }
+
+      body {
+        background: var(--bg-soft);
+        border-bottom: 1px solid var(--border);
+        user-select: none;
+        transition: background-color 0.15s ease, border-color 0.15s ease;
+      }
+
+      /* 拖拽区（no-drag 区内的按钮/交互元素可正常点击） */
+      .titlebar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 32px;
+        -webkit-app-region: drag;
+      }
+
+      .titlebar__brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding-left: 12px;
+        height: 100%;
+      }
+
+      /* 标题文字统一隐藏（自定义/原生都隐藏）：会话区域（侧栏工作区标识）已展示当前工作区，
+         标题栏不再重复显示，保持简洁 */
+      .titlebar__title {
+        display: none;
+      }
+
+      .titlebar__title {
+        font-size: 12px;
+        color: var(--text-1);
+        letter-spacing: 0.2px;
+        transition: color 0.15s ease;
+      }
+
+      .titlebar__logo {
+        width: 20px;
+        height: 20px;
+        /* 降低品牌色饱和度，避免左上角图标过于抢眼 */
+        filter: grayscale(0.4);
+      }
+
+      /* 失焦状态 */
+      html:not(.win-focused) .titlebar__logo {
+        opacity: 0.5;
+      }
+
+      html:not(.win-focused) .titlebar__title {
+        color: var(--text-3);
+      }
+
+      html:not(.win-focused) .titlebar__btn {
+        color: var(--text-3);
+      }
+
+      html:not(.win-focused) .titlebar__btn:hover {
+        background: var(--border);
+      }
+
+      /* 窗口控制按钮（no-drag） */
+      .titlebar__controls {
+        display: flex;
+        height: 100%;
+        -webkit-app-region: no-drag;
+      }
+
+      .titlebar__btn {
+        width: 46px;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: transparent;
+        border: none;
+        color: var(--text-1);
+        cursor: pointer;
+        transition:
+          background 0.1s ease,
+          color 0.1s ease;
+      }
+
+      .titlebar__btn:hover {
+        background: var(--bg-mute);
+      }
+
+      .titlebar__btn:active {
+        background: var(--border);
+      }
+
+      .titlebar__btn--close:hover {
+        background: var(--error);
+        color: #ffffff;
+      }
+
+      .titlebar__btn--close:active {
+        background: var(--primary-pressed);
+        color: #ffffff;
+      }
+
+      .titlebar__icon {
+        width: 14px;
+        height: 14px;
+        fill: none;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+
+      /* 置顶 pin 图标：独立类，不继承 .titlebar__icon 的全局描边样式（否则 CSS 会覆盖
+         内联的 stroke-width/fill，导致圆头过细、针杆透明）。尺寸适配 32px 标题栏。 */
+      .titlebar__pin-icon {
+        width: 15px;
+        height: 15px;
+      }
+
+      /* 置顶激活态：主色高亮 */
+      .titlebar__btn--pin:hover {
+        background: var(--bg-mute);
+      }
+      html.win-on-top .titlebar__btn--pin {
+        color: var(--primary);
+        background: var(--primary-soft);
+      }
+      html.win-on-top .titlebar__btn--pin:hover {
+        background: var(--primary-soft);
+      }
+
+      /* 最大化 ↔ 还原图标切换（html.win-max 由窗口状态推送驱动） */
+      .titlebar__icon--restore {
+        display: none;
+      }
+
+      html.win-max .titlebar__icon--maximize {
+        display: none;
+      }
+
+      html.win-max .titlebar__icon--restore {
+        display: block;
+      }
+
+      /*
+       * 品牌与窗口控制按钮的显示受窗口状态驱动（render 落 html.win-custom）。
+       * 切换标题栏模式时新窗口立即显示、状态却要等 initWindow 的 IPC 返回才到达，
+       * 若默认按自定义模式绘制品牌，原生模式窗口会出现「logo 闪现后消失」。
+       * 故默认隐藏，仅当状态明确为自定义（html.win-custom）时显示，随 render 同步出现：
+       * - 原生/初始未就绪：整条只保留空白拖拽条（Linux 原生模式下 header 由主进程收起）；
+       * - 自定义：品牌 + 置顶/最小化/最大化/关闭 按钮正常显示。
+       */
+      .titlebar__brand {
+        display: none;
+      }
+      .titlebar__controls {
+        display: none;
+      }
+      html.win-custom .titlebar__brand {
+        display: flex;
+      }
+      html.win-custom .titlebar__controls {
+        display: flex;
+      }
+    </style>
   </head>
 
   <body>

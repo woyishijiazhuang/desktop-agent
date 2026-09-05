@@ -87,6 +87,8 @@ function onReset(): void {
   width: 100%;
   box-sizing: border-box;
   min-height: 140px; /* 约 6 行，与原先 autosize minRows 对齐 */
+  max-height: 360px; /* 约 16 行封顶，超出后内部滚动，避免撑得过高 */
+  overflow-y: auto;
   padding: 8px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);

@@ -197,6 +197,19 @@ onMounted(async () => {
       <p class="settings-card__desc">应用外观与桌面行为。</p>
       <div class="data-row">
         <div class="data-row__info">
+          <span class="data-row__label">标题栏</span>
+          <span class="data-row__hint">
+            原生模式 macOS 显示系统红绿灯、Windows/Linux
+            使用系统标题栏；自定义模式使用应用自绘标题栏
+          </span>
+        </div>
+        <NRadioGroup :value="settings.titleBarMode" @update:value="onTitleBarModeChange">
+          <NRadioButton value="custom">自定义</NRadioButton>
+          <NRadioButton value="native">原生</NRadioButton>
+        </NRadioGroup>
+      </div>
+      <div class="data-row data-row--gap">
+        <div class="data-row__info">
           <span class="data-row__label">主题</span>
           <span class="data-row__hint">「跟随系统」会随操作系统的深浅色自动切换</span>
         </div>
@@ -284,19 +297,6 @@ onMounted(async () => {
         >
           <template #suffix>秒</template>
         </NInputNumber>
-      </div>
-      <div class="data-row data-row--gap">
-        <div class="data-row__info">
-          <span class="data-row__label">标题栏</span>
-          <span class="data-row__hint">
-            原生模式 macOS 显示系统红绿灯、Windows/Linux
-            使用系统标题栏；自定义模式使用应用自绘标题栏
-          </span>
-        </div>
-        <NRadioGroup :value="settings.titleBarMode" @update:value="onTitleBarModeChange">
-          <NRadioButton value="custom">自定义</NRadioButton>
-          <NRadioButton value="native">原生</NRadioButton>
-        </NRadioGroup>
       </div>
       <div class="data-row data-row--gap">
         <div class="data-row__info">

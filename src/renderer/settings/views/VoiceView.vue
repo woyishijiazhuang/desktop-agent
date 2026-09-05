@@ -144,7 +144,7 @@ const voiceOptions = VOICE_PRESETS.map((v) => ({ label: v.name, value: v.id }))
           <span class="data-row__label">MiMo API Key</span>
           <span class="data-row__hint">
             {{
-              settings.voiceHasApiKey ? '已配置（加密存储，明文不落盘）' : '未配置——语音对话不可用'
+              settings.voiceHasApiKey ? '已配置（加密存储）' : '未配置——语音对话不可用'
             }}
           </span>
         </div>
@@ -294,6 +294,9 @@ const voiceOptions = VOICE_PRESETS.map((v) => ({ label: v.name, value: v.id }))
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  /* 内容区有 max-width(720) + padding 上限，行内宽过窄时允许整组控件折到下一行，
+     而不是在行内挤压导致输入框/按钮/提示文字互相乱折 */
+  flex-wrap: wrap;
   padding: 10px 12px;
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -306,6 +309,9 @@ const voiceOptions = VOICE_PRESETS.map((v) => ({ label: v.name, value: v.id }))
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* flex-basis: auto：说明区按内容单行排布，不被挤压换行；剩余空隙由 grow 吸收，
+     保证右侧控件组（输入框+测试/清除）宽度稳定，loading 增宽不再触发折行 */
+  flex: 1 1 auto;
   min-width: 0;
   margin-right: 12px;
 }

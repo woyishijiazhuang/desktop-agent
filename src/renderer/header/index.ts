@@ -1,5 +1,3 @@
-import '@renderer/assets/base.css'
-import './index.css'
 import { initializeSafeRendererServices } from '@renderer/utils/ipc-guard'
 import {
   HeaderThemeService as HeaderThemeServiceBase,
@@ -11,9 +9,10 @@ import { mainClient } from '@renderer/utils/main-client'
 
 /**
  * 标题栏视图（独立 webContents，位于窗口顶部 32px）。
- * - 纯 HTML/CSS/JS，不引入 Vue/Pinia/Naive UI，保持轻量；
+ * - 样式内联在 index.html <head>（base.css token + 本页 index.css），随 HTML 同步解析、
+ *   先于渲染生效，避免模块 CSS 后注入造成的首帧闪烁/滚动条（见 index.html 注释）；
  * - 主题：主进程 nativeTheme 为唯一真源，本视图经 prefers-color-scheme 同步跟随，
- *   据此维护 <html>.dark 翻转 base.css token；主题色经 theme.getPalette 拉取、
+ *   据此维护 <html>.dark 翻转 CSS token；主题色经 theme.getPalette 拉取、
  *   theme.colorChanged 推送后注入 --primary* CSS 变量；
  * - 窗口状态：主进程广播 windowStateChange 到全部视图，本视图只消费 ui 服务。
  */
@@ -50,8 +49,9 @@ function render(state: WindowState): void {
   document.documentElement.classList.toggle('win-max', state.isMaximized)
   document.documentElement.classList.toggle('win-focused', state.isFocused)
   document.documentElement.classList.toggle('win-on-top', state.isAlwaysOnTop)
-  // 原生标题栏模式（macOS 红绿灯 / Windows overlay 系统按钮）：隐藏自绘窗口控制按钮
-  document.documentElement.classList.toggle('win-native', state.isNativeTitleBar)
+  // 品牌与自绘窗口控制按钮仅在自定义标题栏模式绘制（CSS 默认隐藏，落 .win-custom 才显示；
+  // 见 index.html 内联样式说明，避免原生模式下状态到达前 logo 闪现）
+  document.documentElement.classList.toggle('win-custom', !state.isNativeTitleBar)
   const maximizeBtn = document.getElementById('btn-maximize') as HTMLButtonElement
   maximizeBtn.title = state.isMaximized ? '还原' : '最大化'
   const pinBtn = document.getElementById('btn-pin') as HTMLButtonElement
