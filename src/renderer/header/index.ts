@@ -1,6 +1,6 @@
 import '@renderer/assets/base.css'
 import './index.css'
-import { initializeIpcRendererServices } from 'electron-ipc-service/renderer'
+import { initializeSafeRendererServices } from '@renderer/utils/ipc-guard'
 import {
   HeaderThemeService as HeaderThemeServiceBase,
   HeaderUiService as HeaderUiServiceBase
@@ -77,17 +77,20 @@ class HeaderThemeService extends HeaderThemeServiceBase {
   }
 }
 
-initializeIpcRendererServices([HeaderUiService, HeaderThemeService])
+initializeSafeRendererServices([HeaderUiService, HeaderThemeService])
 
 // 初始状态（广播可能早于注册到达，故主动拉取一次）
-void mainClient.window.initWindow().then((state) => {
-  render(state)
-  // 拉取本窗口生效主题色（工作区自定义优先，否则全局默认）并注入 --primary* token
-  return mainClient.theme.getPalette(state.workdir)
-}).then((palette) => {
-  colorPalette = palette
-  applyColorTokens()
-})
+void mainClient.window
+  .initWindow()
+  .then((state) => {
+    render(state)
+    // 拉取本窗口生效主题色（工作区自定义优先，否则全局默认）并注入 --primary* token
+    return mainClient.theme.getPalette(state.workdir)
+  })
+  .then((palette) => {
+    colorPalette = palette
+    applyColorTokens()
+  })
 
 const pinBtn = document.getElementById('btn-pin') as HTMLButtonElement
 const minimizeBtn = document.getElementById('btn-minimize') as HTMLButtonElement
