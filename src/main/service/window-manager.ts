@@ -9,7 +9,13 @@ import winIcon from '../../../build/icon.ico?asset'
 import { createLogger } from '../utils/log'
 import { fileUrlToPath } from '../utils/file-url'
 import { db, resolveDefaultWorkdir } from '../database'
-import { SETTING_TITLE_BAR_MODE, SETTING_SETTINGS_TAB, SETTINGS_TAB_KEYS, type TitleBarMode, type SettingsTabKey } from '../agent/types'
+import {
+  SETTING_TITLE_BAR_MODE,
+  SETTING_SETTINGS_TAB,
+  SETTINGS_TAB_KEYS,
+  type TitleBarMode,
+  type SettingsTabKey
+} from '../agent/types'
 
 const log = createLogger('window')
 
@@ -234,21 +240,29 @@ function layout(aw: AppWindow): void {
   })
 }
 
-/** 加载应用视图：工作区窗口加载聊天页；设置窗口加载 #/settings（可带 ?tab= 同步注入初始 tab）。 */
+/**
+ * 加载应用视图：工作区窗口加载聊天 SPA（index.html）；
+ * 设置窗口加载**独立轻量入口**（settings/index.html），tab 经 hash 进入子路由
+ * （#/settings/<tab>），路由首帧即渲染正确分类，不再复用聊天 SPA 路由、也无需 query 中转。
+ */
 function loadAppViews(aw: AppWindow, settingsTab?: SettingsTabKey): void {
   const isSettings = aw.workdir === null
-  // 设置窗口初始 tab 经 URL query 同步注入：渲染层首帧即读到配置值，避免先渲染默认 tab 再切换
-  const settingsHash = settingsTab ? `/settings?tab=${settingsTab}` : '/settings'
+  const settingsEntry = join(__dirname, '../renderer/settings/index.html')
+  // 无 tab（首次/无记录）→ '/settings'，由子路由 '' redirect 落到默认分类 general
+  const settingsHash = settingsTab ? `/settings/${settingsTab}` : '/settings'
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     const base = process.env['ELECTRON_RENDERER_URL']
     aw.headerView.webContents.loadURL(`${base}/header/index.html`)
-    aw.contentView.webContents.loadURL(isSettings ? `${base}/#${settingsHash}` : base)
+    aw.contentView.webContents.loadURL(
+      isSettings ? `${base}/settings/index.html#${settingsHash}` : base
+    )
   } else {
     aw.headerView.webContents.loadFile(join(__dirname, '../renderer/header/index.html'))
-    aw.contentView.webContents.loadFile(
-      join(__dirname, '../renderer/index.html'),
-      isSettings ? { hash: settingsHash } : undefined
-    )
+    if (isSettings) {
+      aw.contentView.webContents.loadFile(settingsEntry, { hash: settingsHash })
+    } else {
+      aw.contentView.webContents.loadFile(join(__dirname, '../renderer/index.html'))
+    }
   }
 }
 
@@ -284,7 +298,9 @@ function createAppWindow(
     // 限制窗口最小尺寸，防止被拖到布局无法承载的极小状态；设置窗口允许更小
     minWidth: workdir === null ? 720 : 960,
     minHeight: workdir === null ? 520 : 680,
-    show: false,
+    // 窗口随创建立即显示（show: true，不等待任何视图/加载时机）；
+    // 底色由 backgroundColor / 视图背景色顶住，避免首帧露出白底。
+    show: true,
     autoHideMenuBar: true,
     title: '桌面助手',
     ...(isMac
@@ -341,18 +357,12 @@ function createAppWindow(
     windowCount: appWindows.length
   })
 
-  // BaseWindow 无 ready-to-show，任一视图首帧渲染完成后显示窗口
-  let shown = false
-  const showOnce = (): void => {
-    if (shown) return
-    shown = true
-    win.show()
-  }
-  headerView.webContents.once('did-finish-load', showOnce)
-  contentView.webContents.once('did-finish-load', showOnce)
-  // 渲染层监听器就绪的判定必须以内容视图（应用本体）为准：
-  // 标题栏视图很小，几乎总是先于应用完成加载，若按其时机放行，托盘/菜单动作
-  // 广播时应用还未注册监听器，消息会丢失（表现为只打开应用、不执行跳转）。
+  headerView.webContents.on('did-fail-load', (_e, code, desc) => {
+    log.error('标题栏视图加载失败', { workdir, code, desc })
+  })
+  // 渲染层监听器就绪的判定以内容视图（应用本体）为准：标题栏视图很小几乎总是先于
+  // 应用完成加载，若按其时机放行，托盘/菜单动作广播时应用还未注册监听器，
+  // 消息会丢失（表现为只打开应用、不执行跳转）。
   contentView.webContents.once('did-finish-load', () => {
     aw.ready = true
     const waiters = readyWaiters.get(aw)
@@ -360,9 +370,6 @@ function createAppWindow(
       for (const resolve of waiters) resolve()
       readyWaiters.delete(aw)
     }
-  })
-  headerView.webContents.on('did-fail-load', (_e, code, desc) => {
-    log.error('标题栏视图加载失败', { workdir, code, desc })
   })
   contentView.webContents.on('did-fail-load', (_e, code, desc) => {
     log.error('内容视图加载失败', { workdir, code, desc })
@@ -502,6 +509,11 @@ export function forceCloseWorkspaceWindow(workdir: string): void {
   getWorkspaceWindow(workdir)?.win.destroy()
 }
 
+/** 全部应用窗口（工作区窗口 + 设置窗口，按打开顺序）。供 render-client 的投递目标收敛使用。 */
+export function getAppWindows(): AppWindow[] {
+  return [...appWindows]
+}
+
 /** 全部工作区窗口（按打开顺序）。 */
 export function getWorkspaceWindows(): AppWindow[] {
   return appWindows.filter((aw) => aw.workdir !== null)
@@ -584,8 +596,12 @@ export function recreateAllWindows(): void {
   const list = [...appWindows].sort((a, b) => Number(a.win.isFocused()) - Number(b.win.isFocused()))
   for (const aw of list) {
     const bounds = aw.win.getBounds()
+    // 重建（标题栏模式切换）期间新窗口同位置直接创建显示；待其内容就绪后销毁旧窗口，
+    // 避免旧窗口提前销毁造成的空窗闪烁。
     const replacement = createAppWindow(aw.workdir, bounds)
-    replacement.win.once('show', () => aw.win.destroy())
+    void waitForReady(replacement).then(() => {
+      if (!aw.win.isDestroyed()) aw.win.destroy()
+    })
   }
 }
 
