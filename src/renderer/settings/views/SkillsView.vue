@@ -2,9 +2,9 @@
 import { computed } from 'vue'
 import { NCard, NSwitch, useMessage } from 'naive-ui'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
-import FindSkillCard from './FindSkillCard.vue'
-import InstalledSkillsCard from './InstalledSkillsCard.vue'
-import ToolSwitches from './ToolSwitches.vue'
+import FindSkillCard from '../components/FindSkillCard.vue'
+import InstalledSkillsCard from '../components/InstalledSkillsCard.vue'
+import ToolSwitches from '../components/ToolSwitches.vue'
 
 /** 技能域工具。find_skill 开关已并入 FindSkillCard，这里只列安装/读取技能。 */
 const SKILL_TOOLS = new Set(['install_skill', 'read_skill'])

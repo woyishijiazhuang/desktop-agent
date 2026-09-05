@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { NCard, NTag, NButton, NPopconfirm, NSpace, useMessage } from 'naive-ui'
-import AddModelDialog from './AddModelDialog.vue'
-import SystemPromptEditor from './SystemPromptEditor.vue'
+import AddModelDialog from '../components/AddModelDialog.vue'
+import SystemPromptEditor from '../components/SystemPromptEditor.vue'
 import { useModelConfigsStore } from '@renderer/store/useModelConfigsStore'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
 import { formatContextWindow } from '@renderer/utils/format'
@@ -62,9 +62,8 @@ async function onPromptSave(value: string): Promise<void> {
         </NTag>
       </template>
       <p class="settings-card__desc">
-        添加和管理模型。支持预置服务商或完全自定义（本地地址 / OpenAI
-        兼容端点等）。每个模型独立配置 API Key 与参数，可添加多个、可同一服务商多条。Key
-        通过系统安全存储加密保存，不会离开本机。
+        添加和管理模型。支持预置服务商或完全自定义（本地地址 / OpenAI 兼容端点等）。每个模型独立配置
+        API Key 与参数，可添加多个、可同一服务商多条。Key 通过系统安全存储加密保存，不会离开本机。
       </p>
 
       <!-- 空状态 -->

@@ -11,11 +11,7 @@ import {
   useMessage
 } from 'naive-ui'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
-import {
-  VOICE_PRESETS,
-  type VoiceRegion,
-  type VoiceLanguage
-} from '@main/agent/types'
+import { VOICE_PRESETS, type VoiceRegion, type VoiceLanguage } from '@main/agent/types'
 
 const settings = useSettingsStore()
 const message = useMessage()
@@ -105,7 +101,9 @@ async function onSilenceBlur(): Promise<void> {
 
 async function onFastChannelChange(v: boolean): Promise<void> {
   await settings.saveVoiceFastChannel(v)
-  message.success(v ? '已开启语音快通道（回复更快、更口语化）' : '已关闭语音快通道（保留工具与思考）')
+  message.success(
+    v ? '已开启语音快通道（回复更快、更口语化）' : '已关闭语音快通道（保留工具与思考）'
+  )
 }
 
 async function onToolPhrasesChange(v: boolean): Promise<void> {
@@ -135,7 +133,9 @@ const voiceOptions = VOICE_PRESETS.map((v) => ({ label: v.name, value: v.id }))
         语音对话使用小米 MiMo 语音 API（ASR + TTS，当前限时免费）。在聊天框点击麦克风按钮即可开启
         「点击一次持续对话」：说话自动断句发送，AI 回复口语化精简并自动朗读，朗读时开口即可打断。
         API key 请在
-        <a href="https://platform.xiaomimimo.com" target="_blank" rel="noreferrer">platform.xiaomimimo.com</a>
+        <a href="https://platform.xiaomimimo.com" target="_blank" rel="noreferrer"
+          >platform.xiaomimimo.com</a
+        >
         申请。
       </p>
 
@@ -144,9 +144,7 @@ const voiceOptions = VOICE_PRESETS.map((v) => ({ label: v.name, value: v.id }))
           <span class="data-row__label">MiMo API Key</span>
           <span class="data-row__hint">
             {{
-              settings.voiceHasApiKey
-                ? '已配置（加密存储，明文不落盘）'
-                : '未配置——语音对话不可用'
+              settings.voiceHasApiKey ? '已配置（加密存储，明文不落盘）' : '未配置——语音对话不可用'
             }}
           </span>
         </div>
@@ -179,7 +177,9 @@ const voiceOptions = VOICE_PRESETS.map((v) => ({ label: v.name, value: v.id }))
       <div class="data-row data-row--gap">
         <div class="data-row__info">
           <span class="data-row__label">接入区域</span>
-          <span class="data-row__hint">中国大陆走 Token Plan 节点；海外/网络原因可切换全球节点</span>
+          <span class="data-row__hint"
+            >中国大陆走 Token Plan 节点；海外/网络原因可切换全球节点</span
+          >
         </div>
         <NSelect
           :value="settings.voiceRegion"
@@ -234,7 +234,9 @@ const voiceOptions = VOICE_PRESETS.map((v) => ({ label: v.name, value: v.id }))
       <div class="data-row data-row--gap">
         <div class="data-row__info">
           <span class="data-row__label">断句静音时长</span>
-          <span class="data-row__hint">说完一句话后停顿多久视为说完。越短响应越快，环境噪声大时建议调大</span>
+          <span class="data-row__hint"
+            >说完一句话后停顿多久视为说完。越短响应越快，环境噪声大时建议调大</span
+          >
         </div>
         <NInputNumber
           v-model:value="silenceDraft"
@@ -253,7 +255,8 @@ const voiceOptions = VOICE_PRESETS.map((v) => ({ label: v.name, value: v.id }))
         <div class="data-row__info">
           <span class="data-row__label">语音快通道</span>
           <span class="data-row__hint">
-            语音对话时关闭思考，回复更快、更适合朗读；需要实时/外部信息（天气、文件、命令）时仍会正常调用工具，关闭则保留完整 Agent 能力（工具+思考）
+            语音对话时关闭思考，回复更快、更适合朗读；需要实时/外部信息（天气、文件、命令）时仍会正常调用工具，关闭则保留完整
+            Agent 能力（工具+思考）
           </span>
         </div>
         <NSwitch :value="settings.voiceFastChannel" @update:value="onFastChannelChange" />

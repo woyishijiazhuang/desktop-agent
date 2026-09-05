@@ -15,7 +15,7 @@ import {
 import { mainClient } from '@renderer/utils/main-client'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
 import type { Memory, MemoryCategory } from '@main/service/db-service'
-import ToolSwitches from './ToolSwitches.vue'
+import ToolSwitches from '../components/ToolSwitches.vue'
 
 /** 记忆域工具：Agent 通过它们读写长期记忆。 */
 const MEMORY_TOOLS = new Set(['list_memories', 'add_memory', 'update_memory', 'delete_memory'])

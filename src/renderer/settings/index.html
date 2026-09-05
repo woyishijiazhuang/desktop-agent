@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>设置 - 桌面助手</title>
+    <!-- https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP
+         设置入口不加载语音 VAD / onnx / AudioWorklet，故无需放行 appasset: / blob: -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' data:; connect-src 'self'"
+    />
+  </head>
+
+  <body>
+    <div id="app"></div>
+    <script type="module" src="/settings/main.ts"></script>
+  </body>
+</html>

@@ -14,7 +14,7 @@ import { useSettingsStore } from '@renderer/store/useSettingsStore'
 import { useThemeStore, type ThemeMode } from '@renderer/store/useThemeStore'
 import { useWindowStore } from '@renderer/store/useWindowStore'
 import { mainClient } from '@renderer/utils/main-client'
-import ThemeColorPicker from './ThemeColorPicker.vue'
+import ThemeColorPicker from '../components/ThemeColorPicker.vue'
 import type { TitleBarMode } from '@main/agent/types'
 
 const settings = useSettingsStore()
@@ -211,10 +211,7 @@ onMounted(async () => {
           <span class="data-row__label">默认主题色</span>
           <span class="data-row__hint">未单独设置主题色的工作区使用此颜色</span>
         </div>
-        <ThemeColorPicker
-          :model-value="defaultColor"
-          @update:model-value="onDefaultColorChange"
-        />
+        <ThemeColorPicker :model-value="defaultColor" @update:model-value="onDefaultColorChange" />
       </div>
       <div class="data-row data-row--gap">
         <div class="data-row__info">
@@ -245,10 +242,7 @@ onMounted(async () => {
           <span class="data-row__hint">任务出错或主动调用通知工具时弹出系统桌面通知</span>
         </div>
         <NSpace align="center" :size="8">
-          <NSwitch
-            :value="settings.notificationsEnabled"
-            @update:value="onNotificationsChange"
-          />
+          <NSwitch :value="settings.notificationsEnabled" @update:value="onNotificationsChange" />
           <NButton
             size="small"
             quaternary

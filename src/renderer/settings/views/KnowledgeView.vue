@@ -19,7 +19,7 @@ import { useSettingsStore } from '@renderer/store/useSettingsStore'
 import { useModelConfigsStore } from '@renderer/store/useModelConfigsStore'
 import { formatCost, formatTokens } from '@renderer/utils/format'
 import type { KbDocument, KbSearchHit } from '@main/service/db-service'
-import ToolSwitches from './ToolSwitches.vue'
+import ToolSwitches from '../components/ToolSwitches.vue'
 
 /** 知识库域工具：Agent 通过它检索知识库。 */
 const KB_TOOLS = new Set(['search_knowledge'])

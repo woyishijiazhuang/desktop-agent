@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import McpServersCard from './McpServersCard.vue'
+import McpServersCard from '../components/McpServersCard.vue'
 </script>
 
 <template>

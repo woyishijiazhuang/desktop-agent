@@ -35,10 +35,12 @@ function copyPdfJsWorker(): Plugin {
 }
 
 const rendererInput = {
-  // 应用本体（Vue 全家桶）
+  // 应用本体（Vue 全家桶，工作区窗口）
   index: resolve(process.cwd(), 'src/renderer/index.html'),
   // 自定义标题栏视图（独立 webContents，纯 HTML/CSS/JS，轻量无框架）
-  header: resolve(process.cwd(), 'src/renderer/header/index.html')
+  header: resolve(process.cwd(), 'src/renderer/header/index.html'),
+  // 设置窗口独立轻量入口（Vue + 设置面板裁剪集，不含聊天 SPA 静态链，见 src/renderer/settings/main.ts）
+  settings: resolve(process.cwd(), 'src/renderer/settings/index.html')
 }
 
 export default defineConfig({

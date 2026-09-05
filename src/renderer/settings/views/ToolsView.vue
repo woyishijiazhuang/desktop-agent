@@ -3,8 +3,8 @@ import { computed, onMounted, ref, watch } from 'vue'
 import { NCard, NButton, NEmpty, NInput, useMessage } from 'naive-ui'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
 import { mainClient } from '@renderer/utils/main-client'
-import WebSearchCard from './WebSearchCard.vue'
-import ToolSwitches from './ToolSwitches.vue'
+import WebSearchCard from '../components/WebSearchCard.vue'
+import ToolSwitches from '../components/ToolSwitches.vue'
 
 /** 有独立配置卡片（开关 + 配置合并）的工具：不在通用开关列表中重复出现。 */
 const CONFIGURED_TOOLS = new Set(['web_search', 'find_skill'])
