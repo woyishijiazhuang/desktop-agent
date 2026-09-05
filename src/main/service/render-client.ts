@@ -4,6 +4,7 @@ import {
   broadcastToViews,
   sendToAppWindow,
   sendToWorkspace,
+  getAppWindows,
   getWorkspaceWindows,
   type AppWindow,
   type ViewTarget
@@ -20,8 +21,9 @@ const IPC_RENDERER_SERVICE_CHANNEL = '__ELECTRON_IPC_SERVICE_RENDERER_SERVICE_CH
 /**
  * 推送目标推导：不维护手写路由表，从各视图「实际注册的服务」推导发给谁。
  *
- * - 内容视图注册了 IpcRendererServices 的全部方法 → 任何推送内容视图都能消费，
- *   故默认只发 'content'（方向安全：新增方法即使忘配也只会发内容视图，不会报错）；
+ * - 内容视图（工作区 SPA 注册 IpcRendererServices 全量；设置窗口为子集）：
+ *   投递给谁收敛到 collectContentTargets（agentEvent 只发工作区窗口），方向安全——
+ *   未命中视图的调用会被渲染层守卫（utils/ipc-guard）warn 忽略，不崩页面；
  * - 标题栏视图只接收 header-view-services.ts 骨架类声明的方法，命中才以 'all'
  *   同时投递标题栏 + 内容视图。
  *
@@ -41,6 +43,19 @@ for (const Service of headerViewServiceDefs) {
 
 function resolveViewTarget(service: string, method: string): ViewTarget {
   return headerReachableMethods.has(`${service}.${method}`) ? 'all' : 'content'
+}
+
+/**
+ * 「哪些窗口的内容视图该收到某条推送」的能力决策点（C1）：
+ * 默认投递全部应用窗口；`agentEvent.*`（会话域事件）只投工作区窗口，绝不下发设置窗口。
+ *
+ * 契约：拆设置窗口时唯一增量 = 在设置入口裁剪服务注册（settings 侧），并在本函数追加
+ * 「settings 内容视图只收 X 集合」的过滤；标题栏可达性（headerReachableMethods）判定不动。
+ * 渲染层守卫（utils/ipc-guard）仅作兜底保险，本函数才是投递目标的单一事实源。
+ */
+function collectContentTargets(service: string): AppWindow[] {
+  if (service === 'agentEvent') return getWorkspaceWindows()
+  return getAppWindows()
 }
 
 /**
@@ -115,6 +130,12 @@ export const rendererClient = createMainClient<IpcRendererServices>((service, me
         return
       }
     }
+    // 兜底（sessionId 解析不到会话归属）：agent 事件本就属于工作区窗口，只发工作区
+    // 内容视图，绝不下发设置窗口（见 collectContentTargets 契约）
+    for (const aw of collectContentTargets(service)) {
+      sendToAppWindow(aw, channel, { service, method, args }, target)
+    }
+    return
   }
   broadcastToViews(channel, { service, method, args }, target)
 })
