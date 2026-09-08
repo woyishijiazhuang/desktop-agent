@@ -47,6 +47,25 @@ export interface McpTestResult {
   tools: string[]
 }
 
+/**
+ * 内置 MCP 预设（随包出厂目录，非已安装配置）。
+ * 与 McpServerConfig 同构，renderer「添加」时按此预填弹窗，确认/补参后保存为正式 server。
+ * 注意：预设不是 DB 行，不会默认启用，也不参与 manifest/墓碑管理（删除的只是用户自己添加的副本）。
+ */
+export interface BuiltinMcpPreset {
+  /** 预设唯一 id（如 playwright / context7 / github）。 */
+  id: string
+  name: string
+  description: string
+  transport: McpTransport
+  command: string
+  args: string[]
+  env: Record<string, string>
+  url: string
+  /** 使用前提示（依赖、所需参数、注意事项），弹窗与预设卡片展示。 */
+  note: string
+}
+
 /** DB 行 → renderer 配置。 */
 export function rowToConfig(row: McpServerRow): McpServerConfig {
   return {

@@ -10,6 +10,7 @@ import {
   SETTING_VOICE_TTS_STYLE,
   SETTING_VOICE_SILENCE_SEC,
   SETTING_VOICE_FAST_CHANNEL,
+  SETTING_MCP_TOOL_USAGE,
   type SettingsTabKey
 } from '../agent/types'
 
@@ -83,6 +84,12 @@ const SETTING_VALIDATORS: Record<string, (v: unknown) => boolean> = {
     Object.entries(v).every(
       ([k, val]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k) && typeof val === 'string'
     ),
+  /** MCP 工具调用次数（Record<"serverId::tool", number>，见 agent/types.ts SETTING_MCP_TOOL_USAGE）。 */
+  [SETTING_MCP_TOOL_USAGE]: (v) =>
+    typeof v === 'object' &&
+    v !== null &&
+    !Array.isArray(v) &&
+    Object.values(v).every((x) => typeof x === 'number' && Number.isFinite(x) && x >= 0),
   // ---- 语音对话（key 见 agent/types.ts SETTING_VOICE_*）----
   /** MiMo 语音 API Key（safeStorage 加密后的 base64 字符串，明文不进渲染进程）。 */
   [SETTING_VOICE_API_KEY]: (v) => typeof v === 'string',

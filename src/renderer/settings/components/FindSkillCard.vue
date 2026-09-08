@@ -72,7 +72,8 @@ function openHomepage(): void {
       <div class="tool-toggle__info">
         <span class="tool-toggle__name">启用技能搜索</span>
         <span class="tool-toggle__desc">
-          开启后 Agent 可在选定的平台上查找可复用的 AI Agent 技能。关闭后工具不再注入，下一轮生效。
+          开启后 Agent 可在选定的平台上查找可复用的 AI Agent
+          技能。关闭后调用会提示已停用；开关即时生效。
         </span>
       </div>
       <NSwitch :value="enabled" :disabled="!settings.skillsEnabled" @update:value="onToggle" />
@@ -80,7 +81,7 @@ function openHomepage(): void {
 
     <!-- 数据源配置 -->
     <p class="config-desc">
-      字节 Find Skill 与腾讯 SkillHub 均提供公开 API，无需配置 Key。切换后对当前会话下一轮生效。
+      字节 Find Skill 与腾讯 SkillHub 均提供公开 API，无需配置 Key。切换即时生效。
     </p>
     <div class="source-row">
       <div class="source-row__info">

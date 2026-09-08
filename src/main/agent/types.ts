@@ -378,6 +378,19 @@ export const FIND_SKILL_SOURCE_HOMEPAGES: Record<FindSkillSource, string> = {
   tencent: 'https://skillhub.cn/skills'
 }
 
+/**
+ * 已安装技能的来源：内置（随应用出厂预装，见 skills-store 的 seedBuiltinSkills）或平台安装。
+ * 比 FindSkillSource 多出 'builtin'，用于 manifest 中 InstalledSkill.source 的取值。
+ */
+export type InstalledSkillSource = FindSkillSource | 'builtin'
+
+/** 已安装技能来源展示名（renderer 技能管理页已安装列表标签用）。 */
+export const SKILL_SOURCE_LABELS: Record<InstalledSkillSource, string> = {
+  builtin: '内置',
+  byte: '字节 Find Skill',
+  tencent: '腾讯 SkillHub'
+}
+
 /** settings 表中存储的「技能搜索数据源」key。 */
 export const SETTING_FIND_SKILL_SOURCE = 'findSkillSource'
 
@@ -397,6 +410,12 @@ export const SETTING_AGENT_MD_INJECTION_CHARS = 'agent.agentMdInjectionChars'
  */
 export const SETTING_AGENT_ENV = 'agent.env'
 
+/**
+ * settings 表中存储的「MCP 工具调用次数」key（Record<"serverId::tool", number>）。
+ * 供 mcp_tools 目录按使用热度排序（无记录时按名称/描述相关度排序），仅 main 侧读写。
+ */
+export const SETTING_MCP_TOOL_USAGE = 'mcp.toolUsage'
+
 /** 未配置时的默认数据源。 */
 export const DEFAULT_FIND_SKILL_SOURCE: FindSkillSource = 'byte'
 
@@ -412,8 +431,8 @@ export interface InstalledSkill {
   name: string
   /** 一句话用途说明（SKILL.md frontmatter description / 平台返回的 description）。 */
   description: string
-  /** 来源平台。 */
-  source: FindSkillSource
+  /** 来源：内置（builtin）或安装来源平台（byte/tencent）。 */
+  source: InstalledSkillSource
   /** 平台侧完整技能标识（如 volcengine/las/byted-las-pdf-parse-doubao）。 */
   slug: string
   /** 版本号（解析自 SKILL.md frontmatter，缺失时为空）。 */

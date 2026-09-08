@@ -96,8 +96,8 @@ async function refreshShellEnv(): Promise<void> {
         <span>工具</span>
       </template>
       <p class="settings-card__desc">
-        控制 Agent 可调用的文件与系统工具。关闭后 Agent
-        将无法使用该工具。修改后对当前会话下一轮生效。
+        控制 Agent 可调用的文件与系统工具。关闭后 Agent 调用该工具会收到
+        「已停用」提示；开关即时生效，不中断当前对话。
         技能、记忆与知识库相关工具请分别在「技能」「记忆」「知识库」页管理。
       </p>
       <ToolSwitches :tools="generalTools" />

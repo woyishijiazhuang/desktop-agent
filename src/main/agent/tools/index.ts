@@ -18,6 +18,7 @@ import { notifyTool } from './notify'
 import { createPlanModeTools } from './plan-mode'
 import { createAskUserTool } from './ask-user'
 import { createTaskTool } from './task'
+import { mcpToolsTool, mcpCallTool } from './mcp'
 import { db } from '../../database'
 import {
   SETTING_ENABLED_TOOLS,
@@ -158,6 +159,9 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
     defaultEnabled: true,
     build: ({ sessionId }) => [createTaskTool(sessionId)]
   },
+  // MCP 发现层/通用调用：元工具常驻，MCP server 工具按需经其发现与调用（见 tools/mcp.ts）
+  single(mcpToolsTool),
+  single(mcpCallTool),
   single(webSearchTool, false),
   single(webFetchTool),
   single(findSkillTool),
@@ -200,11 +204,16 @@ export function listTools(): ToolInfo[] {
 }
 
 /**
- * 汇总启用的工具，注入 Agent initialState.tools。
- * 被关闭的工具不会注入，Agent 也就无法调用。
- * 危险工具（write_file / bash）仍由各自 executionMode='sequential' +
- * beforeToolCall 钩子做权限确认，开关只控制是否可用。
- * 功能域总开关（技能/记忆）关闭时，对应域工具一律不注入（即使单项开关为 true）。
+ * 汇总注入 Agent 的工具。
+ *
+ * 缓存稳定性设计（2026-09）：
+ * 工具定义是请求前缀的一部分，改动它（增删/顺序）会让服务端前缀缓存整段失效，且伴随驱逐会话。
+ * 因此这里遵循「工具数组尽量恒定 + 启停用执行层掩码」：
+ * - **注入集合固定**：取「默认启用 或 用户曾显式开启」的并集，几乎不随开关变化
+ *   （唯一例外：默认关闭的工具如 web_search，首次开启会加入集合——低频显式操作，可接受一次重建）。
+ * - **启停即时生效、不驱逐**：每个工具包一层执行门控 wrapGate，调用时实时读
+ *   enabledTools 覆盖与域总开关（技能/记忆/知识库/bash），被关则返回「已停用」提示。
+ * 关闭工具仍占少量 schema 位，换来：开关永不改变上下文、永不中断会话。
  */
 export interface BuildToolsOptions {
   /** 当前模型是否支持图片输入（model.input 含 'image'），决定 read_file 读图片时的行为。 */
@@ -213,22 +222,61 @@ export interface BuildToolsOptions {
   sessionId: string
 }
 
+/** 工具此刻是否可用（开关覆盖 + 域总开关 + bash 联动，调用时实时求值）。 */
+function isToolCurrentlyEnabled(name: string): boolean {
+  const overrides = readOverrides()
+  if (overrides[name] === false) return false
+  const skillsEnabled = db.getSetting<boolean>(SETTING_SKILLS_ENABLED) !== false
+  if (!skillsEnabled && SKILL_TOOLS.has(name)) return false
+  const memoryEnabled = db.getSetting<boolean>(SETTING_MEMORY_ENABLED) !== false
+  if (!memoryEnabled && MEMORY_TOOLS.has(name)) return false
+  const kbEnabled = db.getSetting<boolean>(SETTING_KB_ENABLED) !== false
+  if (!kbEnabled && KB_TOOLS.has(name)) return false
+  const bashEnabled = overrides['bash'] ?? true
+  if (!bashEnabled && (name === 'bash' || BASH_AUX_TOOLS.has(name))) return false
+  return true
+}
+
+/** 给单个工具套执行门控：被关时直接返回「已停用」提示，不执行内部逻辑。 */
+function wrapGate(tool: AgentTool): AgentTool {
+  const { name, label } = tool
+  const origExecute = tool.execute
+  const execute = (async (
+    toolCallId: string,
+    params: unknown,
+    signal?: AbortSignal,
+    onUpdate?: unknown
+  ) => {
+    if (!isToolCurrentlyEnabled(name)) {
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `工具「${label ?? name}」当前已停用（设置中已关闭）。如需使用，请先在「设置 → 工具」中开启；开关即时生效，无需中断当前对话。`
+          }
+        ],
+        details: {}
+      }
+    }
+    return (origExecute as (...args: unknown[]) => Promise<unknown>).call(
+      tool,
+      toolCallId,
+      params,
+      signal,
+      onUpdate
+    )
+  }) as unknown as typeof tool.execute
+  return { ...tool, execute }
+}
+
 export function buildTools(opts: BuildToolsOptions = { sessionId: '' }): AgentTool[] {
   const overrides = readOverrides()
-  const skillsEnabled = db.getSetting<boolean>(SETTING_SKILLS_ENABLED) !== false
-  const memoryEnabled = db.getSetting<boolean>(SETTING_MEMORY_ENABLED) !== false
-  const kbEnabled = db.getSetting<boolean>(SETTING_KB_ENABLED) !== false
-  const bashEnabled = overrides['bash'] ?? true
   const result: AgentTool[] = []
   for (const entry of TOOL_REGISTRY) {
-    const enabled = overrides[entry.name] ?? entry.defaultEnabled
-    if (!enabled) continue
-    if (!skillsEnabled && SKILL_TOOLS.has(entry.name)) continue
-    if (!memoryEnabled && MEMORY_TOOLS.has(entry.name)) continue
-    if (!kbEnabled && KB_TOOLS.has(entry.name)) continue
-    // bash 辅助工具随 bash 启停：bash 被关闭时即便单独开启也一并移除
-    if (BASH_AUX_TOOLS.has(entry.name) && !bashEnabled) continue
-    result.push(...entry.build(opts))
+    // 注入判定：默认启用或用户曾显式开启；一旦开启过即长期留在集合内（保持工具数组稳定）
+    const everOn = entry.defaultEnabled || overrides[entry.name] === true
+    if (!everOn) continue
+    result.push(...entry.build(opts).map((t) => wrapGate(t)))
   }
   return result
 }

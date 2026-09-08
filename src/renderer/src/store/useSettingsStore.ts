@@ -63,7 +63,9 @@ export const THINKING_LEVEL_OPTIONS: { value: ThinkingLevel; label: string }[] =
  * 设置状态：全局默认系统提示 / 上次使用思考级别 / 工具开关。
  *
  * 模型配置与 API Key 已迁移到 useModelConfigsStore（每条 config 独立 key，加密存 main 进程），
- * 此处不再持有 provider/model/默认模型状态。保存后驱逐当前会话的内存 Agent，使新设置下一轮生效。
+ * 此处不再持有 provider/model/默认模型状态。
+ * 上下文稳定性约定（2026-09）：工具/技能/记忆/知识库/默认提示词开关均「即时生效、不驱逐 Agent、
+ * 不改工具集」——工具数组常驻，启停靠执行层掩码（见 tools/index.ts wrapGate），前缀缓存不失效。
  */
 export const useSettingsStore = defineStore('settings', () => {
   const defaultSystemPrompt = ref<string>('')
@@ -227,15 +229,22 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   /**
-   * 保存默认系统提示并驱逐全部内存 Agent。
-   * 同时清空全部会话已固化的最终提示词快照：快照优先复用，若不失效，
-   * 旧会话会永远沿用旧默认提示词（resolved_system_prompt 逻辑见 agent-manager.createAgent）。
-   * 设置独立窗口无「当前会话」概念，且这些设置是全局的，须驱逐全部工作区的 Agent。
+   * 保存默认系统提示：仅写入作为「之后新建会话」的默认值。
+   * 不再清空既有会话的固化提示词快照、不再驱逐 Agent——避免一次保存导致全部会话
+   * 前缀重建（缓存 miss + 带新时间戳）。需要让现有会话也采用时，
+   * 由用户显式触发 applyDefaultSystemPromptToAll（设置页独立按钮）。
    */
   async function saveDefaultSystemPrompt(prompt: string): Promise<void> {
     await mainClient.db.setSetting(SETTING_DEFAULT_SYSTEM_PROMPT, prompt)
-    await mainClient.db.clearResolvedSystemPrompts()
     defaultSystemPrompt.value = prompt
+  }
+
+  /**
+   * 将当前默认系统提示应用到全部现有会话（显式操作，会清空全部固化快照并驱逐 Agent，
+   * 各会话下一轮以新默认 + 新时间重建前缀）。
+   */
+  async function applyDefaultSystemPromptToAll(): Promise<void> {
+    await mainClient.db.clearResolvedSystemPrompts()
     await mainClient.agent.evictAllSessions()
   }
 
@@ -258,34 +267,32 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   /**
-   * 切换长期记忆开关：写入 settings，并驱逐当前会话 Agent，
-   * 使记忆工具（list/add/update/delete_memory）在下一轮从 Agent 工具集中移除/恢复。
-   * 注意：开关只影响记忆工具，不影响系统提示词中的记忆段（该段随 Agent 创建时全量注入、会话内固定）。
+   * 切换长期记忆开关：写入 settings 并刷新本地状态。
+   * 记忆工具始终驻留在 Agent 工具集（schema 稳定、前缀缓存不失效），关闭仅使调用时被
+   * 执行层拦截并返回「已停用」提示（见 tools/index.ts 的 wrapGate）——无需驱逐 Agent。
+   * 注：开关只影响记忆工具，不影响系统提示词中的记忆段（该段随 Agent 创建时全量注入、会话内固定）。
    */
   async function saveMemoryEnabled(v: boolean): Promise<void> {
     await mainClient.db.setSetting(SETTING_MEMORY_ENABLED, v)
     memoryEnabled.value = v
-    await mainClient.agent.evictAllSessions()
   }
 
   /**
-   * 切换本地技能总开关：写入 settings，并驱逐当前会话 Agent，
-   * 使技能域工具（find_skill/install_skill/read_skill）在下一轮从 Agent 工具集中移除/恢复。
+   * 切换本地技能总开关：写入 settings 并刷新本地状态。
+   * 技能工具（find_skill/install_skill/read_skill）常驻但执行层掩码，开关即时生效，不驱逐 Agent。
    */
   async function saveSkillsEnabled(v: boolean): Promise<void> {
     await mainClient.db.setSetting(SETTING_SKILLS_ENABLED, v)
     skillsEnabled.value = v
-    await mainClient.agent.evictAllSessions()
   }
 
   /**
-   * 切换知识库总开关：写入 settings，并驱逐当前会话 Agent，
-   * 使知识库检索工具（search_knowledge）在下一轮从 Agent 工具集中移除/恢复。
+   * 切换知识库总开关：写入 settings 并刷新本地状态。
+   * search_knowledge 常驻但执行层掩码，开关即时生效，不驱逐 Agent。
    */
   async function saveKbEnabled(v: boolean): Promise<void> {
     await mainClient.db.setSetting(SETTING_KB_ENABLED, v)
     kbEnabled.value = v
-    await mainClient.agent.evictAllSessions()
   }
 
   /**
@@ -504,8 +511,8 @@ export const useSettingsStore = defineStore('settings', () => {
   }
 
   /**
-   * 切换某工具的启用状态：写回全量覆盖（toolName → enabled），
-   * 刷新内存工具列表，并驱逐当前会话 Agent 使新工具集下一轮生效。
+   * 切换某工具的启用状态：写回全量覆盖（toolName → enabled）并刷新内存列表。
+   * 工具 schema 常驻（buildTools 固定注入集合），关闭只切换执行层掩码，即时生效、无需驱逐 Agent。
    */
   async function saveToolEnabled(name: string, enabled: boolean): Promise<void> {
     const overrides: Record<string, boolean> = {}
@@ -514,7 +521,6 @@ export const useSettingsStore = defineStore('settings', () => {
     await mainClient.db.setSetting(SETTING_ENABLED_TOOLS, overrides)
     const target = tools.value.find((t) => t.name === name)
     if (target) target.enabled = enabled
-    await mainClient.agent.evictAllSessions()
   }
 
   /** 保存 Tavily API Key（main 进程加密存储，renderer 只记录已配置状态）。 */
@@ -594,6 +600,7 @@ export const useSettingsStore = defineStore('settings', () => {
     voiceToolPhrases,
     loadSettings,
     saveDefaultSystemPrompt,
+    applyDefaultSystemPromptToAll,
     setLastUsedThinkingLevel,
     saveMaxTurnsPerRun,
     saveNotificationsEnabled,

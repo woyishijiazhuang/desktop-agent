@@ -57,15 +57,17 @@ export function initializeSafeRendererServices<T extends readonly IpcServiceCons
     )
   }
   register((message) => {
-    const fn = (services as Record<string, Record<string, unknown>>)[message.service]?.[
-      message.method
-    ]
+    const serviceObj = (services as Record<string, Record<string, unknown>>)[message.service]
+    const fn = serviceObj?.[message.method]
     if (typeof fn !== 'function') {
       // main 推送了本视图未注册的调用：能力配置漂移时降级为告警忽略，不崩页面
       console.warn(`[ipc] main 推送了本视图未注册的调用: ${message.service}.${message.method}`)
       return
     }
-    ;(fn as (...args: unknown[]) => unknown)(...(message.args ?? []))
+    // 必须以成员调用方式保 this：直接 `fn(...)` 会让方法体里 this 为 undefined，
+    // 触及私有状态（如 AgentEventService 的 #bufferUpdate/#flushUpdate）时 V8 抛
+    // 「Cannot read properties of undefined (reading 'AgentEventService')」。
+    ;(fn as (...args: unknown[]) => unknown).call(serviceObj, ...(message.args ?? []))
   })
   return services
 }

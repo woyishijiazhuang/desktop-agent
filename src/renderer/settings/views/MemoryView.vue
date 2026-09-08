@@ -164,7 +164,7 @@ onMounted(load)
       </template>
       <p class="settings-card__desc">
         控制 Agent
-        可调用的记忆管理工具（查看、添加、更新、删除记忆条目）。记忆总开关关闭时此处不可调整，恢复后按原状态生效。修改后对当前会话下一轮生效。
+        可调用的记忆管理工具（查看、添加、更新、删除记忆条目）。记忆总开关关闭时此处不可调整，恢复后按原状态生效。修改后即时生效，不驱逐会话。
       </p>
       <ToolSwitches :tools="memoryTools" :disabled="!settings.memoryEnabled" />
     </NCard>

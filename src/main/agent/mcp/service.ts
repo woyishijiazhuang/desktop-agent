@@ -2,9 +2,11 @@ import { IpcService } from 'electron-ipc-service'
 import { db } from '../../database'
 import type { CreateMcpServerParams, UpdateMcpServerParams } from '../../database'
 import { mcpManager } from './index'
+import { getBuiltinMcpPresets } from './presets'
 import { createLogger } from '../../utils/log'
 import {
   rowToConfig,
+  type BuiltinMcpPreset,
   type McpServerConfig,
   type McpServerStatus,
   type McpTestResult
@@ -16,20 +18,20 @@ const log = createLogger('mcp')
  * MCP server 管理服务（namespace: mcp）。
  * - 配置 CRUD（持久化到 mcp_servers 表）
  * - 连接状态查询 / 连接测试
- * - 配置变更后自动 reload 连接池，并经 onConfigChanged 通知（service/index 接线驱逐全部 Agent）
+ * - 配置变更后自动 reload 连接池（连接/状态即时生效）
+ * 说明：MCP 工具经 mcp_tools/mcp_call 元工具按需发现调用（不预注入 Agent），
+ * 因此配置变更无需驱逐会话，在途对话不受影响（见 agent/mcp/index.ts）。
  */
 export class McpService extends IpcService {
   static override readonly namespace = 'mcp'
 
-  private configChangeListeners: (() => void)[] = []
-
-  /** 注册配置变更回调（service/index 接线：变更后驱逐全部 Agent，使新工具集下一轮生效）。 */
-  onConfigChanged(cb: () => void): void {
-    this.configChangeListeners.push(cb)
-  }
-
   listServers(): McpServerConfig[] {
     return db.listMcpServers().map(rowToConfig)
+  }
+
+  /** 内置 MCP 预设目录（只读，不创建任何配置；renderer 据此预填添加弹窗）。 */
+  listBuiltinPresets(): BuiltinMcpPreset[] {
+    return getBuiltinMcpPresets()
   }
 
   createServer(input: CreateMcpServerParams): McpServerConfig {
@@ -75,6 +77,5 @@ export class McpService extends IpcService {
 
   private async afterChange(): Promise<void> {
     await mcpManager.reload()
-    for (const cb of this.configChangeListeners) cb()
   }
 }

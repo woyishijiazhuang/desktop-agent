@@ -20,6 +20,7 @@ import icon from '../../resources/icon.png?asset'
 import { createLogger } from './utils/log'
 import { cleanupOrphanAttachments } from './agent/attachment'
 import { bashSessionManager } from './agent/bash-session'
+import { seedBuiltinSkills } from './agent/skills-store'
 import { SETTING_CLOSE_TO_TRAY } from './agent/types'
 import { db } from './database'
 
@@ -44,7 +45,7 @@ crashReporter.start({
 // 语音 VAD 资源协议（appasset://）：须在 app ready 前注册 scheme
 registerVoiceAssetScheme()
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   log.info('应用启动', {
     version: app.getVersion(),
     electron: process.versions.electron,
@@ -69,6 +70,10 @@ app.whenReady().then(() => {
 
   // 安装语音 VAD 资源协议处理器（appasset:// 供渲染进程 fetch onnx / ort wasm）
   installVoiceAssetProtocol()
+
+  // 启动补种随包内置技能到 userData/skills（失败仅告警），须在窗口创建前完成，
+  // 保证首次打开技能管理页即可看到内置技能，Agent 首轮即可发现
+  await seedBuiltinSkills()
 
   // 恢复工作区窗口：按 last_opened_at 倒序为每个工作区建窗口（无工作区时创建默认工作区）
   void restoreStartupWindows()

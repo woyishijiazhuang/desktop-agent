@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { NCard, NTag, NSwitch, NButton, NPopconfirm, NSpace, useMessage } from 'naive-ui'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
-import { FIND_SKILL_SOURCE_LABELS } from '@main/agent/types'
+import { SKILL_SOURCE_LABELS } from '@main/agent/types'
 
 const settings = useSettingsStore()
 const message = useMessage()
@@ -42,8 +42,8 @@ async function onOpenDir(): Promise<void> {
     </template>
 
     <p class="settings-card__desc">
-      Agent 从技能市场安装的技能存放在用户数据目录的 skills 文件夹。Agent 在对话中通过 read_skill
-      自主发现并使用技能；启停与卸载即时生效，不影响正在进行的对话。
+      已安装技能（含应用随包内置）存放在用户数据目录的 skills 文件夹。Agent 在对话中通过 read_skill
+      自主发现并使用技能；启停与卸载即时生效，不影响正在进行的对话。内置技能卸载后不会自动恢复。
     </p>
 
     <!-- 空状态 -->
@@ -59,7 +59,7 @@ async function onOpenDir(): Promise<void> {
         <div class="skill-list__main">
           <div class="skill-list__head">
             <span class="skill-list__name">{{ s.name }}</span>
-            <NTag size="tiny" round>{{ FIND_SKILL_SOURCE_LABELS[s.source] }}</NTag>
+            <NTag size="tiny" round>{{ SKILL_SOURCE_LABELS[s.source] }}</NTag>
             <NTag v-if="s.version" size="tiny" round>v{{ s.version }}</NTag>
             <NTag v-if="s.hasExtraFiles" type="info" size="tiny" round>含脚本</NTag>
             <NTag v-if="s.downloads > 0" size="tiny" round>{{ s.downloads }} 下载</NTag>

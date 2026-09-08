@@ -99,7 +99,7 @@ function openKeyPage(): void {
       <div class="tool-toggle__info">
         <span class="tool-toggle__name">启用网页搜索</span>
         <span class="tool-toggle__desc">
-          开启后 Agent 可调用 Tavily 搜索网页。关闭后工具不再注入，下一轮生效。
+          开启后 Agent 可调用 Tavily 搜索网页。关闭后调用会提示已停用；开关即时生效，不中断对话。
         </span>
       </div>
       <NSwitch :value="enabled" @update:value="onToggle" />

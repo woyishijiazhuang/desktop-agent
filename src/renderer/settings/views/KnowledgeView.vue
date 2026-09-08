@@ -421,7 +421,7 @@ onMounted(async () => {
       </template>
       <p class="settings-card__desc">
         控制 Agent
-        可调用的知识库检索工具（search_knowledge）。知识库总开关关闭时此处不可调整，恢复后按原状态生效。修改后对当前会话下一轮生效。
+        可调用的知识库检索工具（search_knowledge）。知识库总开关关闭时此处不可调整，恢复后按原状态生效。修改后即时生效，不驱逐会话。
       </p>
       <ToolSwitches :tools="kbTools" :disabled="!settings.kbEnabled" />
     </NCard>

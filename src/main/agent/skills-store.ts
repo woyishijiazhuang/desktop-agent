@@ -30,10 +30,14 @@ const MAX_ZIP_FILES = 300
 /** read_skill 工具单文件读取上限（防止大文件撑爆上下文）。 */
 const MAX_READ_BYTES = 512 * 1024
 
-/** manifest 结构（version 保留给未来迁移）。 */
+/** manifest 结构（version 保留给未来迁移）。
+ * removedBuiltins：用户卸载过的内置技能 id 墓碑。随包内置技能补种（seedBuiltinSkills）
+ * 时跳过这些 id，保证「卸载后不再回来」；仅首次播种方案则无此需求。
+ */
 interface Manifest {
   version: number
   skills: InstalledSkill[]
+  removedBuiltins?: string[]
 }
 
 // ---- manifest 读写 ----
@@ -148,16 +152,22 @@ export async function setSkillEnabled(id: string, enabled: boolean): Promise<Ins
   })
 }
 
-/** 卸载技能：删除技能目录并从 manifest 移除。 */
+/** 卸载技能：删除技能目录并从 manifest 移除。
+ * 内置技能卸载后记入 manifest.removedBuiltins 墓碑，下次启动补种时不再复活。 */
 export async function uninstallSkill(id: string): Promise<void> {
   return withManifestLock(async () => {
     const manifest = await readManifest()
     const idx = manifest.skills.findIndex((s) => s.id === id)
     if (idx < 0) return
+    const entry = manifest.skills[idx]
     manifest.skills.splice(idx, 1)
+    if (entry.source === 'builtin') {
+      manifest.removedBuiltins = manifest.removedBuiltins ?? []
+      if (!manifest.removedBuiltins.includes(id)) manifest.removedBuiltins.push(id)
+    }
     await rm(join(getSkillsDir(), id), { recursive: true, force: true })
     await writeManifest(manifest)
-    log.info('技能已卸载', { id })
+    log.info('技能已卸载', { id, builtin: entry.source === 'builtin' })
   })
 }
 
@@ -219,6 +229,97 @@ export async function readSkillFile(id: string, relPath: string): Promise<string
   const buf = await readFile(abs)
   if (buf.includes(0)) throw new Error(`「${relPath}」是二进制文件，无法直接读取`)
   return buf.toString('utf-8')
+}
+
+// ---- 内置技能（随包预装） ----
+
+/**
+ * 内置技能随包根目录：{app}/resources/builtin-skills/{id}/（标准技能包结构）。
+ * dev 与打包态均可读：app.getAppPath() 在打包态指向 asar，fs 对 asar 内资源透明；
+ * electron-builder 已把 resources/ 目录整体打入安装包并解包（asarUnpack），随包只读。
+ * 内置技能通过启动补种复制到可写的 {userData}/skills/ 后走同一套发现/读取逻辑。
+ */
+function getBuiltinSkillsRoot(): string {
+  return join(app.getAppPath(), 'resources', 'builtin-skills')
+}
+
+/**
+ * 启动补种：把随包内置技能复制到 {userData}/skills/ 并写入 manifest。
+ * - manifest 已有同名 id：跳过，保留用户对该技能的启停状态与本地改动
+ * - id 已在 manifest.removedBuiltins（用户卸载过）：跳过，不复活
+ * - App 升级带来的新内置技能：老用户启动后同样补种
+ * 整体失败（如内置资源缺失/损坏）仅告警，不影响应用启动。
+ */
+export async function seedBuiltinSkills(): Promise<void> {
+  try {
+    await withManifestLock(async () => {
+      let entries
+      try {
+        entries = await readdir(getBuiltinSkillsRoot(), { withFileTypes: true })
+      } catch {
+        log.info('未发现随包内置技能目录，跳过补种')
+        return
+      }
+      const manifest = await readManifest()
+      const existing = new Set(manifest.skills.map((s) => s.id))
+      const removed = new Set(manifest.removedBuiltins ?? [])
+      let changed = false
+      for (const e of entries) {
+        if (!e.isDirectory() || e.name.startsWith('.')) continue
+        const id = e.name
+        if (existing.has(id) || removed.has(id)) continue
+        const files = await collectBuiltinFiles(join(getBuiltinSkillsRoot(), id))
+        const skillMd = files.find((f) => f.path === 'SKILL.md')
+        if (!skillMd) {
+          log.warn('内置技能缺少 SKILL.md，已跳过', { id })
+          continue
+        }
+        const fm = parseFrontmatter(skillMd.content.toString('utf-8'))
+        const targetDir = join(getSkillsDir(), id)
+        await mkdir(targetDir, { recursive: true })
+        for (const f of files) {
+          const abs = join(targetDir, f.path)
+          await mkdir(dirname(abs), { recursive: true })
+          await writeFile(abs, f.content)
+        }
+        manifest.skills.push({
+          id,
+          name: fm.name || id,
+          description: fm.description || '',
+          source: 'builtin',
+          slug: id,
+          version: fm.version ?? '',
+          downloads: 0,
+          installedAt: Date.now(),
+          enabled: true,
+          fileCount: files.length,
+          hasExtraFiles: files.length > 1
+        })
+        existing.add(id)
+        changed = true
+        log.info('内置技能已补种', { id, fileCount: files.length })
+      }
+      if (changed) await writeManifest(manifest)
+    })
+  } catch (err) {
+    log.warn('内置技能补种失败', { error: err instanceof Error ? err.message : String(err) })
+  }
+}
+
+/** 递归收集内置技能目录内全部文件（相对路径 + 内容）。 */
+async function collectBuiltinFiles(root: string): Promise<SkillFile[]> {
+  const out: SkillFile[] = []
+  const walk = async (current: string, prefix: string): Promise<void> => {
+    const entries = await readdir(current, { withFileTypes: true })
+    for (const en of entries) {
+      const abs = join(current, en.name)
+      const rel = prefix ? `${prefix}/${en.name}` : en.name
+      if (en.isDirectory()) await walk(abs, rel)
+      else out.push({ path: rel, content: await readFile(abs) })
+    }
+  }
+  await walk(root, '')
+  return out
 }
 
 // ---- 下载实现 ----

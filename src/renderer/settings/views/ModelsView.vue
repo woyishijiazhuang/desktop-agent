@@ -43,9 +43,22 @@ async function onPromptSave(value: string): Promise<void> {
   promptSaving.value = true
   try {
     await settings.saveDefaultSystemPrompt(value)
-    message.success('系统提示已更新')
+    message.success('已保存为默认，仅对新建会话生效')
   } finally {
     promptSaving.value = false
+  }
+}
+
+const applyingPrompt = ref(false)
+
+/** 显式把当前默认提示应用到全部现有会话（会重建既有会话提示词前缀，缓存随之失效一次）。 */
+async function onApplyPromptToAll(): Promise<void> {
+  applyingPrompt.value = true
+  try {
+    await settings.applyDefaultSystemPromptToAll()
+    message.success('已应用到全部会话，下一轮生效')
+  } finally {
+    applyingPrompt.value = false
   }
 }
 </script>
@@ -112,13 +125,22 @@ async function onPromptSave(value: string): Promise<void> {
         <span>默认系统提示</span>
       </template>
       <p class="settings-card__desc">
-        定义 Agent 的角色与行为。留空则使用内置默认提示词。修改后对当前会话下一轮生效。
+        定义 Agent 的角色与行为。留空则使用内置默认提示词。保存后仅对新建会话生效
+        （不影响进行中的会话与缓存）；要让全部现有会话也改用，请点下方「应用到全部会话」。
       </p>
       <SystemPromptEditor
         :model-value="settings.defaultSystemPrompt"
         :saving="promptSaving"
         @save="onPromptSave"
       />
+      <NPopconfirm @positive-click="onApplyPromptToAll">
+        <template #trigger>
+          <NButton size="small" tertiary :loading="applyingPrompt" style="margin-top: 10px">
+            应用到全部会话…
+          </NButton>
+        </template>
+        将清空全部会话的提示词快照并使其下一轮以新默认重建（当前对话不中断），确定吗？
+      </NPopconfirm>
     </NCard>
 
     <!-- 添加 / 编辑模型对话框 -->

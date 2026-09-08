@@ -29,12 +29,13 @@ async function onToggleEnabled(v: boolean): Promise<void> {
       </template>
       <p class="settings-card__desc">
         Agent 通过技能搜索（find_skill）、安装（install_skill）与读取（read_skill）
-        使用本地技能。关闭总开关后技能相关工具不再注入 Agent，下方的工具开关将被禁用。
+        使用本地技能。关闭总开关后技能相关工具将被停用（Agent 调用会收到「已停用」提示），
+        下方的工具开关同时禁用；开关即时生效，不中断当前对话。
       </p>
       <div class="data-row">
         <div class="data-row__info">
           <span class="data-row__label">启用本地技能</span>
-          <span class="data-row__hint">关闭后 Agent 不再注入技能相关工具</span>
+          <span class="data-row__hint">关闭后技能工具不可调用，但 Agent 上下文保持不变</span>
         </div>
         <NSwitch :value="settings.skillsEnabled" @update:value="onToggleEnabled" />
       </div>
@@ -50,7 +51,7 @@ async function onToggleEnabled(v: boolean): Promise<void> {
       </template>
       <p class="settings-card__desc">
         控制 Agent 可调用的技能安装与读取工具。技能总开关关闭时此处不可调整，恢复后按原状态生效。
-        修改后对当前会话下一轮生效。
+        修改后即时生效，不驱逐会话。
       </p>
       <ToolSwitches :tools="skillTools" :disabled="!settings.skillsEnabled" />
     </NCard>

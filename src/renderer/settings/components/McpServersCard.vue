@@ -3,26 +3,31 @@ import { onMounted, ref } from 'vue'
 import { NCard, NButton, NTag, NSwitch, NSpace, NPopconfirm, useMessage } from 'naive-ui'
 import { mainClient } from '@renderer/utils/main-client'
 import McpServerDialog from './McpServerDialog.vue'
-import type { McpServerConfig, McpServerStatus } from '@main/agent/mcp/types'
+import type { BuiltinMcpPreset, McpServerConfig, McpServerStatus } from '@main/agent/mcp/types'
 
 /**
  * 设置页「MCP 服务器」卡片：配置自定义 MCP server（stdio / HTTP/SSE），
  * 启用后其工具自动注入 Agent。支持连接状态展示、新增/编辑/删除、启停、测试连接。
+ * 顶部提供随包「内置预设」目录：选择后预填添加弹窗，补全参数保存为正式配置。
  */
 const message = useMessage()
 
 const servers = ref<McpServerConfig[]>([])
+const presets = ref<BuiltinMcpPreset[]>([])
 const statusMap = ref<Record<string, McpServerStatus>>({})
 
 const dialogShow = ref(false)
 const editing = ref<McpServerConfig | null>(null)
+const dialogPreset = ref<BuiltinMcpPreset | null>(null)
 
 async function refresh(): Promise<void> {
-  const [list, status] = await Promise.all([
+  const [list, presetList, status] = await Promise.all([
     mainClient.mcp.listServers(),
+    mainClient.mcp.listBuiltinPresets(),
     mainClient.mcp.getStatus()
   ])
   servers.value = list
+  presets.value = presetList
   statusMap.value = Object.fromEntries(status.map((s) => [s.serverId, s]))
 }
 
@@ -30,11 +35,24 @@ onMounted(() => void refresh())
 
 function onAdd(): void {
   editing.value = null
+  dialogPreset.value = null
   dialogShow.value = true
+}
+
+function onAddPreset(p: BuiltinMcpPreset): void {
+  editing.value = null
+  dialogPreset.value = p
+  dialogShow.value = true
+}
+
+function onDialogShowChange(show: boolean): void {
+  dialogShow.value = show
+  if (!show) dialogPreset.value = null
 }
 
 function onEdit(s: McpServerConfig): void {
   editing.value = s
+  dialogPreset.value = null
   dialogShow.value = true
 }
 
@@ -79,6 +97,33 @@ function statusOf(s: McpServerConfig): McpServerStatus | undefined {
       服务）。启用的服务器会自动把其工具注入 Agent，可直接在对话中调用。
       连接失败不影响对话，状态与错误信息在此展示。
     </p>
+
+    <!-- 内置预设目录：仅模板，不默认启用；添加后成为正式配置 -->
+    <div v-if="presets.length > 0" class="mcp-presets">
+      <div class="mcp-presets__head">
+        <span class="mcp-presets__title">内置预设</span>
+        <NTag size="tiny" round>{{ presets.length }} 个</NTag>
+      </div>
+      <p class="mcp-desc">
+        随应用出厂的常用 MCP 模板（仅目录，默认不启用）。点「配置并添加」会预填参数，
+        在弹窗中按提示补全（如 Node 环境 / GitHub Token）并保存后即可使用。
+      </p>
+      <div class="preset-list">
+        <div v-for="p in presets" :key="p.id" class="preset-list__item">
+          <div class="preset-list__main">
+            <div class="preset-list__head">
+              <span class="preset-list__name">{{ p.name }}</span>
+              <NTag size="tiny" round>{{ p.transport === 'stdio' ? 'stdio' : 'HTTP' }}</NTag>
+            </div>
+            <p class="preset-list__desc">{{ p.description }}</p>
+            <p class="preset-list__note">{{ p.note }}</p>
+          </div>
+          <NButton size="small" tertiary type="primary" @click="onAddPreset(p)">
+            配置并添加
+          </NButton>
+        </div>
+      </div>
+    </div>
 
     <div v-if="servers.length === 0" class="mcp-empty">
       <p class="mcp-empty__text">尚未配置 MCP 服务器，点击下方添加一个即可。</p>
@@ -126,7 +171,13 @@ function statusOf(s: McpServerConfig): McpServerStatus | undefined {
       <NButton type="primary" @click="onAdd">添加 MCP 服务器</NButton>
     </div>
 
-    <McpServerDialog v-model:show="dialogShow" :server="editing" @saved="onSaved" />
+    <McpServerDialog
+      :show="dialogShow"
+      :server="editing"
+      :preset="dialogPreset"
+      @update:show="onDialogShowChange"
+      @saved="onSaved"
+    />
   </NCard>
 </template>
 
@@ -135,6 +186,65 @@ function statusOf(s: McpServerConfig): McpServerStatus | undefined {
   margin: 0 0 12px;
   font-size: 13px;
   color: var(--text-3);
+}
+.mcp-presets {
+  padding: 12px;
+  margin-bottom: 12px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+}
+.mcp-presets__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.mcp-presets__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.preset-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.preset-list__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg-soft);
+}
+.preset-list__main {
+  flex: 1;
+  min-width: 0;
+}
+.preset-list__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.preset-list__name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-1);
+}
+.preset-list__desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-2);
+}
+.preset-list__note {
+  margin: 4px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-3);
+  white-space: pre-line;
 }
 .mcp-empty {
   padding: 16px 0;

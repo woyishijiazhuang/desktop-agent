@@ -6,7 +6,6 @@ import { db } from '../database'
 import { toCreateMessageParams, rowsToAgentMessages } from './convert'
 import { buildTools } from './tools'
 import { resolveShell } from './bash-session'
-import { mcpManager } from './mcp'
 import {
   getDecryptedApiKey,
   ensureAllModelConfigsRegistered,
@@ -56,6 +55,34 @@ const TITLE_SYSTEM_PROMPT =
 /** 会话因 LRU 满被暂停（abort）时 agent_end 携带的提示文案。 */
 const LRU_PAUSED_MESSAGE =
   '该会话因同时打开的会话较多被系统暂停，已生成的内容已保存，可点击重试继续。'
+
+/** 文本化单条消息（内容可能是 string 或 content block 数组）。 */
+function textOfMessage(m: AgentMessage): string {
+  const c = (m as { content?: unknown }).content
+  if (typeof c === 'string') return c
+  if (Array.isArray(c)) {
+    return c
+      .map((b) => {
+        if (b && typeof b === 'object' && 'text' in (b as object)) {
+          return String((b as { text: unknown }).text ?? '')
+        }
+        return ''
+      })
+      .join('')
+  }
+  return ''
+}
+
+/** 把动态提示块幂等追加到消息末尾：末尾附近已含相同文本则跳过（防止跨轮重复累积）。
+ * 「越稳定越靠前、越动态越靠后」——尾部变化不影响前缀缓存命中。 */
+function appendContextTail(messages: AgentMessage[], block: AgentMessage): AgentMessage[] {
+  const marker = textOfMessage(block)
+  if (!marker) return messages
+  for (const m of messages.slice(-4)) {
+    if (textOfMessage(m).includes(marker)) return messages
+  }
+  return [...messages, block]
+}
 
 /**
  * 判断消息是否为「纯错误/中止载体」：assistant 消息无实质内容
@@ -475,17 +502,15 @@ export class AgentManager {
         ? defaultThinking
         : 'medium'
 
-    // 内置工具（按开关过滤）+ MCP server 工具（已启用且连接成功的 server）
+    // 内置工具（按开关过滤；MCP 工具不再逐工具注入，改为 mcp_tools/mcp_call 两个常驻元工具
+    // 按需发现与调用，见 agent/tools/mcp.ts——启停 MCP server 不改变 Agent 工具集）
     // read_file 的图片能力按模型 input 模态门控：不支持图片的模型不会注入 image block
     // bash 家族（bash/bash_output/kill_shell）绑定本会话：持久化 shell 与后台会话以其为 key
-    const tools = [
-      ...buildTools({ supportsImages: model.input.includes('image'), sessionId }),
-      ...(await mcpManager.getTools())
-    ]
+    const tools = buildTools({ supportsImages: model.input.includes('image'), sessionId })
 
     // 子代理宿主注册：task 工具运行子代理时复用本会话的模型/流式函数/API Key。
     // 宿主随 Agent 生命周期管理：evictAgentLocked 注销（防悬挂引用）。
-    // plan 子代理只读工具集从同一 buildTools 结果按白名单过滤（不含 MCP 工具）。
+    // plan 子代理只读工具集从同一 buildTools 结果按白名单过滤（不含 MCP 元工具）。
     registerSubagentHost({
       sessionId,
       model,
@@ -524,21 +549,24 @@ export class AgentManager {
       beforeToolCall: createBeforeToolCallHook(sessionId, () => this.voiceRuns.has(sessionId)),
       transformContext: async (messages) => {
         // 动态上下文注入（不修改 systemPrompt，不失效 LLM 前缀缓存）：
-        // 1) 压缩摘要前置为 role=user 标记块；
-        // 2) 计划模式软引导：模型调用 enter_plan_mode 后每轮提醒约束与可用工具。
+        // 1) 压缩摘要前置为 role=user 标记块——它是「历史改写」：摘要文本在两次压缩间恒定，
+        //    仅在压缩触发时更新一次，前缀主体保持稳定；
+        // 2) 计划模式软引导 / 语音指令这类「按模式切换的临时提醒」追加到消息**尾部**而非前缀：
+        //    「越稳定越靠前、越动态越靠后」，尾部变化不影响前缀缓存命中（业界通用做法）。
         // 与 plan-mode.ts 的硬拦截（beforeToolCall）构成双重防线。
         try {
           const ctx = db.getSessionContext(sessionId)
-          const blocks: AgentMessage[] = []
+          const headBlocks: AgentMessage[] = []
           if (ctx.compressSummary) {
-            blocks.push({
+            headBlocks.push({
               role: 'user',
               content: [{ type: 'text', text: `[之前的对话摘要]\n${ctx.compressSummary}` }],
               timestamp: 0
             })
           }
+          const tailBlocks: AgentMessage[] = []
           if (isPlanMode(sessionId)) {
-            blocks.push({
+            tailBlocks.push({
               role: 'user',
               content: [
                 {
@@ -551,14 +579,16 @@ export class AgentManager {
           }
           // 语音模式：请求级注入口语化/精简指令（不改 systemPrompt 快照，前缀缓存不失效）
           if (this.voiceRuns.has(sessionId)) {
-            blocks.push({
+            tailBlocks.push({
               role: 'user',
               content: [{ type: 'text', text: VOICE_MODE_INSTRUCTION }],
               timestamp: 0
             })
           }
-          if (blocks.length === 0) return messages
-          return [...blocks, ...messages]
+          let out = messages
+          if (headBlocks.length > 0) out = [...headBlocks, ...out]
+          for (const block of tailBlocks) out = appendContextTail(out, block)
+          return out
         } catch (err) {
           log.error('transformContext 失败', { sessionId, error: err })
           return messages
