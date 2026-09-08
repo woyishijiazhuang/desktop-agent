@@ -463,9 +463,13 @@ const remainingSec = computed<number | null>(() => {
     border-color 0.15s ease,
     color 0.15s ease;
 }
-.interaction-panel__option:hover {
+.interaction-panel__option:hover:not(.interaction-panel__option--active) {
   border-color: var(--primary);
   color: var(--primary);
+}
+.interaction-panel__option--active:hover {
+  /* 选中项已是「主题色底 + 白字」，hover 不得覆盖为同色文字（否则字会隐形） */
+  color: #fff;
 }
 .interaction-panel__option--active {
   background: var(--primary);

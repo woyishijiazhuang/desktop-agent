@@ -3,7 +3,13 @@ import { rendererClient } from '../service/render-client'
 import { db } from '../database'
 import { createLogger } from '../utils/log'
 import { isPlanMode, isPlanRunAutoAllow } from './plan-mode'
-import { getSessionWriteBoundary, isPathWithinAny } from './sandbox'
+import {
+  getSessionWriteBoundary,
+  isPathWithinAny,
+  getSessionFsPolicy,
+  isSandboxWriteAllowed,
+  sandboxWriteDeniedMessage
+} from './sandbox'
 import {
   beginInteraction,
   respondInteraction,
@@ -245,7 +251,15 @@ export function createBeforeToolCallHook(
     if (toolCall.name === 'bash') {
       decision = decideBash(sessionId, args?.command?.trim() ?? '')
     } else if (toolCall.name === 'write_file' || toolCall.name === 'edit_file') {
-      decision = await decideFile(sessionId, args?.path ?? '')
+      const path = args?.path ?? ''
+      // 沙箱开启时区外写入不可被人工放行（执行层/OS 沙箱必拒），直接按沙箱口径拒绝，
+      // 不弹确认条——避免「确认允许 → 执行层又硬拒」的假确认（见 sandbox.ts 文件域策略）。
+      const policy = await getSessionFsPolicy(sessionId)
+      if (policy && path && !isSandboxWriteAllowed(policy, path)) {
+        log.info('沙箱开启，区外写入直接拒绝（不弹确认）', { sessionId, toolName: toolCall.name, path })
+        return { block: true, reason: sandboxWriteDeniedMessage(path) }
+      }
+      decision = await decideFile(sessionId, path)
     } else {
       decision = {
         decision: 'ask',

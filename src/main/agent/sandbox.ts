@@ -95,6 +95,16 @@ export function isPathWithinAny(target: string, roots: string[]): boolean {
   return roots.some((r) => isPathWithin(target, r))
 }
 
+/** 沙箱语义下路径是否允许写入：命中可写根且不在禁读根内。false 即执行层（及 OS 沙箱）会拒绝。 */
+export function isSandboxWriteAllowed(policy: SandboxFsPolicy, path: string): boolean {
+  return isPathWithinAny(path, policy.allowWriteRoots) && !isPathWithinAny(path, policy.denyReadRoots)
+}
+
+/** 沙箱拒绝写入时给 Agent/用户的统一引导文案（审批预检与执行层共用同一口径）。 */
+export function sandboxWriteDeniedMessage(path: string): string {
+  return `沙箱已开启：写入路径「${path}」不在可写范围内（工作区 / 可写目录 / 系统临时目录）。如需写入，请到「设置 → 沙箱 → 可写目录」添加后重试，或临时关闭沙箱。`
+}
+
 /**
  * 当前会话的文件域策略（沙箱开启才返回非 null）。
  * 语义与 bash 沙箱一致：可写 = 工作区（会话动态）+ 用户可写目录 + 系统临时目录；

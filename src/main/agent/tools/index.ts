@@ -20,7 +20,12 @@ import { createAskUserTool } from './ask-user'
 import { createTaskTool } from './task'
 import { mcpToolsTool, mcpCallTool } from './mcp'
 import { db } from '../../database'
-import { getSessionFsPolicy, isPathWithinAny } from '../sandbox'
+import {
+  getSessionFsPolicy,
+  isPathWithinAny,
+  isSandboxWriteAllowed,
+  sandboxWriteDeniedMessage
+} from '../sandbox'
 import {
   SETTING_ENABLED_TOOLS,
   SETTING_MEMORY_ENABLED,
@@ -297,13 +302,8 @@ function wrapSandboxFsPolicy(tool: AgentTool, sessionId: string): AgentTool {
       const policy = await getSessionFsPolicy(sessionId)
       if (policy) {
         if (FS_WRITE_TOOLS.has(name)) {
-          const allowed =
-            isPathWithinAny(path, policy.allowWriteRoots) &&
-            !isPathWithinAny(path, policy.denyReadRoots)
-          if (!allowed) {
-            throw new Error(
-              `沙箱已开启：写入路径「${path}」不在可写范围内（工作区 / 可写目录 / 系统临时目录）。如需写入，请到「设置 → 沙箱 → 可写目录」添加后重试，或临时关闭沙箱。`
-            )
+          if (!isSandboxWriteAllowed(policy, path)) {
+            throw new Error(sandboxWriteDeniedMessage(path))
           }
         } else if (isPathWithinAny(path, policy.denyReadRoots)) {
           throw new Error(
