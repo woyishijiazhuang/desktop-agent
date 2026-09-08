@@ -284,7 +284,7 @@ onMounted(async () => {
         <div class="data-row__info">
           <span class="data-row__label">工具确认超时</span>
           <span class="data-row__hint">
-            等待确认的最长时间，超时未响应将自动拒绝；设为 0 表示一直等待
+            危险工具确认与计划审批超时未响应将自动拒绝，澄清提问自动跳过；设为 0 表示一直等待
           </span>
         </div>
         <NInputNumber

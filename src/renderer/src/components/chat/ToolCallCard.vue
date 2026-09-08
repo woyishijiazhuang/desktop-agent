@@ -28,7 +28,7 @@ import { extractMessageText } from '@renderer/utils/messageText'
  * - 结果来自匹配到的 toolResult 消息（MessageList 按 toolCallId 传入）。
  * 收起时头部即展示「工具名 + AI 一句话说明 + 结果摘要」，无需展开即可浏览；
  * 展开后分「参数」「结果」两个区块查看详情。
- * 权限确认的决策入口在输入框上方的批量条（PermissionBar），卡片仅展示「等待确认」状态。
+ * 权限确认的决策入口在输入框上方的统一交互条（InteractionBar），卡片仅展示「等待确认」状态。
  */
 const props = defineProps<{
   toolCall: ToolCall

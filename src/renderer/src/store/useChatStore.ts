@@ -515,9 +515,7 @@ export const useChatStore = defineStore('chat', () => {
         images.length > 0 ? images : undefined,
         files.length > 0 ? files.map((f) => ({ name: f.file_name, text: f.text })) : undefined,
         skills && skills.length > 0 ? skills : undefined,
-        options?.voice
-          ? { voice: true, voiceFast: options.voiceFast === true }
-          : undefined
+        options?.voice ? { voice: true, voiceFast: options.voiceFast === true } : undefined
       )
     } catch (err) {
       state.error = err instanceof Error ? err.message : String(err)
@@ -621,8 +619,8 @@ export const useChatStore = defineStore('chat', () => {
 
   /**
    * 显式设置某会话某工具调用的状态（权限确认场景用）：
-   * - pending：收到 onPermissionRequest 时置位，使对应工具卡片渲染「等待确认」；
-   * - running：批准后由 usePermissionStore.respond 补置（tool_execution_start 早于
+   * - pending：收到 onInteractionRequest（tool_permission）时置位，使对应工具卡片渲染「等待确认」；
+   * - running：批准后由 useInteractionStore.respondPermission 补置（tool_execution_start 早于
    *   权限拦截发出、且已被 pending 覆盖，放行后不会重发）；
    * - error：用户拒绝 / 超时自动拒绝后置位，使卡片从「等待确认」翻转为拒绝态。
    */

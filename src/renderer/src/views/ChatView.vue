@@ -5,10 +5,8 @@ import { RefreshOutline, PencilOutline, Sparkles, SettingsOutline } from '@vicon
 import MessageList from '@renderer/components/chat/MessageList.vue'
 import ChatInput from '@renderer/components/chat/ChatInput.vue'
 import SessionSidebar from '@renderer/components/sidebar/SessionSidebar.vue'
-import PermissionBar from '@renderer/components/permission/PermissionBar.vue'
-import PlanApprovalBar from '@renderer/components/flow/PlanApprovalBar.vue'
+import InteractionBar from '@renderer/components/flow/InteractionBar.vue'
 import PlanProgressBar from '@renderer/components/flow/PlanProgressBar.vue'
-import AskUserBar from '@renderer/components/flow/AskUserBar.vue'
 import { useSessionStore } from '@renderer/store/useSessionStore'
 import { useChatStore, type ComposerAttachment } from '@renderer/store/useChatStore'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
@@ -190,14 +188,10 @@ function goToSettings(): void {
             </div>
           </div>
         </NAlert>
-        <!-- 批量操作条：多个工具同时等待确认时提供全部允许/拒绝 -->
-        <PermissionBar />
-        <!-- 计划审批卡片：Agent 提交计划后展示，供用户批准/拒绝 -->
-        <PlanApprovalBar />
+        <!-- 统一人工介入条：危险工具确认 / 计划审批 / 澄清提问 -->
+        <InteractionBar />
         <!-- 计划执行进度条：批准后展示，report_step 驱动当前步骤 -->
         <PlanProgressBar />
-        <!-- 澄清问题卡片：Agent 调用 ask_user 后展示，供用户作答/跳过 -->
-        <AskUserBar />
         <div class="chat-view__composer">
           <ChatInput :is-busy="chatStore.isBusy" @send="onSend" @abort="onAbort" />
         </div>

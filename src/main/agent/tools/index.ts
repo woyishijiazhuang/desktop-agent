@@ -226,6 +226,8 @@ export interface BuildToolsOptions {
   supportsImages?: boolean
   /** 当前 Agent 会话 id：bash 家族工具绑定持久化 shell / 后台会话用。 */
   sessionId: string
+  /** 排除的工具名集合：子代理注入时剔除宿主专用工具（plan 模式 / ask_user / task 等）。 */
+  exclude?: Iterable<string>
 }
 
 /** 工具此刻是否可用（开关覆盖 + 域总开关 + bash 联动，调用时实时求值）。 */
@@ -323,8 +325,10 @@ function wrapSandboxFsPolicy(tool: AgentTool, sessionId: string): AgentTool {
 
 export function buildTools(opts: BuildToolsOptions = { sessionId: '' }): AgentTool[] {
   const overrides = readOverrides()
+  const exclude = new Set(opts.exclude ?? [])
   const result: AgentTool[] = []
   for (const entry of TOOL_REGISTRY) {
+    if (exclude.has(entry.name)) continue
     // 注入判定：默认启用或用户曾显式开启；一旦开启过即长期留在集合内（保持工具数组稳定）
     const everOn = entry.defaultEnabled || overrides[entry.name] === true
     if (!everOn) continue

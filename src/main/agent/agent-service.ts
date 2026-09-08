@@ -929,8 +929,8 @@ export class AgentService extends IpcService {
 
   /**
    * 回传权限确认结果。scope 决定放行作用域：
-   * once=仅本次 / session=本会话放行 / always=加入持久白名单（仅 bash）/
-   * batch=放行当前 + 自动放行同一条消息内剩余危险工具。
+   * once=仅本次 / session=本会话放行 / always=加入持久白名单（仅 bash 且未命中破坏性命令）。
+   * 统一交互通道的挂起注册见 agent/interaction.ts。
    */
   respondPermission(requestId: string, approved: boolean, scope: PermissionScope = 'once'): void {
     resolvePermission(requestId, approved, scope)

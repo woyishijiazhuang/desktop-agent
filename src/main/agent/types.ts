@@ -50,55 +50,50 @@ export interface AgentEventPayload {
 }
 
 /**
- * 权限确认回执的作用域（renderer 批量条选择后回传）。
+ * 权限确认回执的作用域（收敛为 3 种，对齐主流 Agent 客户端）。
  * - once：仅本次放行
  * - session：本会话内对相同/相似命令或同一路径放行
  * - always：加入持久白名单（仅 bash 且未命中破坏性命令时允许）
- * - batch：对「同一条 assistant 消息内的整批危险工具」统一放行或统一拒绝
- *   （approved=true 自动放行批内剩余工具；false 自动拒绝批内剩余工具；
- *   进入下一条消息即失效；破坏性命令始终强制单独确认，不受 batch 放行覆盖）
- * - batch-session：整批统一放行，并把批内每条命令/路径记入本会话放行
- * - batch-always：整批统一放行，并把批内每条 bash 非破坏性命令加入持久白名单
+ * 「整批统一放行」在渲染层表示为对队列逐条应用上述 scope，不再维护消息级 batch 状态。
  */
-export type PermissionScope =
-  'once' | 'session' | 'always' | 'batch' | 'batch-session' | 'batch-always'
+export type PermissionScope = 'once' | 'session' | 'always'
 
-/** 待确认批中的单个操作摘要（main 侧生成，renderer 批量条一次列全供用户决策）。 */
-export interface PermissionBatchItem {
-  toolName: string
-  /** 对应 assistant 消息中 toolCall 块 id（renderer 关联卡片用）。 */
-  toolCallId: string
-  /** 一行摘要：bash=命令原文，write/edit=路径，install_skill=技能标识。 */
-  summary: string
-  /** 是否命中破坏性模式（deny 提示；且不受 batch 自动放行覆盖）。 */
-  denyHit: boolean
-}
+/**
+ * 需要人工介入的交互类型（三套「等用户」收敛后的统一枚举）：
+ * - tool_permission：危险工具执行前确认（写文件/命令/装技能）
+ * - plan_approval：exit_plan_mode 提交计划后的批准/拒绝
+ * - ask_question：ask_user 的澄清提问（选项/自由输入/跳过）
+ */
+export type InteractionKind = 'tool_permission' | 'plan_approval' | 'ask_question'
 
 /**
  * 危险工具执行前的权限确认请求。
- * main 通过 rendererClient.agentEvent.onPermissionRequest 推给 renderer，
- * renderer 在批量条上一次列全本条消息的待确认操作后调 mainClient.agent.respondPermission 回传结果。
+ * main 经 rendererClient.agentEvent.onInteractionRequest 推给 renderer，
+ * renderer 决策后调 mainClient.agent.respondPermission 回传（once/session/always）。
  */
-export interface PermissionRequest {
+export interface ToolPermissionRequest {
+  kind: 'tool_permission'
   requestId: string
   sessionId: string
   toolName: string
   /** 对应 assistant 消息流中 toolCall 块的 id：renderer 据此把「等待确认」挂到具体的工具卡片上。 */
   toolCallId: string
-  args: unknown
-  /** 是否命中破坏性命令模式（deny）：为 true 时 UI 不提供「总是允许」，防止白名单绕过 deny 兜底。 */
+  /** 一行摘要：bash=命令原文，write/edit=路径，install_skill=技能标识。 */
+  summary: string
+  /** 是否命中破坏性命令模式（deny）：为 true 时 UI 只给「允许/拒绝」，不给会话/总是放行。 */
   denyHit: boolean
   /**
-   * 本条 assistant 消息中需要人工确认的全部危险工具（含当前请求）。
-   * beforeToolCall 串行逐个到达，但批量条据此一次展示整批的命令/路径，供一次性决策。
-   */
-  batch: PermissionBatchItem[]
-  /**
    * 超时截止时间（epoch ms）：到点 main 侧自动拒绝；0 = 一直等待（不超时）。
-   * renderer 据此在批量条上显示倒计时，并同步清理本地队列。
+   * renderer 据此在交互条上显示倒计时，并同步清理本地队列。
    */
   expiresAt: number
 }
+
+/**
+ * 统一交互请求载荷（危险工具确认 / 计划审批 / 澄清提问 共用一条推送通道）。
+ * renderer 的 useInteractionStore 按 kind 分流渲染，回传仍走各自的 respond* 方法。
+ */
+export type InteractionRequest = ToolPermissionRequest | PlanApprovalRequest | AskUserRequest
 
 /**
  * settings 表中存储的「跳过工具确认」开关 key（boolean，默认 false）。
@@ -177,19 +172,18 @@ export const VOICE_MODE_INSTRUCTION =
 /**
  * 计划审批请求（exit_plan_mode 提交计划后 main 推给 renderer 展示）。
  * renderer 在计划卡片上批准/拒绝后调 agent.respondPlan 回传。
+ * 批准即视为「本 run 危险工具自动放行」（破坏性命令仍强制确认），不再依赖预登记命令。
  */
 export interface PlanApprovalRequest {
+  kind: 'plan_approval'
   requestId: string
   sessionId: string
   /** 计划标题（简短概括）。 */
   title: string
   /** 完整计划文本（分步、可执行，供用户审阅）。 */
   plan: string
-  /**
-   * 计划中预登记的 bash 命令（词级前缀匹配）：批准后本 run 内执行期免确认。
-   * 破坏性命令（deny 兜底）始终人工确认，不受预批准覆盖。
-   */
-  allowedPrompts: string[]
+  /** 超时截止时间（epoch ms）：到点 main 侧自动拒绝；0 = 一直等待（不超时）。 */
+  expiresAt: number
 }
 
 /** 计划步骤状态（report_step 上报后维护，展示用）。 */
@@ -224,6 +218,7 @@ export interface AskUserOption {
  * renderer 在问答卡片上作答后调 agent.respondAskUser 回传；超时（expiresAt）自动按「跳过」处理。
  */
 export interface AskUserRequest {
+  kind: 'ask_question'
   requestId: string
   sessionId: string
   /** 问题文本（必填）。 */

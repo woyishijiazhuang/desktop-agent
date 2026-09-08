@@ -114,6 +114,28 @@ export async function getSessionFsPolicy(sessionId: string): Promise<SandboxFsPo
   }
 }
 
+/**
+ * 会话「可写边界」（write/edit 审批自动放行判定用）。
+ * 语义与沙箱共用同一可写根（工作区 + 用户可写目录 + 系统临时目录），
+ * 但**与沙箱开关无关**：关闭沙箱时审批仍以同一边界把「工作区内写入」自动放行，
+ * 避免文件操作每次都弹确认（对齐主流 Coding Agent）。
+ */
+export async function getSessionWriteBoundary(sessionId: string): Promise<{
+  allowWriteRoots: string[]
+  denyReadRoots: string[]
+}> {
+  const settings = await readSandboxSettings()
+  const workdir = resolveSessionWorkdir(sessionId)
+  return {
+    allowWriteRoots: uniquePaths([
+      ...platformTempPaths(),
+      ...(workdir ? [workdir] : []),
+      ...settings.writableRoots
+    ]),
+    denyReadRoots: uniquePaths(settings.denyReadRoots)
+  }
+}
+
 /** 平台沙箱可用性状态（设置页「平台状态」卡片展示用）。 */
 export interface SandboxPlatformStatus {
   /** 当前系统平台。 */

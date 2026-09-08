@@ -11,10 +11,15 @@ import {
   ensureAllModelConfigsRegistered,
   resolveAssistantCost
 } from './model-config'
-import { createBeforeToolCallHook, clearRunAutoAllow } from './permission'
+import { createBeforeToolCallHook } from './permission'
 import { clearPlanMode, isPlanMode, finalizePlanProgress } from './plan-mode'
-import { clearAskUserRequests } from './ask-user'
-import { registerSubagentHost, unregisterSubagentHost, PLAN_READONLY_TOOLS } from './subagent'
+import { clearSessionInteractions } from './interaction'
+import {
+  registerSubagentHost,
+  unregisterSubagentHost,
+  PLAN_READONLY_TOOLS,
+  SUBAGENT_EXCLUDED_TOOLS
+} from './subagent'
 import { getModelsInstance, resolveModel, completeText } from './models'
 import {
   resolveAgentSessionWorkdir,
@@ -525,7 +530,12 @@ export class AgentManager {
         }
       },
       planTools: tools.filter((t) => PLAN_READONLY_TOOLS.has(t.name)),
-      generalTools: buildTools({ supportsImages: model.input.includes('image'), sessionId })
+      // general 子代理不注入宿主专用工具（plan 模式 / ask_user / task），隔离会话级状态与递归委派。
+      generalTools: buildTools({
+        supportsImages: model.input.includes('image'),
+        sessionId,
+        exclude: SUBAGENT_EXCLUDED_TOOLS
+      })
     })
 
     const agent = new Agent({
@@ -650,11 +660,10 @@ export class AgentManager {
     // 本轮 run 是否已落库过 assistant 消息（agent_end 据此判断是否需补失败标记行）。
     let persistedAssistantThisRun = false
     agent.subscribe((event) => {
-      // agent_start 为每次 run 的起点：重置本轮辅助标志 + 清理上一轮残留的本批自动放行。
-      // 计划模式按 run 生效：新一轮开始即清除，避免跨轮残留拦截。
+      // agent_start 为每次 run 的起点：重置本轮辅助标志。
+      // 计划模式 / 计划自动放行按 run 生效：新一轮开始即清除，避免跨轮残留。
       if (event.type === 'agent_start') {
         persistedAssistantThisRun = false
-        clearRunAutoAllow(sessionId)
         clearPlanMode(sessionId)
       }
       // 轮次计数 + 超限保护：每轮结束 +1；达到配置上限时中止 agent 并标记，
@@ -755,10 +764,9 @@ export class AgentManager {
             agent.state.thinkingLevel = voiceRun.savedThinkingLevel
           }
         }
-        // 释放本批自动放行（配合 agent_start 重置，双保险防泄漏）。
-        clearRunAutoAllow(sessionId)
-        // 清理该会话残留的挂起提问（中止/结束时未获回答的 ask_user 挂起 Promise）
-        clearAskUserRequests(sessionId)
+        // 统一解除该会话残留的挂起交互（权限确认/计划审批/澄清提问在 run 结束时的兜底收尾，
+        // 各按其 onAbort 语义：权限→拒绝、计划→拒绝、提问→跳过），杜绝 Promise 泄漏。
+        clearSessionInteractions(sessionId, 'run 结束')
         const err = agent.state.errorMessage
         // 超限自动终止：以明确错误提示代替静默的 aborted，告知用户已达上限。
         const limitHitValue = this.maxTurnsReached.get(sessionId)

@@ -1,19 +1,12 @@
 import { IpcService } from 'electron-ipc-service/renderer'
 import type { AgentEvent } from '@earendil-works/pi-agent-core'
 import { useChatStore } from '../store/useChatStore'
-import { usePermissionStore } from '../store/usePermissionStore'
+import { useInteractionStore } from '../store/useInteractionStore'
 import { usePlanStore } from '../store/usePlanStore'
-import { useAskUserStore } from '../store/useAskUserStore'
 import { useSessionStore } from '../store/useSessionStore'
 import { useBackgroundStore } from '../store/useBackgroundStore'
 import type { Session } from '@main/service/db-service'
-import type {
-  AgentEventPayload,
-  PermissionRequest,
-  PlanApprovalRequest,
-  PlanProgress,
-  AskUserRequest
-} from '@main/agent/types'
+import type { AgentEventPayload, InteractionRequest, PlanProgress } from '@main/agent/types'
 import type { BackgroundSessionInfo } from '@main/agent/bash-session'
 
 /**
@@ -49,12 +42,10 @@ export class AgentEventService extends IpcService {
   /** Agent 生命周期事件（agent_start/message_update/.../agent_end）。 */
   onEvent(payload: AgentEventPayload): void {
     const chat = useChatStore()
-    // agent_end 前先清理该会话残留的权限请求：中止 run 时未响应的「等待确认」卡片
-    // 不应残留，翻转为拒绝态后一并移出队列。
+    // agent_end 前先清理该会话残留的交互请求（危险工具确认/计划审批/澄清提问）：
+    // 中止 run 时未响应的「等待确认」不应残留，权限卡片翻转为拒绝态后一并移出队列。
     if (payload.event.type === 'agent_end') {
-      usePermissionStore().clearSession(payload.sessionId)
-      usePlanStore().clearSession(payload.sessionId)
-      useAskUserStore().clearSession(payload.sessionId)
+      useInteractionStore().clearSession(payload.sessionId)
     }
     // 新一轮 run 开始：清除上一轮的计划执行进度（进度按 run 生命周期展示）。
     if (payload.event.type === 'agent_start') {
@@ -135,28 +126,24 @@ export class AgentEventService extends IpcService {
     }
   }
 
-  /** 危险工具执行前的权限确认请求。入队 + 把对应工具卡片标记为「等待确认」。 */
-  onPermissionRequest(req: PermissionRequest): void {
-    usePermissionStore().enqueue(req)
-    useChatStore().setToolStatus(req.sessionId, req.toolCallId, {
-      status: 'pending',
-      toolName: req.toolName
-    })
-  }
-
-  /** 计划审批请求（exit_plan_mode 提交计划后推送）：入队，PlanApprovalBar 据此展示。 */
-  onPlanRequest(req: PlanApprovalRequest): void {
-    usePlanStore().enqueue(req)
+  /**
+   * 统一交互请求（危险工具确认 / 计划审批 / 澄清提问）。
+   * 入队后由 InteractionBar 按 kind 渲染；tool_permission 同时把对应工具卡片标记为「等待确认」。
+   */
+  onInteractionRequest(req: InteractionRequest): void {
+    const store = useInteractionStore()
+    store.enqueue(req)
+    if (req.kind === 'tool_permission') {
+      useChatStore().setToolStatus(req.sessionId, req.toolCallId, {
+        status: 'pending',
+        toolName: req.toolName
+      })
+    }
   }
 
   /** 计划执行进度推送（report_step 更新后推送）：PlanProgressBar 据此展示当前步骤。 */
   onPlanProgress(progress: PlanProgress): void {
     usePlanStore().setProgress(progress)
-  }
-
-  /** 澄清问题请求（ask_user 工具调用后推送）：入队，AskUserBar 据此展示。 */
-  onAskUserRequest(req: AskUserRequest): void {
-    useAskUserStore().enqueue(req)
   }
 
   /**

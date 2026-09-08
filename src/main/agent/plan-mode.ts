@@ -1,5 +1,6 @@
 import { rendererClient } from '../service/render-client'
 import { createLogger } from '../utils/log'
+import { respondInteraction } from './interaction'
 import type { PlanProgress, PlanStepStatus } from './types'
 
 const log = createLogger('planMode')
@@ -12,11 +13,10 @@ const log = createLogger('planMode')
 const sessionPlanMode = new Map<string, boolean>()
 
 /**
- * 计划批准后本 run 内免确认的 bash 命令（词级前缀匹配，逻辑同持久白名单）。
- * 仅在计划批准时写入（exit_plan_mode），agent_start 时随计划模式一并清除；
- * 破坏性命令（deny 兜底）不受预批准覆盖，始终人工确认。
+ * 计划批准后的「本轮自动放行」标记：批准即视为本 run 内危险工具全放行
+ * （破坏性 deny 兜底除外，仍强制人工确认）。agent_start 时随计划模式一并清除。
  */
-const sessionPlanAllowedCommands = new Map<string, string[]>()
+const sessionPlanAutoAllow = new Map<string, boolean>()
 
 /**
  * 已批准计划的执行进度（report_step 上报更新，展示用）。
@@ -34,32 +34,21 @@ export function isPlanMode(sessionId: string): boolean {
   return sessionPlanMode.has(sessionId)
 }
 
-/** 新一轮 run 开始时清除（计划模式、预批准命令与执行进度均按 run 生效，避免跨轮残留）。 */
+/** 新一轮 run 开始时清除（计划模式、本轮自动放行与执行进度均按 run 生效，避免跨轮残留）。 */
 export function clearPlanMode(sessionId: string): void {
   sessionPlanMode.delete(sessionId)
-  sessionPlanAllowedCommands.delete(sessionId)
+  sessionPlanAutoAllow.delete(sessionId)
   sessionPlanProgress.delete(sessionId)
 }
 
-/** 记录计划批准时预登记的免确认 bash 命令（覆盖式）。 */
-export function setPlanAllowedPrompts(sessionId: string, commands: string[]): void {
-  const clean = commands.map((c) => c.trim()).filter(Boolean)
-  if (clean.length > 0) sessionPlanAllowedCommands.set(sessionId, clean)
+/** 计划获批准：登记本轮自动放行（run 内危险工具免逐条确认；deny 兜底除外）。 */
+export function markPlanAutoAllow(sessionId: string): void {
+  sessionPlanAutoAllow.set(sessionId, true)
 }
 
-/** 计划批准后本 run 内：命令是否命中预登记的免确认命令（词级前缀匹配）。 */
-export function isPlanAllowedCommand(sessionId: string, command: string): boolean {
-  const rules = sessionPlanAllowedCommands.get(sessionId)
-  if (!rules || !command) return false
-  const cmdWords = command.split(/\s+/).filter(Boolean)
-  return rules.some((rule) => {
-    const ruleWords = rule.split(/\s+/).filter(Boolean)
-    if (cmdWords.length < ruleWords.length) return false
-    for (let i = 0; i < ruleWords.length; i++) {
-      if (cmdWords[i] !== ruleWords[i]) return false
-    }
-    return true
-  })
+/** 本轮是否已因计划批准而自动放行（permission 的 run 自动放行策略判定用）。 */
+export function isPlanRunAutoAllow(sessionId: string): boolean {
+  return sessionPlanAutoAllow.has(sessionId)
 }
 
 /** 从计划文本兜底解析步骤标题（Markdown 数字列表行，如 "1. 创建 xxx"）。 */
@@ -128,54 +117,12 @@ export function finalizePlanProgress(sessionId: string, completed: boolean): voi
   rendererClient.agentEvent.onPlanProgress(cloneProgress(progress))
 }
 
-/** 待审批计划：requestId → 决议回调。 */
-interface PendingPlan {
-  sessionId: string
-  resolve: (approved: boolean, feedback: string) => void
-}
-const pending = new Map<string, PendingPlan>()
-
-/** renderer 回传计划审批结果，解除 exit_plan_mode 的挂起。 */
-export function resolvePlanApproval(requestId: string, approved: boolean, feedback: string): void {
-  const req = pending.get(requestId)
-  if (!req) {
-    log.warn('收到未知计划审批回执', { requestId, approved })
-    return
-  }
-  pending.delete(requestId)
-  log.info('计划审批已回传', { sessionId: req.sessionId, requestId, approved })
-  req.resolve(approved, feedback)
-}
-
-export interface PlanApprovalResult {
-  approved: boolean
-  feedback: string
-  /** true = 审批超时自动拒绝（区别于用户主动拒绝，用于工具侧文案区分）。 */
-  timedOut: boolean
-}
-
 /**
- * 挂起等待计划审批决议（exit_plan_mode 工具调用）。
- * 超时自动拒绝；批准/拒绝经 resolvePlanApproval 由 renderer 回传。
+ * renderer 回传计划审批结果，解除 exit_plan_mode 的挂起
+ * （挂起注册在 interaction.ts，由 tools/plan-mode.ts 的 beginInteraction 管理）。
  */
-export function waitForPlanApproval(
-  requestId: string,
-  sessionId: string,
-  timeoutMs: number
-): Promise<PlanApprovalResult> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      pending.delete(requestId)
-      log.warn('计划审批超时，自动拒绝', { sessionId, requestId })
-      resolve({ approved: false, feedback: '', timedOut: true })
-    }, timeoutMs)
-    pending.set(requestId, {
-      sessionId,
-      resolve: (approved, feedback) => {
-        clearTimeout(timer)
-        pending.delete(requestId)
-        resolve({ approved, feedback, timedOut: false })
-      }
-    })
-  })
+export function resolvePlanApproval(requestId: string, approved: boolean, feedback: string): void {
+  if (!respondInteraction(requestId, { approved, feedback })) {
+    log.warn('收到未知计划审批回执', { requestId, approved })
+  }
 }

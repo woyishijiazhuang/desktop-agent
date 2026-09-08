@@ -1,12 +1,9 @@
 import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { randomUUID } from 'node:crypto'
 import { rendererClient } from '../../service/render-client'
-import { db } from '../../database'
 import { createLogger } from '../../utils/log'
-import { SETTING_PERMISSION_TIMEOUT_SEC, DEFAULT_PERMISSION_TIMEOUT_SEC } from '../types'
-import type { AskUserOption, AskUserRequest } from '../types'
-import { waitForAskUserAnswer } from '../ask-user'
+import type { AskUserOption } from '../types'
+import { beginInteraction, getInteractionTimeoutMs } from '../interaction'
 
 const log = createLogger('tool:ask_user')
 
@@ -39,11 +36,17 @@ export interface AskUserDetails {
   requestId: string
 }
 
+/** ask_user 等待结果：value=null 时以 skipped 区分超时/中止与用户主动跳过（文案用）。 */
+type AskOutcome = {
+  value: string | string[] | null
+  skipped: 'timeout' | 'abort' | 'manual' | null
+}
+
 /**
  * 澄清问题工具（对标 Claude Code 的 AskUserQuestion）：
  * 规划/执行阶段对不确定的需求点提问，挂起等待用户作答后继续。
  * 与 read_file / bash 家族同理按 Agent 会话绑定，故用工厂。
- * 会话级挂起/回执见 ../ask-user。
+ * 挂起经统一交互通道（interaction.ts）管理：统一超时/中止/会话收尾。
  */
 export function createAskUserTool(sessionId: string): AgentTool<typeof askParams, AskUserDetails> {
   return {
@@ -54,53 +57,53 @@ export function createAskUserTool(sessionId: string): AgentTool<typeof askParams
     parameters: askParams,
     executionMode: 'sequential',
     async execute(_toolCallId, p, signal) {
-      const requestId = randomUUID()
       const options: AskUserOption[] = p.options ?? []
       const multiSelect = p.multiSelect ?? false
       const required = p.required ?? false
-      // 超时实时读取设置（秒 → ms）：0 = 一直等待，不设超时兜底。
-      const timeoutSec = readAskTimeoutSec()
-      const expiresAt = timeoutSec > 0 ? Date.now() + timeoutSec * 1000 : 0
-      const payload: AskUserRequest = {
-        requestId,
+      const timeoutMs = getInteractionTimeoutMs()
+      const expiresAt = timeoutMs > 0 ? Date.now() + timeoutMs : 0
+      const slot = beginInteraction<AskOutcome>({
+        kind: 'ask_question',
+        sessionId,
+        timeoutMs,
+        signal,
+        onTimeout: () => ({ value: null, skipped: 'timeout' }),
+        onAbort: () => ({ value: null, skipped: 'abort' })
+      })
+      rendererClient.agentEvent.onInteractionRequest({
+        kind: 'ask_question',
+        requestId: slot.requestId,
         sessionId,
         question: p.question,
         options,
         multiSelect,
         required,
         expiresAt
-      }
-      rendererClient.agentEvent.onAskUserRequest(payload)
-      log.info('提问待用户回答', { sessionId, requestId, hasOptions: options.length > 0 })
-
-      const answer = await waitForAskUserAnswer(
-        requestId,
+      })
+      log.info('提问待用户回答', {
         sessionId,
-        timeoutSec > 0 ? timeoutSec * 1000 : 0,
-        signal
-      )
-      if (answer.value === null) {
-        const text = answer.timedOut
-          ? '用户未在时限内回答，已跳过。请基于已有信息继续，必要时可再次提问。'
-          : '用户跳过了该问题。请基于已有信息继续，必要时可再次提问。'
+        requestId: slot.requestId,
+        hasOptions: options.length > 0
+      })
+
+      const outcome = await slot.promise
+      if (outcome.value === null) {
+        const text =
+          outcome.skipped === 'timeout'
+            ? '用户未在时限内回答，已跳过。请基于已有信息继续，必要时可再次提问。'
+            : outcome.skipped === 'abort'
+              ? '提问已中断。'
+              : '用户跳过了该问题。请基于已有信息继续，必要时可再次提问。'
         return {
           content: [{ type: 'text', text }],
-          details: { value: null, requestId }
+          details: { value: null, requestId: slot.requestId }
         }
       }
-      const text = Array.isArray(answer.value) ? answer.value.join('、') : String(answer.value)
+      const text = Array.isArray(outcome.value) ? outcome.value.join('、') : String(outcome.value)
       return {
         content: [{ type: 'text', text: `用户回答：${text}` }],
-        details: { value: answer.value, requestId }
+        details: { value: outcome.value, requestId: slot.requestId }
       }
     }
   }
-}
-
-/** 读取提问超时设置（与工具确认共用同一配置；非法/未配置回退默认；0 = 一直等待）。 */
-function readAskTimeoutSec(): number {
-  const v = db.getSetting<number>(SETTING_PERMISSION_TIMEOUT_SEC)
-  return typeof v === 'number' && Number.isFinite(v) && v >= 0
-    ? Math.floor(v)
-    : DEFAULT_PERMISSION_TIMEOUT_SEC
 }

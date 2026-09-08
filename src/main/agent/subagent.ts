@@ -72,6 +72,20 @@ export const PLAN_READONLY_TOOLS: ReadonlySet<string> = new Set([
   'bash'
 ])
 
+/**
+ * general 子代理不注入的宿主专用工具：
+ * - enter_plan_mode / exit_plan_mode / report_step：操作主会话级计划模式状态，子代理不应触碰；
+ * - ask_user：子代理不直接与用户对话（提示词已约束，直接移除工具强制生效）；
+ * - task：杜绝子代理无限递归委派（目前无深度上限）。
+ */
+export const SUBAGENT_EXCLUDED_TOOLS: readonly string[] = [
+  'enter_plan_mode',
+  'exit_plan_mode',
+  'report_step',
+  'ask_user',
+  'task'
+]
+
 const PLAN_SUBAGENT_SYSTEM_PROMPT = `你是主 Agent 委派的「规划」子代理，任务是为用户需求产出一份可执行的分步实施计划。
 
 严格约束（只读模式）：

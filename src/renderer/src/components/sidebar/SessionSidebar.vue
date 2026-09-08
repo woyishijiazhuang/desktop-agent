@@ -29,9 +29,7 @@ import { useSessionStore } from '@renderer/store/useSessionStore'
 import { useChatStore } from '@renderer/store/useChatStore'
 import { useThemeStore } from '@renderer/store/useThemeStore'
 import { useWindowStore } from '@renderer/store/useWindowStore'
-import { usePermissionStore } from '@renderer/store/usePermissionStore'
-import { usePlanStore } from '@renderer/store/usePlanStore'
-import { useAskUserStore } from '@renderer/store/useAskUserStore'
+import { useInteractionStore } from '@renderer/store/useInteractionStore'
 import { mainClient } from '@renderer/utils/main-client'
 import SessionItem from './SessionItem.vue'
 import BackgroundSessionsPanel from './BackgroundSessionsPanel.vue'
@@ -427,15 +425,12 @@ function isSessionFailed(id: string): boolean {
 }
 
 /**
- * 会话是否有待用户处理的操作（权限确认 / 计划审批 / 澄清问题）。
+ * 会话是否有待用户处理的操作（危险工具确认 / 计划审批 / 澄清问题）。
  * 后台会话触发这类交互时 Agent 会阻塞等待，侧边栏用闪烁点提示，提醒切过去处理。
+ * 统一走 useInteractionStore 队列（计划进度属展示用途，不计入等待）。
  */
 function isSessionWaiting(id: string): boolean {
-  return (
-    usePermissionStore().pendingForSession(id).length > 0 ||
-    usePlanStore().forSession(id) !== null ||
-    useAskUserStore().forSession(id) !== null
-  )
+  return useInteractionStore().pendingForSession(id).length > 0
 }
 </script>
 

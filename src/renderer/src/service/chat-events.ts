@@ -4,7 +4,7 @@ import { messageSignature } from '../utils/messageKey'
 
 /**
  * 工具执行状态（ToolCallCard 展示用）。
- * pending = 权限确认中（renderer 收到 onPermissionRequest 时置位，卡片上渲染确认按钮）；
+ * pending = 权限确认中（renderer 收到 onInteractionRequest 的 tool_permission 时置位，卡片上渲染确认按钮）；
  * running/completed/error 由 tool_execution_start/end 事件驱动。
  */
 export interface ToolStatus {
