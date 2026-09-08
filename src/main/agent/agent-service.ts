@@ -8,6 +8,7 @@ import { toCreateMessageParams, fromMessageRow, persistMessageImages } from './c
 import { extractMessageText } from '../utils/message-text'
 import { readAttachmentDataUrl, deleteAttachmentFile, collectFileRefs } from './attachment'
 import { listTools } from './tools'
+import { getSandboxPlatformStatus, provisionWindowsSandbox } from './sandbox'
 import { testWebSearchConnection } from './tools/web-search'
 import {
   getFindSkillSource,
@@ -969,6 +970,16 @@ export class AgentService extends IpcService {
     const next = list.filter((rule) => rule !== command)
     db.setSetting(SETTING_BASH_ALLOWLIST, next)
     log.info('已从 bash 白名单移除', { command })
+  }
+
+  /** bash 沙箱平台可用性状态（设置-沙箱 状态卡用）。 */
+  getSandboxStatus(): ReturnType<typeof getSandboxPlatformStatus> {
+    return getSandboxPlatformStatus()
+  }
+
+  /** 触发 Windows 沙箱供给（弹一次 UAC；macOS/Linux 调用返回错误）。 */
+  provisionWindowsSandbox(): ReturnType<typeof provisionWindowsSandbox> {
+    return provisionWindowsSandbox()
   }
 
   /** 驱逐内存中的 Agent 实例（设置变更后调用，使新设置在下一轮生效）。 */

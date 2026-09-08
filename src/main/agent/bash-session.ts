@@ -66,6 +66,36 @@ export function resolveShell(): ShellSpec {
   return resolvedShell
 }
 
+/** 沙箱包装请求（tools/bash 侧注册的包装器按此信息决定是否/如何套 OS 沙箱）。 */
+export interface BashSandboxRequest {
+  /** persistent=持久会话 shell；background=后台单命令进程。 */
+  mode: 'persistent' | 'background'
+  /** 待执行命令（persistent 为 shell 本体，如 bash；background 为用户命令原文）。 */
+  command: string
+  /** 附加参数（persistent 为 shell 参数，如 --noprofile --norc -s）。 */
+  args: string[]
+  /** spawn 工作目录（沙箱允许写的工作区根由此推断，动态）。 */
+  cwd: string
+  /** 调用方组装好的子进程环境。 */
+  env: NodeJS.ProcessEnv
+}
+
+/** 沙箱包装结果：替换原 spawn 的 argv/env。 */
+export interface BashSandboxSpawn {
+  argv: string[]
+  env: NodeJS.ProcessEnv
+}
+
+/** 沙箱包装器：返回 null 表示未启用（保持原样直跑）。由 tools/bash 注册，bash-session 保持纯净无 db 依赖。 */
+export type BashSandboxWrapper = (req: BashSandboxRequest) => Promise<BashSandboxSpawn | null>
+
+let sandboxWrapper: BashSandboxWrapper | null = null
+
+/** 注册/解绑沙箱包装器（应用装配时调用一次）。 */
+export function setBashSandboxWrapper(wrapper: BashSandboxWrapper | null): void {
+  sandboxWrapper = wrapper
+}
+
 /**
  * 命令完成哨兵（固定格式便于正则匹配）：bash 用 printf；PowerShell 用 Write-Output
  * + $LASTEXITCODE（无原生命令时 $LASTEXITCODE 可能为 $null，取 0 兜底）。
@@ -154,6 +184,8 @@ export class PersistentShell {
   private child: ChildProcess | null = null
   /** 当前 child 是否已 close（信号杀死的进程 exitCode 为 null，存活判断以此为准）。 */
   private childClosed = false
+  /** 首次启动中的 Promise（沙箱包装为异步操作；未启动完成前并发的 run 复用同一 Promise）。 */
+  private spawnPromise: Promise<ChildProcess> | null = null
   private queue: PendingCommand[] = []
   private lineBuf = ''
   private streamDirty = false
@@ -164,13 +196,36 @@ export class PersistentShell {
     this.sessionId = sessionId
   }
 
-  /** 惰性启动 shell（env/cwd 仅首次/重建时生效，之后由 shell 内 cd/export 决定）。 */
-  private ensureStarted(env: NodeJS.ProcessEnv, cwd: string): ChildProcess {
+  /** 惰性启动 shell（env/cwd 仅首次/重建时生效，之后由 shell 内 cd/export 决定）。
+   *  沙箱包装为异步操作，故启动返回 Promise：并发 run 复用同一次启动。 */
+  private async ensureStarted(env: NodeJS.ProcessEnv, cwd: string): Promise<ChildProcess> {
     if (this.child && !this.childClosed) return this.child
+    if (!this.spawnPromise) {
+      this.spawnPromise = this.startChild(env, cwd).catch((err) => {
+        this.spawnPromise = null
+        throw err
+      })
+    }
+    return this.spawnPromise
+  }
+
+  /** 真正 spawn：先经沙箱包装器（返回 null 则原样），再按独立进程组拉起。 */
+  private async startChild(env: NodeJS.ProcessEnv, cwd: string): Promise<ChildProcess> {
     const spec = resolveShell()
-    const child = spawn(spec.command, spec.args, {
+    const sandboxed = sandboxWrapper
+      ? await sandboxWrapper({
+          mode: 'persistent',
+          command: spec.command,
+          args: spec.args,
+          cwd,
+          env
+        })
+      : null
+    const argv = sandboxed?.argv ?? [spec.command, ...spec.args]
+    const spawnEnv = sandboxed?.env ?? env
+    const child = spawn(argv[0], argv.slice(1), {
       cwd,
-      env,
+      env: spawnEnv,
       // 独立进程组：超时/中止/销毁时可整体 kill 命令及其全部子进程
       detached: true,
       stdio: ['pipe', 'pipe', 'pipe']
@@ -197,6 +252,7 @@ export class PersistentShell {
     child.on('close', (code) => {
       if (this.child !== child) return // 已被新 shell 取代（超时/中止后重建），忽略旧 close
       this.childClosed = true
+      this.spawnPromise = null
       log.warn('持久 shell 退出', { sessionId: this.sessionId, exitCode: code })
       this.failAll(`shell 会话已退出（exitCode=${code}），可重试或新建会话`)
     })
@@ -207,7 +263,8 @@ export class PersistentShell {
   /** 执行一条命令（阻塞）：写入 stdin + 哨兵，等待哨兵返回输出与退出码。 */
   async run(command: string, opts: ShellRunOptions = {}): Promise<ShellRunResult> {
     const cwd = opts.cwd ?? ''
-    const child = this.ensureStarted(opts.env ?? {}, cwd)
+    // 沙箱/包装为异步操作：启动失败（fail-closed）在此抛错，命令不入队
+    const child = await this.ensureStarted(opts.env ?? {}, cwd)
     const spec = resolveShell()
     // cwd 显式指定时先 cd（失败即退出码 1），保证参数权威且与旧版按 cwd 启动语义一致
     const effective = cwd ? `${cdCmd(cwd, spec.kind)}\n${command}` : command
@@ -325,6 +382,7 @@ export class PersistentShell {
     const child = this.child
     this.child = null
     this.childClosed = false
+    this.spawnPromise = null
     if (child) {
       log.warn('命令超时/中止，终止 shell 会话', {
         sessionId: this.sessionId,
@@ -438,6 +496,7 @@ export class PersistentShell {
   dispose(): void {
     if (this.disposed) return
     this.disposed = true
+    this.spawnPromise = null
     const child = this.child
     if (child && !this.childClosed) {
       this.killGroup(child, 'SIGTERM')
@@ -890,17 +949,40 @@ class BashSessionManager {
     return shell
   }
 
-  /** 启动一个后台命令会话，返回会话（含随机 sessionId）。 */
-  startBackground(command: string, opts: { cwd: string; env: NodeJS.ProcessEnv }): BackgroundShell {
+  /** 启动一个后台命令会话，返回会话（含随机 sessionId）。沙箱开启时命令整体套入 OS 沙箱。 */
+  async startBackground(
+    command: string,
+    opts: { cwd: string; env: NodeJS.ProcessEnv }
+  ): Promise<BackgroundShell> {
     const id = randomUUID()
-    const child = spawn(command, {
-      shell: true,
-      cwd: opts.cwd,
-      env: opts.env,
-      detached: true,
-      // stdin 保持管道：交互式命令可通过 bash_input 应答（无需应答的命令不受影响）
-      stdio: ['pipe', 'pipe', 'pipe']
-    })
+    const sandboxed = sandboxWrapper
+      ? await sandboxWrapper({
+          mode: 'background',
+          command,
+          args: [],
+          cwd: opts.cwd,
+          env: opts.env
+        })
+      : null
+    let child: ChildProcess
+    if (sandboxed) {
+      child = spawn(sandboxed.argv[0], sandboxed.argv.slice(1), {
+        cwd: opts.cwd,
+        env: sandboxed.env,
+        detached: true,
+        // stdin 保持管道：交互式命令可通过 bash_input 应答（无需应答的命令不受影响）
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+    } else {
+      child = spawn(command, {
+        shell: true,
+        cwd: opts.cwd,
+        env: opts.env,
+        detached: true,
+        // stdin 保持管道：交互式命令可通过 bash_input 应答（无需应答的命令不受影响）
+        stdio: ['pipe', 'pipe', 'pipe']
+      })
+    }
     // 退出/错误时回调：面板据状态变更刷新（startedAt 由 shell 内部记录）
     const shell = new BackgroundShell(id, child, command, () => this.#notify())
     this.#addBackground(shell)

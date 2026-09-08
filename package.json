@@ -39,6 +39,7 @@
     "picomatch": "^4.0.5"
   },
   "devDependencies": {
+    "@anthropic-ai/sandbox-runtime": "^0.0.75",
     "@earendil-works/pi-agent-core": "^0.82.0",
     "@earendil-works/pi-ai": "^0.82.0",
     "@electron-toolkit/eslint-config-prettier": "3.0.0",

@@ -3,6 +3,8 @@
 > 调研日期：2026-09-04
 > 状态：选型分析完成，待按本文档搭建 spike 验证
 > 目标读者：后续负责搭建沙箱 spike 与落地实现的开发者
+>
+> 更新 2026-09-08：完成市场补充调研，新增候选 Anthropic sandbox-runtime (srt)（见 4.5）；spike 修订为「arapuca vs srt A/B 验证」（见 5.5），macOS 侧已先行实测 srt（见 5.6）；以 srt 落地 L2 并记录实现与边界（见 5.7，含文件域策略与平台状态）
 
 ---
 
@@ -117,6 +119,35 @@ arapuca run -v /path/to/workspace \
 
 **arapuca 是唯一满足「三端一致 + 原生 OS 级 + 可包持久 shell 进程」的候选。** 其余按平台分水岭全部出局（Windows 是硬约束）。nono / agentbox 仅作设计参考，不作为依赖。
 
+### 4.5 市场补充调研（2026-09-08）：新增候选 Anthropic sandbox-runtime (srt)
+
+> 触发：9-04 结论之后，Agent 厂商侧沙箱在 2026 上半年集中落地，spike 前需复查市场。
+
+**市场格局变化（截至 2026-09-08 核实）**
+
+- 两大 Agent 厂商已把「进程级 OS 沙箱」做成默认能力并开源 / 公开实现：
+  - **Anthropic sandbox-runtime（srt）**：Claude Code `/sandbox` 背后的隔离层，2025-10 开源，Apache-2.0，npm 包 `@anthropic-ai/sandbox-runtime`（v0.0.75、2026-09-07、316 dependents、4.4k+ stars）。CLI `srt` 与 **JS 库 API（`SandboxManager`）双形态**，对 Electron 主进程是纯依赖、零编译。
+  - **OpenAI Codex**：`--sandbox` 默认开启（opt-out），实现文档公开：macOS Seatbelt / Linux Landlock+bubblewrap+seccomp / **Windows restricted token + DACL（弱于 AppContainer）**。不可作为独立库嵌入，仅作设计参考（「可写根 + 网络分档 + `.git` 等保护路径强制只读」的策略模型与本文 L1/L2 判定链同构）。
+- 独立工具生态洗牌：nono 仍最健康（周更，**Windows 仍仅 WSL2**）；landrun 2025-10 停更、yolo-cage 2026-02 停更、shai 近维护；fence（Seatbelt/bwrap，mac/Linux，无 Windows）周更但官方自称非恶意代码边界；yolobox/litterbox 走容器（需 Docker/Podman 引擎，不适合桌面内嵌）。**没有出现第二个原生支持 Windows 的独立进程级候选。**
+- 云沙箱（E2B / Daytona / Modal / CodeSandbox SDK / Cloudflare / Blaxel / zeroboot 等）=「远程执行 agent 代码」的托管平台，与「包住本地持久 bash」不同类；若未来做 L3 / 云端执行再单独立项。
+
+**srt 关键事实**
+
+| 项 | srt | 与本需求对应 |
+|---|---|---|
+| 平台 | macOS `sandbox-exec`(Seatbelt)；Linux bubblewrap + netns（Unix socket 代理）；**Windows 专用 `srt-sandbox` 低权限账户 + WFP 出口围栏 + 工作树逐会话 ACE** | 三端原生，但 **Windows 供给需提权**（安装器创建账户 + WFP，NSIS 安装期一次性完成） |
+| 形态 | npm 依赖（TypeScript 库 + CLI），vendor 内置少量平台 helper | Electron 零编译可并包；「随包二进制」范围远小于 arapuca 自维护 Rust 发布物 |
+| 默认策略 | 读默认放行（可 deny）、写默认拒绝（显式 allow 列表）、网络默认拒绝（域名 allowlist，HTTP/SOCKS5 双代理） | 与 L1「可写根 / 保护路径」模型可平移 |
+| 违规归因 | `getViolationsForCommand` / `annotateStderrWithSandboxFailures` | 可对接现有日志与 PermissionBar UX |
+| 成熟度 | Beta Research Preview（API 会漂移）；Claude Code 生产使用；Electron 先例 lvis-app（NSIS 供给 + 默认开启） | 生产验证强、API 稳定性存疑 |
+| 已知坑 | Linux bwrap 在 Ubuntu 24.04+ userns 受限环境需处理；TLS 盲代理（domain fronting 已公开讨论）；Windows ACL（0x80070005 类）仍在演进 | 均列入 5.5 待实测 |
+
+**选型结论修订**
+
+- 4.4 结论不变：独立库层面 arapuca 仍是唯一「原生三端 + OS 级 + Windows AppContainer deny-by-default 路径模型」的候选。
+- **但 srt 开辟另一条更省事的路径**：Node 原生依赖、三端官方同步维护、Windows 供给可并入现有 electron-builder 安装流程，且已有同类 Electron 应用（lvis-app）落地。
+- 因此 spike 由「验证 arapuca 单候选」**修订为 arapuca vs srt A/B**（见 5.5）；先以 macOS 本机（npm 零成本）验证 srt 能力边界与坑，再对照 Windows 供给 / Linux bwrap。
+
 ---
 
 ## 五、Spike 计划（按本文档搭建）
@@ -156,6 +187,85 @@ arapuca run -v /path/to/workspace \
 - **No-Go / 缓行**：Windows AppContainer 不可用或编译成本过高 → 回退「macOS/Linux 上 arapuca、Windows 先 L1 策略层 + 明示强度差异」的双轨方案（不阻塞三端 L1 先行）。
 - 无论走哪条路，**L1 判定器（可写根/保护路径/越界升级确认）都可独立先行落地**，不依赖 L2 选型。
 
+### 5.5 修订：spike 升级为 arapuca vs srt A/B（2026-09-08）
+
+> 背景见 4.5。A/B 目的：选「能落地进 electron-builder 且三端强度分级可接受」的那个，而非纸面最优。
+
+**验收标准（5.1 修订，两候选共用）**
+
+- [ ] A：持久 bash 被包住（stdin 驱动、哨兵协议不变）——macOS 上 srt 与 arapuca 各跑通；
+- [ ] B：`cd`/`export` 语义保留；工作区内写/删除成功；工作区外（如 `~` 下文件）被 OS 级拒绝；
+- [ ] C：npm install / git 等常用命令可达（网络与 HOME/缓存授权清单）；
+- [ ] D：kill 链路：外层 SIGTERM→SIGKILL 仍能整组终止（srt/arapuca 包装进程的进程组归属）；
+- [ ] E：fail-closed：srt helper 缺失 / arapuca 二进制被移走 → 拒绝执行而非裸跑；
+- [ ] F：Windows：srt 的 NSIS 供给链路（`srt-sandbox` 账户 + WFP）可行性 vs arapuca cargo 自编译成本；
+- [ ] G：Linux：bwrap（srt）在 Ubuntu 24.04+ userns 受限环境的实际行为 vs arapuca Landlock。
+
+**A/B 观察维度**：隔离强度上限、平台差异（网络默认、HOME/缓存授权）、安装/打包侵入度（npm 依赖 vs 下载二进制）、API 稳定性、审计/违规归因可对接性。
+
+**分步（macOS 先行，srt 零安装成本）**
+
+1. `pnpm add @anthropic-ai/sandbox-runtime`；用库 API 写最小脚本包住 `bash --noprofile --norc -s`，stdin 逐条发探测命令（沿用 5.3 步骤 2 的用例集）；
+2. 按 A/B/C/D/E 逐项记录 → 填写 5.6；
+3. 若 srt 在 macOS 上通过 A/B/C/E，再评估 Windows 供给与 Linux bwrap，与 arapuca 同维度对照；
+4. 决策门沿用 5.4（Go = 该候选在目标平台体系内全过 + 供给/打包成本可接受）。
+
+### 5.6 srt macOS spike 实测（2026-09-08，库形态）
+
+> 环境：macOS 15.7.7（Apple Silicon）/ Node v22.23.1 / `@anthropic-ai/sandbox-runtime` v0.0.75。
+> 方式：`SandboxManager`（库 API）把持久 `bash --noprofile --norc -s` 包进 Seatbelt 沙箱，stdin 逐条驱动 + 哨兵回读；脚本：[scripts/spike-srt.mjs](file:///Users/hupengfei/Documents/my-app/scripts/spike-srt.mjs)（另有 CLI `srt` 同场景对照，行为一致）。
+
+**结果：10/10 通过**
+
+| 验收项 | 结果 | 说明 |
+|---|---|---|
+| A 持久 bash 被包住（stdin 驱动） | ✅ | 首命令即时返回；首字节延迟 < 1s，无异常启动慢 |
+| B `cd`/`export` 跨命令保留 | ✅ | 同一沙箱会话内 export/cd 均保留 |
+| B 工作区内写/读成功 | ✅ | 允许写根内正常创建/读/列文件 |
+| B 工作区外（HOME）写被 OS 级拒绝 | ✅ | `Operation not permitted`，host 无残留文件 |
+| B `denyRead` 路径读取被拒 | ✅ | 沙箱内 `cat` 被拒；host 进程不受影响 |
+| C 网络默认拒绝 / 白名单放行 | ✅ | 非白名单域名被拦，`example.com` 白名单内返回 200 |
+
+**关键发现（影响集成设计）**
+
+1. **默认 denyWrite 会额外保护宿主进程 cwd 的点文件**：生成的 Seatbelt profile 自带对 `.git/.gitconfig/.claude/*rc/.profile` 等的写拒绝（与 Codex「保护路径」思路一致）。产品若要 agent 改宿主 cwd 的配置文件，需把这些加入 allowWrite 或调整初始化时 cwd 语义。
+2. **macOS 网络 allowlist 由「宿主侧共享代理」全局执行**：逐调用 `customConfig.network.allowedDomains` 覆盖不生效（实测代理回 403 CONNECT）。按命令启停网络须走 `SandboxManager.updateConfig()`（全局限定态），或初始化时就带白名单——与「bash tool 单条命令的网络开关」联动时需以此为准。
+3. **包装命令以 `env ... /usr/bin/sandbox-exec -p <profile> -- <shell> -c <command>` 形态生成**：库返回 `{ argv, env }` 可直接 `spawn(argv[0], argv.slice(1))`，无字符串注入面。
+4. **持久会话形态成立**：哨兵协议/管道 I/O 与原 `PersistentShell` 用法兼容（本 spike 即 stdin 逐条驱动）。
+
+**本机未覆盖（对应 5.5 剩余验收）**：F Windows 供给 / G Linux bwrap、npm install / git 等真实场景、以及 arapuca 同维度对照。D/E 已在产品接线后用模块级冒烟补测（见 5.7）。
+
+### 5.7 落地实现与决策记录（2026-09-08，保持当前设计）
+
+**选型**：以 **srt（Anthropic sandbox-runtime v0.0.75）** 为 L2 后端落地；`@anthropic-ai/sandbox-runtime` 置于 devDependencies，由 electron-vite 打进主进程 CJS bundle（沿用 pi-agent-core 的既有 ESM 处理约定）。
+
+**设置项（settings 表，设置页新增「沙箱」tab）**
+
+| key | 含义 | 默认 |
+|---|---|---|
+| `sandbox.enabled` | 总开关（默认关，维持现状直跑） | false |
+| `sandbox.writableRoots` | 用户追加可写根（工作区自动可写，无需登记） | [] |
+| `sandbox.denyReadRoots` | 禁止读取目录（默认全局可读，做减法） | [] |
+| `sandbox.networkAllowlist` | 网络域名白名单（留空=全禁） | 内置常用站点（npm/github/pypi 等） |
+
+**接线方式**
+
+- **bash 域（OS 级）**：[bash-session.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/bash-session.ts) 注入 `BashSandboxWrapper` 钩子；`ensureStarted`/`startBackground` 改为支持异步包装，spawn 时整体套 Seatbelt（macOS）/bwrap（Linux）/AppContainer（Windows）。工作区可写根取「该次 spawn 的 cwd」（会话动态）。默认可写额外包含各平台临时目录（`platformTempPaths`）。fail-closed：包装失败即抛错拒绝执行。
+- **文件域（应用层路径判定，与 bash 同一边界）**：[tools/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/tools/index.ts) 的 `wrapSandboxFsPolicy` 拦截写工具（`write_file`/`edit_file`/`download`，目标须在工作区+可写目录+临时目录内）与读工具（`read_file`，命中禁读目录拒绝）；`grep` 在扫描时过滤禁读目录内文件。关闭沙箱时零拦截。
+- **平台状态与 Windows 供给**：`agent.getSandboxStatus` 探测后端就绪度（mac 恒可用 / Linux 检测 bwrap / Windows 检测供给），设置页给 Linux 安装命令引导与 Windows「安装沙箱组件」按钮（一次 UAC）；electron-builder `extraResources` 携带 `srt-win`/`seccomp` helper，打包环境自动定位（`windows.srtWin.path`/`seccomp.applyPath`）。
+
+**验证记录**
+
+- 类型检查（node+web）、eslint、electron-vite build 全过；
+- macOS 模块级冒烟（真实 PersistentShell + 与产品同策略的 srt 包装）10/10：持久会话命令、export 保留、工作区内写、HOME 越界写被 OS 级拒绝、denyRead 拒绝、白名单内 200/白名单外拒绝、**超时整组 SIGTERM→SIGKILL 无残留（host pgrep 复核）**、会话自动重建。
+
+**当前边界（决策保留）**
+
+- 文件域为**应用层路径判定**，非内核强制（bash 仍为内核级）。
+- `glob`/`list_files` 仍会枚举禁读目录内的**文件名**（只列名不读内容）——本设计有意保留，不额外做排除。
+- 记忆/技能/知识库等写应用自身数据目录（userData）的内部功能不受可写根约束。
+- Windows 供给与打包路径解析、Linux bwrap 真机、npm install/git 等长流程命令仍有待对应平台实测。
+
 ---
 
 ## 六、参考链接
@@ -166,3 +276,8 @@ arapuca run -v /path/to/workspace \
 - nanosandboxai（org）：https://github.com/orgs/nanosandboxai/repositories
 - nono：https://github.com/nolabs-ai/nono | https://nono.sh/ | crate 文档 https://docs.rs/crate/nono-cli/0.72.0
 - 平台现状参考：Claude Code sandbox-runtime（Linux 依赖 bubblewrap）、cmagent（Linux Landlock 优先）、Ubuntu 24.04 AppArmor userns 限制相关文档
+- sandbox-runtime (srt)：https://github.com/anthropics/sandbox-runtime | npm：https://www.npmjs.com/package/@anthropic-ai/sandbox-runtime
+- Codex 沙箱实现（官方架构）：https://www.mintlify.com/openai/codex/architecture/sandboxing | 平台实现拆解：https://codex.danielvaughan.com/2026/05/03/codex-cli-sandbox-internals-seatbelt-bubblewrap-landlock-windows-dacl/
+- 本地 agent 沙箱生态对比（2026-06）：https://rywalker.com/research/local-agent-sandboxes
+- Electron 内嵌 srt 的 Windows 供给先例：https://github.com/lvis-project/lvis-app/issues/1608 | srt Windows ACL 问题：https://github.com/anthropic-experimental/sandbox-runtime/issues/396
+- GuardFall（文本过滤失效分析，佐证 1.2「B 只能靠进程级沙箱」）：https://codex.danielvaughan.com/2026/07/15/guardfall-shell-injection-bypass-open-source-coding-agents-codex-cli-kernel-sandbox-defence/

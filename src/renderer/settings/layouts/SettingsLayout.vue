@@ -17,6 +17,7 @@ import {
   BookOutline,
   LibraryOutline,
   LayersOutline,
+  LockClosedOutline,
   MicOutline,
   InformationCircleOutline
 } from '@vicons/ionicons5'
@@ -39,6 +40,7 @@ const navItems: { key: SettingsTabKey; label: string; icon: Component }[] = [
   { key: 'usage', label: '用量', icon: StatsChartOutline },
   { key: 'tools', label: '工具', icon: BuildOutline },
   { key: 'skills', label: '技能', icon: ExtensionPuzzleOutline },
+  { key: 'sandbox', label: '沙箱', icon: LockClosedOutline },
   { key: 'memory', label: '记忆', icon: BookOutline },
   { key: 'knowledge', label: '知识库', icon: LibraryOutline },
   { key: 'mcp', label: 'MCP', icon: GitNetworkOutline },

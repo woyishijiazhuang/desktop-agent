@@ -20,6 +20,7 @@ import { createAskUserTool } from './ask-user'
 import { createTaskTool } from './task'
 import { mcpToolsTool, mcpCallTool } from './mcp'
 import { db } from '../../database'
+import { getSessionFsPolicy, isPathWithinAny } from '../sandbox'
 import {
   SETTING_ENABLED_TOOLS,
   SETTING_MEMORY_ENABLED,
@@ -184,6 +185,11 @@ const KB_TOOLS = new Set(['search_knowledge'])
 /** bash 辅助工具：随 bash 一起启停（单独关闭 bash 时一并移除）。 */
 const BASH_AUX_TOOLS = new Set(['bash_output', 'kill_shell', 'bash_input'])
 
+/** 文件域写工具：沙箱开启时目标路径必须在「工作区 + 可写目录 + 临时目录」内。 */
+const FS_WRITE_TOOLS = new Set(['write_file', 'edit_file', 'download'])
+/** 文件域读工具：沙箱开启时命中「禁止读取」目录即拒绝。 */
+const FS_READ_TOOLS = new Set(['read_file'])
+
 /** 读取持久化的工具启用覆盖（toolName → 是否启用）。 */
 function readOverrides(): Record<string, boolean> {
   return db.getSetting<Record<string, boolean>>(SETTING_ENABLED_TOOLS) ?? {}
@@ -269,6 +275,52 @@ function wrapGate(tool: AgentTool): AgentTool {
   return { ...tool, execute }
 }
 
+/**
+ * 文件域沙箱策略门：沙箱开启时，写工具（write_file/edit_file/download）的目标路径须在
+ * 「工作区 + 可写目录 + 临时目录」内，读工具（read_file）不得命中「禁止读取」目录。
+ * 与 bash 沙箱共用同一边界（见 sandbox.ts getSessionFsPolicy），关闭时不做任何拦截。
+ */
+function wrapSandboxFsPolicy(tool: AgentTool, sessionId: string): AgentTool {
+  const { name } = tool
+  if (!FS_WRITE_TOOLS.has(name) && !FS_READ_TOOLS.has(name)) return tool
+  const origExecute = tool.execute
+  const execute = (async (
+    toolCallId: string,
+    params: unknown,
+    signal?: AbortSignal,
+    onUpdate?: unknown
+  ) => {
+    const path = (params as { path?: string } | null | undefined)?.path
+    if (path) {
+      const policy = await getSessionFsPolicy(sessionId)
+      if (policy) {
+        if (FS_WRITE_TOOLS.has(name)) {
+          const allowed =
+            isPathWithinAny(path, policy.allowWriteRoots) &&
+            !isPathWithinAny(path, policy.denyReadRoots)
+          if (!allowed) {
+            throw new Error(
+              `沙箱已开启：写入路径「${path}」不在可写范围内（工作区 / 可写目录 / 系统临时目录）。如需写入，请到「设置 → 沙箱 → 可写目录」添加后重试，或临时关闭沙箱。`
+            )
+          }
+        } else if (isPathWithinAny(path, policy.denyReadRoots)) {
+          throw new Error(
+            `沙箱已开启：路径「${path}」位于「禁止读取」目录内，拒绝读取。如需访问，请到「设置 → 沙箱 → 禁止读取的目录」调整。`
+          )
+        }
+      }
+    }
+    return (origExecute as (...args: unknown[]) => Promise<unknown>).call(
+      tool,
+      toolCallId,
+      params,
+      signal,
+      onUpdate
+    )
+  }) as unknown as typeof tool.execute
+  return { ...tool, execute }
+}
+
 export function buildTools(opts: BuildToolsOptions = { sessionId: '' }): AgentTool[] {
   const overrides = readOverrides()
   const result: AgentTool[] = []
@@ -276,7 +328,7 @@ export function buildTools(opts: BuildToolsOptions = { sessionId: '' }): AgentTo
     // 注入判定：默认启用或用户曾显式开启；一旦开启过即长期留在集合内（保持工具数组稳定）
     const everOn = entry.defaultEnabled || overrides[entry.name] === true
     if (!everOn) continue
-    result.push(...entry.build(opts).map((t) => wrapGate(t)))
+    result.push(...entry.build(opts).map((t) => wrapGate(wrapSandboxFsPolicy(t, opts.sessionId))))
   }
   return result
 }

@@ -299,6 +299,7 @@ export type SettingsTabKey =
   | 'usage'
   | 'tools'
   | 'skills'
+  | 'sandbox'
   | 'memory'
   | 'knowledge'
   | 'mcp'
@@ -319,6 +320,7 @@ export const SETTINGS_TAB_KEYS: SettingsTabKey[] = [
   'usage',
   'tools',
   'skills',
+  'sandbox',
   'memory',
   'knowledge',
   'mcp',
@@ -409,6 +411,39 @@ export const SETTING_AGENT_MD_INJECTION_CHARS = 'agent.agentMdInjectionChars'
  * 应用自身 process.env < 自动抓取的 shell 环境（getShellEnv） < 此处手动配置。
  */
 export const SETTING_AGENT_ENV = 'agent.env'
+
+// ==================== 沙箱（bash Sandbox Runtime）====================
+
+/**
+ * settings 表中存储的 bash 沙箱配置 key。
+ * - enabled：总开关（默认关闭 = 维持现状直跑；开启后命令进程被 OS 级沙箱约束）
+ * - writableRoots：用户追加的可写根（绝对路径 string[]）。命令所在工作区目录自动可写，
+ *   无需在此登记；列表用于追加工作区外的授权目录（如全局包缓存 ~/.npm 等）
+ * - denyReadRoots：禁止读取的目录（绝对路径 string[]）。默认全局可读，此处做减法
+ * - networkAllowlist：域名白名单（srt 代理执行，默认拒全；开启沙箱后按此名单放行，
+ *   内置一组常用开发站点兜底，可按需增删）
+ */
+export const SETTING_SANDBOX_ENABLED = 'sandbox.enabled'
+export const SETTING_SANDBOX_WRITABLE_ROOTS = 'sandbox.writableRoots'
+export const SETTING_SANDBOX_DENY_READ_ROOTS = 'sandbox.denyReadRoots'
+export const SETTING_SANDBOX_NETWORK_ALLOWLIST = 'sandbox.networkAllowlist'
+
+/** 沙箱默认关闭（开启会改变命令行为，须用户显式打开）。 */
+export const DEFAULT_SANDBOX_ENABLED = false
+/** 沙箱网络默认白名单（仅当允许项为空才全部拒网；内置常用注册表/代码托管站点）。 */
+export const SANDBOX_DEFAULT_NETWORK_ALLOWLIST: string[] = [
+  'registry.npmjs.org',
+  'registry.npmmirror.com',
+  'github.com',
+  'api.github.com',
+  'codeload.github.com',
+  'raw.githubusercontent.com',
+  'objects.githubusercontent.com',
+  'pypi.org',
+  'files.pythonhosted.org',
+  'unpkg.com',
+  'cdn.jsdelivr.net'
+]
 
 /**
  * settings 表中存储的「MCP 工具调用次数」key（Record<"serverId::tool", number>）。

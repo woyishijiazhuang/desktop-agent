@@ -3,6 +3,7 @@ import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { readFile, stat } from 'node:fs/promises'
 import { relative } from 'node:path'
 import { resolveAgentSessionWorkdir } from '../workdir'
+import { getSessionFsPolicy, isPathWithinAny } from '../sandbox'
 import { createGlobMatcher, toPosix, walkFiles } from './fs-walk'
 import { createLogger } from '../../utils/log'
 
@@ -123,6 +124,12 @@ export function createGrepTool(sessionId: string): AgentTool<typeof params, Grep
           if (!globMatcher) return true
           return globMatcher(toPosix(relative(root, f)))
         })
+      }
+
+      // 沙箱开启时：落在「禁止读取」目录内的文件不参与搜索，避免内容经 grep 外泄
+      const policy = await getSessionFsPolicy(sessionId)
+      if (policy && policy.denyReadRoots.length > 0) {
+        files = files.filter((f) => !isPathWithinAny(f, policy.denyReadRoots))
       }
 
       const outLines: string[] = []

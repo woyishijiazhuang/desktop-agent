@@ -26,6 +26,11 @@ import {
   SETTING_AGENT_ENV,
   SETTING_PERMISSION_AUTO_APPROVE,
   SETTING_PERMISSION_TIMEOUT_SEC,
+  SETTING_SANDBOX_ENABLED,
+  SETTING_SANDBOX_WRITABLE_ROOTS,
+  SETTING_SANDBOX_DENY_READ_ROOTS,
+  SETTING_SANDBOX_NETWORK_ALLOWLIST,
+  SANDBOX_DEFAULT_NETWORK_ALLOWLIST,
   SETTING_VOICE_REGION,
   SETTING_VOICE_LANGUAGE,
   SETTING_VOICE_TTS_VOICE,
@@ -97,6 +102,15 @@ export const useSettingsStore = defineStore('settings', () => {
   const permissionAutoApprove = ref(false)
   /** 工具确认超时（秒；0 = 一直等待，默认 60）。 */
   const permissionTimeoutSec = ref(DEFAULT_PERMISSION_TIMEOUT_SEC)
+  // ---- bash 沙箱 ----
+  /** 沙箱总开关（默认关闭 = 维持现状直跑）。 */
+  const sandboxEnabled = ref(false)
+  /** 用户追加的可写根（工作区目录自动可写，此处追加工作区外授权目录）。 */
+  const sandboxWritableRoots = ref<string[]>([])
+  /** 禁止读取的目录（默认全局可读，此处做减法）。 */
+  const sandboxDenyReadRoots = ref<string[]>([])
+  /** 网络域名白名单（空数组 = 全部拒网；默认内置常用站点）。 */
+  const sandboxNetworkAllowlist = ref<string[]>(SANDBOX_DEFAULT_NETWORK_ALLOWLIST)
   // ---- 语音对话 ----
   /** MiMo 语音 API key 是否已配置（明文不进入渲染进程）。 */
   const voiceHasApiKey = ref(false)
@@ -145,6 +159,10 @@ export const useSettingsStore = defineStore('settings', () => {
       agentEnvVal,
       permissionAutoApproveVal,
       permissionTimeoutSecVal,
+      sandboxEnabledVal,
+      sandboxWritableRootsVal,
+      sandboxDenyReadRootsVal,
+      sandboxNetworkAllowlistVal,
       voiceConfig
     ] = await Promise.all([
       mainClient.db.getSetting(SETTING_DEFAULT_SYSTEM_PROMPT),
@@ -165,6 +183,10 @@ export const useSettingsStore = defineStore('settings', () => {
       mainClient.db.getSetting(SETTING_AGENT_ENV),
       mainClient.db.getSetting(SETTING_PERMISSION_AUTO_APPROVE),
       mainClient.db.getSetting(SETTING_PERMISSION_TIMEOUT_SEC),
+      mainClient.db.getSetting(SETTING_SANDBOX_ENABLED),
+      mainClient.db.getSetting(SETTING_SANDBOX_WRITABLE_ROOTS),
+      mainClient.db.getSetting(SETTING_SANDBOX_DENY_READ_ROOTS),
+      mainClient.db.getSetting(SETTING_SANDBOX_NETWORK_ALLOWLIST),
       mainClient.voice.getConfig()
     ])
     tools.value = toolList
@@ -186,6 +208,13 @@ export const useSettingsStore = defineStore('settings', () => {
       typeof permTimeout === 'number' && Number.isFinite(permTimeout) && permTimeout >= 0
         ? Math.floor(permTimeout)
         : DEFAULT_PERMISSION_TIMEOUT_SEC
+    sandboxEnabled.value = (sandboxEnabledVal as boolean | undefined) ?? false
+    sandboxWritableRoots.value = (sandboxWritableRootsVal as string[] | undefined) ?? []
+    sandboxDenyReadRoots.value = (sandboxDenyReadRootsVal as string[] | undefined) ?? []
+    const allowlist = sandboxNetworkAllowlistVal as string[] | undefined
+    // 未配置过才回退内置默认；显式存空数组 = 用户选择「禁止全部外网」
+    sandboxNetworkAllowlist.value =
+      allowlist === undefined ? [...SANDBOX_DEFAULT_NETWORK_ALLOWLIST] : allowlist
     // 语音配置（voice.getConfig 返回聚合配置，无 key 明文）
     const vc = voiceConfig as
       | {
@@ -338,6 +367,44 @@ export const useSettingsStore = defineStore('settings', () => {
     permissionTimeoutSec.value = v
   }
 
+  // ---- bash 沙箱保存 ----
+
+  /** 路径列表规范化：trim + 去重 + 去空项。 */
+  function normalizePaths(list: string[]): string[] {
+    return [...new Set(list.map((p) => p.trim()).filter((p) => p.length > 0))]
+  }
+
+  /**
+   * 切换沙箱总开关。
+   * 生效边界：沙箱在 shell「spawn 时刻」施加，已在运行的会话不受影响；改后建议
+   * 从新会话（或新命令触发自动重建）开始观察。main 侧 readSandboxSettings 实时读取。
+   */
+  async function saveSandboxEnabled(v: boolean): Promise<void> {
+    await mainClient.db.setSetting(SETTING_SANDBOX_ENABLED, v)
+    sandboxEnabled.value = v
+  }
+
+  /** 保存用户追加的可写根（工作区目录自动可写，此处仅追加工作区外目录）。 */
+  async function saveSandboxWritableRoots(list: string[]): Promise<void> {
+    const v = normalizePaths(list)
+    await mainClient.db.setSetting(SETTING_SANDBOX_WRITABLE_ROOTS, v)
+    sandboxWritableRoots.value = v
+  }
+
+  /** 保存禁止读取的目录（默认全局可读，此处做减法）。 */
+  async function saveSandboxDenyReadRoots(list: string[]): Promise<void> {
+    const v = normalizePaths(list)
+    await mainClient.db.setSetting(SETTING_SANDBOX_DENY_READ_ROOTS, v)
+    sandboxDenyReadRoots.value = v
+  }
+
+  /** 保存网络域名白名单（trim+去重；留空 = 禁止全部外网）。 */
+  async function saveSandboxNetworkAllowlist(list: string[]): Promise<void> {
+    const v = [...new Set(list.map((d) => d.trim().toLowerCase()).filter((d) => d.length > 0))]
+    await mainClient.db.setSetting(SETTING_SANDBOX_NETWORK_ALLOWLIST, v)
+    sandboxNetworkAllowlist.value = v
+  }
+
   // ---- 语音设置保存 ----
 
   /** 保存 MiMo 语音 API key（main 进程 safeStorage 加密存储）。 */
@@ -482,6 +549,18 @@ export const useSettingsStore = defineStore('settings', () => {
       case SETTING_PERMISSION_TIMEOUT_SEC:
         permissionTimeoutSec.value = value as number
         break
+      case SETTING_SANDBOX_ENABLED:
+        sandboxEnabled.value = value as boolean
+        break
+      case SETTING_SANDBOX_WRITABLE_ROOTS:
+        sandboxWritableRoots.value = (value as string[] | undefined) ?? []
+        break
+      case SETTING_SANDBOX_DENY_READ_ROOTS:
+        sandboxDenyReadRoots.value = (value as string[] | undefined) ?? []
+        break
+      case SETTING_SANDBOX_NETWORK_ALLOWLIST:
+        sandboxNetworkAllowlist.value = (value as string[] | undefined) ?? []
+        break
       case SETTING_VOICE_REGION:
         voiceRegion.value = (value as VoiceRegion) ?? DEFAULT_VOICE_REGION
         break
@@ -590,6 +669,10 @@ export const useSettingsStore = defineStore('settings', () => {
     agentEnv,
     permissionAutoApprove,
     permissionTimeoutSec,
+    sandboxEnabled,
+    sandboxWritableRoots,
+    sandboxDenyReadRoots,
+    sandboxNetworkAllowlist,
     voiceHasApiKey,
     voiceRegion,
     voiceLanguage,
@@ -606,6 +689,10 @@ export const useSettingsStore = defineStore('settings', () => {
     saveNotificationsEnabled,
     savePermissionAutoApprove,
     savePermissionTimeoutSec,
+    saveSandboxEnabled,
+    saveSandboxWritableRoots,
+    saveSandboxDenyReadRoots,
+    saveSandboxNetworkAllowlist,
     saveVoiceApiKey,
     clearVoiceApiKey,
     testVoice,

@@ -47,6 +47,11 @@ const routes: RouteRecordRaw[] = [
         component: () => import('../views/SkillsView.vue')
       },
       {
+        path: 'sandbox',
+        name: 'settings-sandbox',
+        component: () => import('../views/SandboxView.vue')
+      },
+      {
         path: 'memory',
         name: 'settings-memory',
         component: () => import('../views/MemoryView.vue')

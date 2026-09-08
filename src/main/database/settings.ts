@@ -70,6 +70,15 @@ const SETTING_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   'permission.autoApprove': (v) => typeof v === 'boolean',
   /** 工具确认超时（秒；0 = 一直等待，见 agent/types.ts SETTING_PERMISSION_TIMEOUT_SEC）。 */
   'permission.timeoutSec': (v) => typeof v === 'number' && Number.isFinite(v) && v >= 0,
+  // ---- bash 沙箱（key 见 agent/types.ts SETTING_SANDBOX_*）----
+  /** 沙箱总开关（默认关闭）。 */
+  'sandbox.enabled': (v) => typeof v === 'boolean',
+  /** 用户追加的可写根（绝对路径 string[]）。 */
+  'sandbox.writableRoots': (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'),
+  /** 禁止读取目录（绝对路径 string[]，默认全局可读）。 */
+  'sandbox.denyReadRoots': (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'),
+  /** 沙箱网络域名白名单（string[]，含可选 :port 后缀）。 */
+  'sandbox.networkAllowlist': (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'),
   /** 上次退出时打开的工作区窗口（string[]，见 window-manager.ts SETTING_OPEN_WORKSPACES）。 */
   'workspace.openWindows': (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'),
   /** 欢迎页最近一批 AI 建议（string[]，见 agent/types.ts SETTING_WELCOME_SUGGESTIONS）。 */

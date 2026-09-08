@@ -4,10 +4,21 @@ import { resolveAgentSessionWorkdir } from '../workdir'
 import { db } from '../../database'
 import { getShellEnv } from '../../utils/shell-env'
 import { SETTING_AGENT_ENV } from '../types'
-import { bashSessionManager, DEFAULT_TIMEOUT, formatBytes, resolveShell } from '../bash-session'
+import {
+  bashSessionManager,
+  DEFAULT_TIMEOUT,
+  formatBytes,
+  resolveShell,
+  setBashSandboxWrapper
+} from '../bash-session'
+import { createSandboxWrapper } from '../sandbox'
 import { createLogger } from '../../utils/log'
 
 const log = createLogger('tool:bash')
+
+// 装配沙箱包装器（幂等）：bash-session 保持纯净（无 db 依赖），此处把「读设置+套 OS 沙箱」
+// 的包装器注册进去。开启沙箱后，持久会话 shell 与后台命令在 spawn 时整体套入沙箱。
+setBashSandboxWrapper(createSandboxWrapper())
 
 /**
  * 不预检交互式/读 stdin 的命令：静态分析无法准确分辨（node -v 非交互、bash -c
@@ -172,7 +183,7 @@ export function createBashTools(sessionId: string): AgentTool[] {
       const cwd = p.cwd ?? resolveAgentSessionWorkdir(sessionId)
 
       if (p.background) {
-        const shell = bashSessionManager.startBackground(p.command, { cwd, env })
+        const shell = await bashSessionManager.startBackground(p.command, { cwd, env })
         const text = `已启动后台命令。session_id: ${shell.sessionId}\n可用 bash_output 读取输出（建议传 wait_ms 等待，避免轮询）；交互式提示用 bash_input 写入应答；读输入到结尾的命令用 bash_input end=true 发送 EOF；kill_shell 可终止。`
         log.info('后台命令已启动', {
           sessionId,
