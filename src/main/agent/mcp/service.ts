@@ -2,11 +2,10 @@ import { IpcService } from 'electron-ipc-service'
 import { db } from '../../database'
 import type { CreateMcpServerParams, UpdateMcpServerParams } from '../../database'
 import { mcpManager } from './index'
-import { getBuiltinMcpPresets } from './presets'
+import { seedBuiltinMcpServers } from './presets'
 import { createLogger } from '../../utils/log'
 import {
   rowToConfig,
-  type BuiltinMcpPreset,
   type McpServerConfig,
   type McpServerStatus,
   type McpTestResult
@@ -27,11 +26,6 @@ export class McpService extends IpcService {
 
   listServers(): McpServerConfig[] {
     return db.listMcpServers().map(rowToConfig)
-  }
-
-  /** 内置 MCP 预设目录（只读，不创建任何配置；renderer 据此预填添加弹窗）。 */
-  listBuiltinPresets(): BuiltinMcpPreset[] {
-    return getBuiltinMcpPresets()
   }
 
   createServer(input: CreateMcpServerParams): McpServerConfig {
@@ -55,8 +49,12 @@ export class McpService extends IpcService {
     return rowToConfig(row)
   }
 
+  /** 删除自建 server；随包内置配置不允许删除（可停用或编辑参数）。 */
   deleteServer(id: string): void {
     const row = db.getMcpServer(id)
+    if (row?.builtin) {
+      throw new Error(`「${row.name}」是内置 MCP 配置，不允许删除（可停用或编辑参数）`)
+    }
     db.deleteMcpServer(id)
     log.info('删除 MCP server', { serverId: id, name: row?.name })
     void this.afterChange()
@@ -70,8 +68,9 @@ export class McpService extends IpcService {
     return mcpManager.testConnection(input)
   }
 
-  /** 应用启动时连接全部已启用 server（失败不影响启动）。 */
+  /** 应用启动时：先补种内置 MCP 配置（默认关闭），再连接全部已启用 server（失败不影响启动）。 */
   connectAll(): Promise<void> {
+    seedBuiltinMcpServers()
     return mcpManager.reload()
   }
 

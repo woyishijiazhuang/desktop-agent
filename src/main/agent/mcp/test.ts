@@ -23,6 +23,7 @@ export async function testMcpConnection(input: {
     env: input.env ? JSON.stringify(input.env) : null,
     url: input.url ?? null,
     enabled: true,
+    builtin: false,
     createdAt: '',
     updatedAt: ''
   }

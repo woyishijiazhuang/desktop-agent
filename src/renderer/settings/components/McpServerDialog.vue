@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { ref, watch } from 'vue'
 import {
   NModal,
   NInput,
@@ -12,19 +12,15 @@ import {
 } from 'naive-ui'
 import { mainClient } from '@renderer/utils/main-client'
 import type { CreateMcpServerParams } from '@main/service/db-service'
-import type { BuiltinMcpPreset, McpServerConfig } from '@main/agent/mcp/types'
+import type { McpServerConfig } from '@main/agent/mcp/types'
 
-/** MCP server 新增（支持内置预设预填）/ 编辑弹窗。 */
+/** MCP server 新增 / 编辑弹窗（内置配置与用户自建配置共用同一表单）。 */
 const props = defineProps<{
   show: boolean
   server: McpServerConfig | null
-  preset?: BuiltinMcpPreset | null
 }>()
 const emit = defineEmits<{ 'update:show': [boolean]; saved: [] }>()
 const message = useMessage()
-
-/** 是否处于「从内置预设添加」态（仅新建时生效，编辑既有配置时忽略 preset）。 */
-const fromPreset = computed(() => !!props.preset && !props.server)
 
 const name = ref('')
 const transport = ref<'stdio' | 'http'>('stdio')
@@ -40,27 +36,22 @@ const saving = ref(false)
 const testing = ref(false)
 const testResult = ref<{ ok: boolean; text: string } | null>(null)
 
-// 打开弹窗时按编辑目标或内置预设初始化表单
+// 打开弹窗时按编辑目标初始化表单（新增则留空走默认值）
 watch(
   () => props.show,
   (show) => {
     if (!show) return
     const s = props.server
-    const p = props.preset
-    name.value = s?.name ?? p?.name ?? ''
-    transport.value = s?.transport ?? p?.transport ?? 'stdio'
-    command.value = s?.command ?? p?.command ?? ''
-    argsText.value = s?.args.join('\n') ?? p?.args.join('\n') ?? ''
+    name.value = s?.name ?? ''
+    transport.value = s?.transport ?? 'stdio'
+    command.value = s?.command ?? ''
+    argsText.value = s?.args.join('\n') ?? ''
     envText.value = s
       ? Object.entries(s.env)
           .map(([k, v]) => `${k}=${v}`)
           .join('\n')
-      : p
-        ? Object.entries(p.env)
-            .map(([k, v]) => `${k}=${v}`)
-            .join('\n')
-        : ''
-    url.value = s?.url ?? p?.url ?? ''
+      : ''
+    url.value = s?.url ?? ''
     enabled.value = s?.enabled ?? true
     testResult.value = null
   }
@@ -148,14 +139,12 @@ async function onSave(): Promise<void> {
   <NModal
     :show="show"
     preset="card"
-    :title="server ? '编辑 MCP 服务器' : preset ? `添加：${preset.name}` : '添加 MCP 服务器'"
+    :title="server ? '编辑 MCP 服务器' : '添加 MCP 服务器'"
     style="width: 520px"
     :mask-closable="false"
     @update:show="(v: boolean) => emit('update:show', v)"
   >
     <div class="mcp-form">
-      <div v-if="fromPreset && preset" class="mcp-form__note">{{ preset.note }}</div>
-
       <label class="mcp-form__label">名称</label>
       <NInput v-model:value="name" placeholder="如：文件系统 / 数据库" :maxlength="40" />
 
@@ -217,16 +206,6 @@ async function onSave(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-.mcp-form__note {
-  padding: 8px 10px;
-  border-radius: var(--radius);
-  background: var(--info-soft, var(--bg-soft));
-  color: var(--text-2);
-  font-size: 12px;
-  line-height: 1.6;
-  word-break: break-all;
-  white-space: pre-line;
 }
 .mcp-form__label {
   margin-top: 10px;

@@ -18,6 +18,8 @@ export interface McpServerConfig {
   /** http：server URL */
   url: string
   enabled: boolean
+  /** true = 随包内置预设播种的配置（默认关闭；UI 显示「内置」标签）。 */
+  builtin: boolean
 }
 
 /** MCP server 的连接状态（设置页展示用）。 */
@@ -48,9 +50,9 @@ export interface McpTestResult {
 }
 
 /**
- * 内置 MCP 预设（随包出厂目录，非已安装配置）。
- * 与 McpServerConfig 同构，renderer「添加」时按此预填弹窗，确认/补参后保存为正式 server。
- * 注意：预设不是 DB 行，不会默认启用，也不参与 manifest/墓碑管理（删除的只是用户自己添加的副本）。
+ * 内置 MCP 预设（随包出厂定义，main 侧播种目录数据源，见 presets.ts seedBuiltinMcpServers）。
+ * 启动时每个预设被播种为一条默认关闭的正式 server 行（builtin=1，UI 显示「内置」标签），
+ * 不直接暴露给 renderer 作为「可重复添加的模板」。
  */
 export interface BuiltinMcpPreset {
   /** 预设唯一 id（如 playwright / context7 / github）。 */
@@ -76,7 +78,8 @@ export function rowToConfig(row: McpServerRow): McpServerConfig {
     args: parseJson(row.args, []),
     env: parseJson(row.env, {}),
     url: row.url ?? '',
-    enabled: row.enabled
+    enabled: row.enabled,
+    builtin: !!row.builtin
   }
 }
 

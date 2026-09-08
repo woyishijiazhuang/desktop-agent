@@ -100,7 +100,7 @@ export function toModelConfig(row: ModelConfigRow, omitKey = false): ModelConfig
 
 /** DB 行 → 对象（布尔列 / JSON 列还原）。 */
 export function toMcpServer(row: McpServerRow): McpServerRow {
-  return { ...row, enabled: Boolean(row.enabled) }
+  return { ...row, enabled: Boolean(row.enabled), builtin: Boolean(row.builtin) }
 }
 
 /** 本地时区的 YYYY-MM-DD 键（用量按天分组 / 补 0 用）。 */

@@ -15,12 +15,16 @@ export interface McpServerRow {
   /** http：server URL */
   url: string | null
   enabled: boolean
+  /** true = 随包内置预设播种的配置（默认关闭；仅标识来源，行为等同普通配置）。 */
+  builtin: boolean
   createdAt: string
   updatedAt: string
 }
 
 /** 创建/更新 MCP server 的参数。 */
 export interface CreateMcpServerParams {
+  /** 指定 id（播种内置配置用；缺省随机 UUID）。 */
+  id?: string
   name: string
   transport: McpTransport
   command?: string
@@ -28,6 +32,8 @@ export interface CreateMcpServerParams {
   env?: Record<string, string>
   url?: string
   enabled?: boolean
+  /** 标记为随包内置配置（播种用）。 */
+  builtin?: boolean
 }
 
 /** 更新 MCP server 的参数（字段可选，未传不修改）。 */

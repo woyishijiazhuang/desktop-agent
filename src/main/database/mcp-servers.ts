@@ -28,10 +28,10 @@ export function createMcpServersApi(db: DatabaseSync): McpServersApi {
     },
 
     createMcpServer(params: CreateMcpServerParams): McpServerRow {
-      const id = crypto.randomUUID()
+      const id = params.id ?? crypto.randomUUID()
       db.prepare(
-        `INSERT INTO mcp_servers (id, name, transport, command, args, env, url, enabled)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+        `INSERT INTO mcp_servers (id, name, transport, command, args, env, url, enabled, builtin)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).run(
         id,
         params.name,
@@ -40,7 +40,8 @@ export function createMcpServersApi(db: DatabaseSync): McpServersApi {
         params.args ? JSON.stringify(params.args) : null,
         params.env ? JSON.stringify(params.env) : null,
         params.url ?? null,
-        params.enabled === false ? 0 : 1
+        params.enabled === false ? 0 : 1,
+        params.builtin ? 1 : 0
       )
       return api.getMcpServer(id)!
     },

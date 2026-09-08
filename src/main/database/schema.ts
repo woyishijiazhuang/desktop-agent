@@ -97,6 +97,8 @@ export function initSchema(db: DatabaseSync): void {
       env TEXT,
       url TEXT,
       enabled INTEGER NOT NULL DEFAULT 1,
+      -- 1 = 随包内置预设播种的配置（默认关闭），0 = 用户自己添加。仅标识来源，行为等同普通配置。
+      builtin INTEGER NOT NULL DEFAULT 0,
       created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
       updated_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
     ) STRICT;
@@ -278,5 +280,12 @@ export function initSchema(db: DatabaseSync): void {
   ).map((c) => c.name)
   if (!workspaceCols.includes('theme_color')) {
     db.exec('ALTER TABLE workspaces ADD COLUMN theme_color TEXT')
+  }
+  // 轻量列补齐：老库 mcp_servers 无 builtin 列时补列（0 = 用户添加，1 = 随包内置，见建表处注释）。
+  const mcpCols = (
+    db.prepare('PRAGMA table_info(mcp_servers)').all() as unknown as { name: string }[]
+  ).map((c) => c.name)
+  if (!mcpCols.includes('builtin')) {
+    db.exec('ALTER TABLE mcp_servers ADD COLUMN builtin INTEGER NOT NULL DEFAULT 0')
   }
 }
