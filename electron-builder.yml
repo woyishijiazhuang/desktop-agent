@@ -40,19 +40,18 @@ files:
   - 'node_modules/@ricky0123/vad-web/dist/vad.worklet.bundle.min.js'
 asarUnpack:
   - resources/**
-# srt（bash 沙箱）随包携带的平台 helper：
-#  - Windows srt-win.exe（沙箱账户供给/WFP 与进程隔离后端）
-#  - Linux apply-seccomp（seccomp 过滤器落地二进制）
-# 源码侧由 sandbox.ts packagedSrtWinPath/packagedSeccompPath 在打包环境定位（resources/*/…）。
-extraResources:
-  - from: node_modules/@anthropic-ai/sandbox-runtime/vendor/srt-win
-    to: srt-win
-  - from: node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp
-    to: seccomp
+# srt（bash 沙箱）随包携带的平台 helper，按平台拆分：
+#  - Windows 需 srt-win.exe（沙箱账户供给/WFP 与进程隔离后端）
+#  - Linux 需 apply-seccomp（seccomp 过滤器落地二进制）
+# 目录为双架构（x64/arm64），运行时由 sandbox.ts 按 process.arch 定位；macOS 走系统
+# Seatbelt，不需要任何 helper，故 mac 不再拷贝。
 win:
   executableName: 桌面助手
   # 多尺寸 ico（16~256，小帧内容撑满），避免任务栏图标因大图留白缩显得偏小
   icon: build/icon.ico
+  extraResources:
+    - from: node_modules/@anthropic-ai/sandbox-runtime/vendor/srt-win
+      to: srt-win
 nsis:
   artifactName: ${name}-${version}-setup.${ext}
   shortcutName: ${productName}
@@ -82,6 +81,9 @@ linux:
     - deb
   maintainer: desktop-agent
   category: Utility
+  extraResources:
+    - from: node_modules/@anthropic-ai/sandbox-runtime/vendor/seccomp
+      to: seccomp
 appImage:
   artifactName: ${name}-${version}.${ext}
 npmRebuild: false
