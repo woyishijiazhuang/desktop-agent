@@ -2,6 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
 import { isAbsolute, join, relative, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
+import { app } from 'electron'
 import {
   SandboxManager,
   checkWindowsSandboxStatusAsync,
@@ -249,23 +250,66 @@ let activeAllowlistKey: string | null = null
 let initPromise: Promise<void> | null = null
 
 /**
- * 打包环境下 Windows 的 srt-win.exe 路径（electron-builder extraResources 拷贝到
- * resources/srt-win/{x64|arm64}/srt-win.exe）。开发环境（process.resourcesPath 指向
- * Electron 自身）或文件缺失时返回 undefined，回退 srt 的包内默认查找。
+ * Windows srt-win.exe 定位（dev/pro 统一入口；srt 库对 srt-win 无隐式查找，
+ * resolveSrtWin 缺 path 会直接抛错，必须由调用方显式传入）：
+ * 1. 打包环境：electron-builder extraResources → resources/srt-win/{arch}/srt-win.exe；
+ * 2. dev/preview（非打包）：sandbox-runtime 依赖自带 vendored 二进制
+ *    node_modules/@anthropic-ai/sandbox-runtime/vendor/srt-win/{arch}/srt-win.exe。
  */
+function resolveSrtWinExe(): string | undefined {
+  const packaged = packagedSrtWinPath()
+  if (packaged) return packaged
+  // 打包后不再回退 node_modules：asar 内同名文件 existsSync 为 true 但无法被 spawn，
+  // electron-builder 已用 extraResources 把 helper 外置到 resources。
+  if (app.isPackaged) return undefined
+  const arch = helperArch()
+  if (!arch) return undefined
+  const p = join(devVendorHelpersRoot(), 'srt-win', arch, 'srt-win.exe')
+  return existsSync(p) ? p : undefined
+}
+
+/** 打包环境下 Windows 的 srt-win.exe 路径（resources/srt-win/{x64|arm64}/srt-win.exe）。 */
 function packagedSrtWinPath(): string | undefined {
   if (process.platform !== 'win32' || !process.resourcesPath) return undefined
   const p = join(process.resourcesPath, 'srt-win', process.arch, 'srt-win.exe')
   return existsSync(p) ? p : undefined
 }
 
-/** 打包环境下 Linux 的 apply-seccomp 路径（resources/seccomp/{x64|arm64}/apply-seccomp）。 */
+/**
+ * Linux apply-seccomp 定位（dev/pro 统一入口）：
+ * 1. 打包环境：resources/seccomp/{x64|arm64}/apply-seccomp；
+ * 2. dev/preview：sandbox-runtime 依赖自带 vendored 二进制，与打包资源同源同构。
+ * 注：srt 库虽内置多路径兜底，但主进程 bundle 后其 import.meta 指向 out/main，兜底
+ * 失效（打包侧已外置 resources）；统一显式下发可避免 dev/pro 行为漂移
+ * （缺 apply-seccomp 仅降级不限 unix socket，不报错）。
+ */
+function resolveSeccompApplyPath(): string | undefined {
+  const packaged = packagedSeccompPath()
+  if (packaged) return packaged
+  if (app.isPackaged) return undefined
+  const arch = helperArch()
+  if (!arch) return undefined
+  const p = join(devVendorHelpersRoot(), 'seccomp', arch, 'apply-seccomp')
+  return existsSync(p) ? p : undefined
+}
+
+/** 打包环境下 Linux 的 apply-seccomp（resources/seccomp/{x64|arm64}/apply-seccomp）。 */
 function packagedSeccompPath(): string | undefined {
   if (process.platform !== 'linux' || !process.resourcesPath) return undefined
-  const arch = process.arch === 'x64' || process.arch === 'arm64' ? process.arch : undefined
+  const arch = helperArch()
   if (!arch) return undefined
   const p = join(process.resourcesPath, 'seccomp', arch, 'apply-seccomp')
   return existsSync(p) ? p : undefined
+}
+
+/** vendored helper 仅提供 x64/arm64 双架构目录。 */
+function helperArch(): string | undefined {
+  return process.arch === 'x64' || process.arch === 'arm64' ? process.arch : undefined
+}
+
+/** dev/preview 主进程产物在 <项目根>/out/main（electron-vite 默认），向上两级取项目根 node_modules。 */
+function devVendorHelpersRoot(): string {
+  return join(__dirname, '..', '..', 'node_modules', '@anthropic-ai', 'sandbox-runtime', 'vendor')
 }
 
 /** 组装 srt 运行期配置：文件系统默认最严（allowWrite 空），可写根在每次 wrap 以 custom 下发；
@@ -280,11 +324,11 @@ function buildRuntimeConfig(settings: SandboxSettings): SandboxRuntimeConfig {
       allowLocalBinding: true
     }
   }
-  const srtWin = packagedSrtWinPath()
+  const srtWin = resolveSrtWinExe()
   if (srtWin) {
     config.windows = { srtWin: { path: srtWin } }
   }
-  const seccomp = packagedSeccompPath()
+  const seccomp = resolveSeccompApplyPath()
   if (seccomp) {
     config.seccomp = { applyPath: seccomp }
   }
@@ -292,11 +336,12 @@ function buildRuntimeConfig(settings: SandboxSettings): SandboxRuntimeConfig {
 }
 
 /**
- * 获取 srt-win spawn 配置（打包环境从 resources 目录查找，开发环境返回 undefined）。
+ * 获取 srt-win spawn 配置（dev/pro 统一按 resolveSrtWinExe 定位；两处均缺失时返回
+ * undefined，由调用方把「未配置/缺失」透出给用户）。
  * 供 status/install 等无需 SandboxManager 的入口使用。
  */
-function getSrtWinSpawn() {
-  const p = packagedSrtWinPath()
+function getSrtWinSpawn(): { exe: string; prependArgs: readonly string[] } | undefined {
+  const p = resolveSrtWinExe()
   return p ? resolveSrtWin({ path: p }) : undefined
 }
 
