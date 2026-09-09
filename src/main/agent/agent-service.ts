@@ -450,7 +450,7 @@ export class AgentService extends IpcService {
       model: res.model,
       promptTokens: res.usage.input,
       completionTokens: res.usage.output,
-      cost: resolveAssistantCost(res.provider, res.usage, res.timestamp, res.usage.cost.total),
+      cost: resolveAssistantCost(res.provider, res.usage, res.timestamp),
       timestamp: res.timestamp
     })
   }
@@ -728,12 +728,7 @@ export class AgentService extends IpcService {
       model: result.model,
       promptTokens: result.usage.input,
       completionTokens: result.usage.output,
-      cost: resolveAssistantCost(
-        result.provider,
-        result.usage,
-        result.timestamp,
-        result.usage.cost.total
-      ),
+      cost: resolveAssistantCost(result.provider, result.usage, result.timestamp),
       timestamp: result.timestamp
     })
 
@@ -919,7 +914,7 @@ export class AgentService extends IpcService {
         model: res.model,
         promptTokens: res.usage.input,
         completionTokens: res.usage.output,
-        cost: resolveAssistantCost(res.provider, res.usage, res.timestamp, res.usage.cost.total),
+        cost: resolveAssistantCost(res.provider, res.usage, res.timestamp),
         timestamp: res.timestamp
       })
     }

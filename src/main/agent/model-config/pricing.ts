@@ -54,16 +54,15 @@ function effectiveRates(pricing: ModelPricing, timestampMs: number): ModelPricin
 
 /**
  * 落库成本解析：config 配置了自定义定价时按定价（含分时段）计算；
- * 否则回退 pi-ai 按 catalog 算出的 cost.total。
+ * 未配置时视为 0（用户未定义价格则不计费）。
  * providerId 为 model_configs.id（消息的 provider 列即 config id）。
  */
 export function resolveAssistantCost(
   providerId: string,
   usage: Pick<Usage, 'input' | 'output' | 'cacheRead' | 'cacheWrite'>,
-  timestampMs: number,
-  fallback: number
+  timestampMs: number
 ): number {
   const config = db.getModelConfig(providerId)
   if (config?.pricing) return computeModelCost(config.pricing, usage, timestampMs)
-  return fallback
+  return 0
 }

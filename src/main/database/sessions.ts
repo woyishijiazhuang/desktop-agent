@@ -287,7 +287,7 @@ export function createSessionsApi(db: DatabaseSync, deps: SessionApiDeps): Sessi
       return row.cnt
     },
 
-    /** 物理删除软删除会话（清空回收站）。返回删除的会话数，消息由级联删除，FTS 索引先行清理。 */
+    /** 物理删除软删除会话（清空回收站）。返回删除的会话数，消息由级联删除，FTS 索引先行清理。usage_logs 保留不删。 */
     purgeTrash(workdir?: string): number {
       const count = transaction(db, () => {
         // messages 由 ON DELETE CASCADE 清除，FTS 索引无级联，须先删
@@ -312,7 +312,7 @@ export function createSessionsApi(db: DatabaseSync, deps: SessionApiDeps): Sessi
 
     /**
      * 物理删除某工作区的全部会话（工作区删除时调用）。
-     * 含未删除与已软删除的会话；消息由 ON DELETE CASCADE 清除，FTS 索引先行清理。返回删除的会话数。
+     * 含未删除与已软删除的会话；消息由 ON DELETE CASCADE 清除，FTS 索引先行清理。usage_logs 保留不删。返回删除的会话数。
      */
     deleteSessionsByWorkdir(workdir: string): number {
       const count = transaction(db, () => {
@@ -483,6 +483,7 @@ function purgeSessionsBefore(db: DatabaseSync, beforeMs: number): number {
          WHERE s.deleted_at IS NOT NULL AND s.deleted_at < ?
        )`
     ).run(beforeMs)
+    // usage_logs 保留不删，确保统计数据不因会话清理而丢失
     const result = db
       .prepare('DELETE FROM sessions WHERE deleted_at IS NOT NULL AND deleted_at < ?')
       .run(beforeMs) as { changes: number }

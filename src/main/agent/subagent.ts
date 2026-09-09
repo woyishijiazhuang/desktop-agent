@@ -207,7 +207,7 @@ export async function runSubagent(
           model: a.model,
           promptTokens: a.usage.input,
           completionTokens: a.usage.output,
-          cost: resolveAssistantCost(a.provider, a.usage, Date.now(), a.usage.cost.total),
+          cost: resolveAssistantCost(a.provider, a.usage, Date.now()),
           timestamp: Date.now()
         })
       } catch (err) {

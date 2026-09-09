@@ -324,12 +324,7 @@ export class AgentManager {
         model: title.model,
         promptTokens: title.usage.input,
         completionTokens: title.usage.output,
-        cost: resolveAssistantCost(
-          title.provider,
-          title.usage,
-          title.timestamp,
-          title.usage.cost.total
-        ),
+        cost: resolveAssistantCost(title.provider, title.usage, title.timestamp),
         timestamp: title.timestamp
       })
       const updated = db.updateSession(sessionId, { title: clean })
@@ -708,7 +703,7 @@ export class AgentManager {
                 model: a.model,
                 promptTokens: a.usage.input,
                 completionTokens: a.usage.output,
-                cost: resolveAssistantCost(a.provider, a.usage, Date.now(), a.usage.cost.total),
+                cost: resolveAssistantCost(a.provider, a.usage, Date.now()),
                 timestamp: row.timestamp
               })
             }

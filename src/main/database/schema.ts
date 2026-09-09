@@ -127,6 +127,8 @@ export function initSchema(db: DatabaseSync): void {
 
     -- 用量日志：每次 LLM 调用（对话/标题生成/压缩摘要）记录一条，token 统计的唯一数据源。
     -- 不挂在 messages 上：辅助调用（标题/压缩）不产生消息，但同样消耗 token。
+    -- 不级联删除：会话删除后保留用量记录，确保统计图表不受影响。
+    -- 物理删除会话时由调用方手动清理 usage_logs（避免统计孤儿数据无限增长）。
     CREATE TABLE IF NOT EXISTS usage_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       session_id TEXT NOT NULL,
@@ -137,7 +139,7 @@ export function initSchema(db: DatabaseSync): void {
       completion_tokens INTEGER NOT NULL DEFAULT 0,
       cost REAL NOT NULL DEFAULT 0,
       timestamp INTEGER NOT NULL,
-      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+      FOREIGN KEY (session_id) REFERENCES sessions(id)
     ) STRICT;
 
     -- 记忆全文搜索索引：rowid 为 memories.id 的 FNV-1a 哈希（见 memory.ts rowidKey）。
