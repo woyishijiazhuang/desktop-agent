@@ -26,9 +26,6 @@ export const SETTING_ALWAYS_ON_TOP = 'window.alwaysOnTop'
 /** 上次退出时处于打开状态的工作区窗口（string[]，启动时据此恢复）。 */
 export const SETTING_OPEN_WORKSPACES = 'workspace.openWindows'
 
-/** 设置窗口延迟显示的兜底超时：内容视图超过此时长仍未就绪则强制显示，避免窗口永不弹出。 */
-const SETTINGS_SHOW_TIMEOUT_MS = 1200
-
 /**
  * BaseWindow + 双 WebContentsView 架构的多窗口管理器。
  *
@@ -287,8 +284,6 @@ function createAppWindow(
   settingsTab?: SettingsTabKey
 ): AppWindow {
   const createT0 = performance.now()
-  // 设置窗口隐藏创建、内容就绪后再显示（避免「先弹空白窗」）；工作区窗口随建随显
-  const isSettings = workdir === null
   const initialBounds = bounds ?? computeInitialBounds()
   const isMac = process.platform === 'darwin'
   // 标题栏模式（默认 native：优先当前平台原生窗口栏，设置页可切回自绘）
@@ -305,10 +300,9 @@ function createAppWindow(
     // 限制窗口最小尺寸，防止被拖到布局无法承载的极小状态；设置窗口允许更小
     minWidth: workdir === null ? 720 : 960,
     minHeight: workdir === null ? 520 : 680,
-    // 工作区窗口随建随显；设置窗口隐藏创建，内容视图就绪（did-finish-load）后再显示
-    // （见 createAppWindow 下方 reveal 控制与注释），避免「先弹空白窗」。
-    // 底色由 backgroundColor / 视图背景色顶住，隐藏期不露白。
-    show: !isSettings,
+    // 窗口随创建立即显示（show: true，不等待任何视图/加载时机）；
+    // 底色由 backgroundColor / 视图背景色顶住，避免首帧露出白底。
+    show: true,
     autoHideMenuBar: true,
     title: '桌面助手',
     ...(isMac
@@ -383,28 +377,6 @@ function createAppWindow(
   contentView.webContents.on('did-fail-load', (_e, code, desc) => {
     log.error('内容视图加载失败', { workdir, code, desc })
   })
-
-  // 设置窗口「内容就绪后再显示」（show:false 创建，见上方构造参数）：
-  // - 正常路径：contentView did-finish-load（入口已执行、Vue 已挂载）时 show → 窗口与内容同现；
-  // - 兜底一：did-fail-load 立即显示（让错误页可见），不让窗口永远不出现；
-  // - 兜底二：超时（SETTINGS_SHOW_TIMEOUT_MS）强制显示，加载卡住时最差退回「先窗后内容」。
-  if (isSettings) {
-    const state = { revealed: false, timer: undefined as ReturnType<typeof setTimeout> | undefined }
-    const reveal = (): void => {
-      if (state.revealed || win.isDestroyed()) return
-      state.revealed = true
-      if (state.timer) clearTimeout(state.timer)
-      if (win.isMinimized()) win.restore()
-      win.show()
-      if (!win.isFocused()) win.focus()
-    }
-    state.timer = setTimeout(reveal, SETTINGS_SHOW_TIMEOUT_MS)
-    win.once('closed', () => {
-      if (state.timer) clearTimeout(state.timer)
-    })
-    contentView.webContents.once('did-finish-load', reveal)
-    contentView.webContents.once('did-fail-load', reveal)
-  }
 
   // 外链一律交给系统浏览器
   contentView.webContents.setWindowOpenHandler((details) => {
@@ -570,8 +542,7 @@ export async function openSettingsWindow(settingsTab?: SettingsTabKey): Promise<
     return existing
   }
   const aw = createAppWindow(null, computeSettingsBounds(), settingsTab)
-  // 新建设置窗口为隐藏创建，显示时机由 createAppWindow 内的 reveal 控制
-  // （内容 did-finish-load / did-fail-load / 超时兜底），这里不再立即 show，避免先弹空白窗。
+  showWindow(aw)
   await waitForReady(aw)
   return aw
 }
