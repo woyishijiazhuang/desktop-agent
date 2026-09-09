@@ -138,8 +138,9 @@ function disposeChart(): void {
   chart = null
 }
 
-// 数据更新后重绘
-watch(chartOption, () => renderChart())
+// 数据更新后重绘。chartEl 随首次数据才挂载（loading 分支无该节点），必须等 DOM 更新
+// 完成后再取节点（flush: 'post'），否则首帧数据到达时节点尚不存在、图表永不出现。
+watch(chartOption, () => renderChart(), { flush: 'post' })
 
 // 主题切换：销毁重建以应用 echarts 内置 dark 主题
 watch(
@@ -159,11 +160,21 @@ onMounted(() => {
     }
     chart.resize()
   })
-  if (chartEl.value) resizeObserver.observe(chartEl.value)
   // 模型分布要映射 displayName，确保配置列表已加载
   if (modelConfigs.configs.length === 0) void modelConfigs.load()
   void load()
 })
+
+// chartEl 首次数据就绪后才挂载（此时 onMounted 已执行过、observe 未命中）：
+// 补注册尺寸观察，并立即按当前数据首绘一次。
+watch(
+  chartEl,
+  (el) => {
+    if (el && resizeObserver) resizeObserver.observe(el)
+    renderChart()
+  },
+  { flush: 'post' }
+)
 
 onBeforeUnmount(() => {
   resizeObserver?.disconnect()
