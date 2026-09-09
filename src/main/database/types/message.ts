@@ -77,6 +77,40 @@ export interface MessageSearchHit {
   snippet: string
 }
 
+/** 全文搜索选项。 */
+export interface MessageSearchOptions {
+  /** 返回条数上限。 */
+  limit?: number
+  /** 限定只搜索单个会话（须为未删除会话），不传搜索全部未删除会话。 */
+  sessionId?: string
+}
+
+/** 按消息 id 读取窗口的参数：以锚点为界，向会话内前/后各取多少条。 */
+export interface MessageWindowOptions {
+  /** 锚点消息之前（不含锚点）返回条数，默认 0。 */
+  before?: number
+  /** 锚点消息之后（不含锚点）返回条数，默认 0。 */
+  after?: number
+}
+
+/** 窗口内的单条消息：消息本体 + 其在会话内的 1-based 序号。 */
+export interface MessageInWindow {
+  message: Message
+  /** 该消息在所属会话中的位置（第几条，从 1 起）。 */
+  ordinal: number
+}
+
+/** 按消息 id 读取到的会话上下文窗口（同会话内，按时间正序 = 前文 + 锚点 + 后文）。 */
+export interface MessageWindow {
+  sessionId: string
+  sessionTitle: string
+  /** 锚点消息在会话内的序号（1-based）。 */
+  anchorOrdinal: number
+  /** 锚点所属会话的消息总数。 */
+  total: number
+  messages: MessageInWindow[]
+}
+
 /** 数据库行类型（内部）：messages 表 */
 export interface MessageRow {
   id: number

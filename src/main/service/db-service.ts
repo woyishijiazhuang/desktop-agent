@@ -29,6 +29,7 @@ import type {
   ListMessagesOptions,
   SessionContext,
   MessageSearchHit,
+  MessageSearchOptions,
   Setting,
   Memory,
   MemoryCategory,
@@ -65,6 +66,7 @@ export type {
   ListMessagesOptions,
   SessionContext,
   MessageSearchHit,
+  MessageSearchOptions,
   Setting,
   Memory,
   MemoryCategory,
@@ -253,8 +255,8 @@ export class DbService extends IpcService {
   // ==================== 全文搜索 ====================
 
   /** 全文搜索消息文本，返回命中列表（按消息 id 倒序）。 */
-  searchMessages(query: string, limit?: number): MessageSearchHit[] {
-    return db.searchMessages(query, limit)
+  searchMessages(query: string, options?: MessageSearchOptions): MessageSearchHit[] {
+    return db.searchMessages(query, options)
   }
 
   // ==================== 长期记忆 ====================

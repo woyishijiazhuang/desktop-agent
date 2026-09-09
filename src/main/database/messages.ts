@@ -3,9 +3,13 @@ import type {
   CreateMessageParams,
   ListMessagesOptions,
   Message,
+  MessageInWindow,
   MessageRow,
   MessageSearchHit,
+  MessageSearchOptions,
   MessageSearchRow,
+  MessageWindow,
+  MessageWindowOptions,
   UpdateMessageParams
 } from './types'
 import { toMessage, transaction } from './utils'
@@ -19,7 +23,9 @@ export interface MessageApi {
   updateMessage(id: number, params: UpdateMessageParams): Message
   deleteMessage(id: number): void
   deleteMessagesBySession(sessionId: string): void
-  searchMessages(query: string, limit?: number): MessageSearchHit[]
+  searchMessages(query: string, options?: MessageSearchOptions): MessageSearchHit[]
+  /** 按消息 id 读取锚点所在会话的上下文窗口（前文 + 锚点 + 后文）。消息/会话不存在返回 undefined。 */
+  getMessageWindow(messageId: number, options?: MessageWindowOptions): MessageWindow | undefined
 }
 
 /** 消息 CRUD + 全文搜索。压缩/分叉/上下文重建见会话域（./sessions）。 */
@@ -154,11 +160,19 @@ export function createMessagesApi(db: DatabaseSync): MessageApi {
      * JS 层再解析 content 提取真实文本精确过滤，并生成匹配片段。
      * 返回按消息 id 倒序（新消息优先）的命中列表。
      */
-    searchMessages(query: string, limit = 50): MessageSearchHit[] {
+    searchMessages(query: string, options?: MessageSearchOptions): MessageSearchHit[] {
       const trimmed = query.trim()
       if (!trimmed) return []
       const match = toFtsMatchQuery(trimmed)
       if (!match) return []
+      const limit = Math.max(1, Math.floor(options?.limit ?? 50))
+      const conditions = ['s.deleted_at IS NULL', 'messages_fts MATCH ?']
+      const values: (string | number)[] = [match]
+      if (options?.sessionId) {
+        conditions.push('m.session_id = ?')
+        values.push(options.sessionId)
+      }
+      values.push(limit)
       const rows = db
         .prepare(
           `SELECT m.id, m.session_id, s.title AS session_title, m.role, m.content,
@@ -166,11 +180,11 @@ export function createMessagesApi(db: DatabaseSync): MessageApi {
            FROM messages_fts
            JOIN messages m ON m.id = messages_fts.rowid
            JOIN sessions s ON s.id = m.session_id
-           WHERE s.deleted_at IS NULL AND messages_fts MATCH ?
+           WHERE ${conditions.join(' AND ')}
            ORDER BY m.id DESC
            LIMIT ?`
         )
-        .all(match, limit) as unknown as MessageSearchRow[]
+        .all(...values) as unknown as MessageSearchRow[]
 
       const needle = trimmed.toLowerCase()
       const hits: MessageSearchHit[] = []
@@ -195,6 +209,59 @@ export function createMessagesApi(db: DatabaseSync): MessageApi {
         })
       }
       return hits
+    },
+
+    /**
+     * 按消息 id 读取锚点所在会话的上下文窗口（前文 + 锚点 + 后文，均按会话内时间正序）。
+     * 供 Agent 在搜索结果拿到 messageId 锚点后精读该条全文及其邻近上下文。
+     * 锚点消息或所属会话不存在 / 会话已删除时返回 undefined。
+     */
+    getMessageWindow(messageId: number, options?: MessageWindowOptions): MessageWindow | undefined {
+      const anchor = api.getMessage(messageId)
+      if (!anchor) return undefined
+      const session = db
+        .prepare('SELECT title, deleted_at FROM sessions WHERE id = ?')
+        .get(anchor.sessionId) as { title: string; deleted_at: number | null } | undefined
+      if (!session || session.deleted_at !== null) return undefined
+
+      const count = (sql: string, ...values: (string | number)[]): number => {
+        const row = db.prepare(sql).get(...values) as { cnt: number }
+        return row.cnt
+      }
+      const total = count(
+        'SELECT COUNT(*) AS cnt FROM messages WHERE session_id = ?',
+        anchor.sessionId
+      )
+      const anchorOrdinal = count(
+        'SELECT COUNT(*) AS cnt FROM messages WHERE session_id = ? AND id <= ?',
+        anchor.sessionId,
+        anchor.id
+      )
+      const before = Math.max(0, Math.floor(options?.before ?? 0))
+      const after = Math.max(0, Math.floor(options?.after ?? 0))
+      // 复用分页读取：before 取会话内紧邻锚点之前的 before 条，after 取之后的 after 条（均 ASC）
+      const beforeList = api.listMessagesBySession(anchor.sessionId, {
+        beforeId: anchor.id,
+        limit: before
+      })
+      const afterList = api.listMessagesBySession(anchor.sessionId, {
+        afterId: anchor.id,
+        limit: after
+      })
+
+      const messages: MessageInWindow[] = []
+      let ordinal = anchorOrdinal - beforeList.length
+      for (const message of [...beforeList, anchor, ...afterList]) {
+        messages.push({ message, ordinal })
+        ordinal += 1
+      }
+      return {
+        sessionId: anchor.sessionId,
+        sessionTitle: session.title,
+        anchorOrdinal,
+        total,
+        messages
+      }
     }
   }
   return api
