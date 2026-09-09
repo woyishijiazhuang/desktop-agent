@@ -1,4 +1,4 @@
-import type { AgentEvent, AgentMessage } from '@earendil-works/pi-agent-core'
+import type { AgentEvent } from '@earendil-works/pi-agent-core'
 import type { AssistantMessage, ToolCall } from '@earendil-works/pi-ai'
 import { createLogger } from '../utils/log'
 
@@ -149,9 +149,15 @@ export class LoopDetector {
       case 'message_update':
         return this.handleMessageUpdate(event)
       case 'message_end':
-        return this.handleMessageEnd(event.message)
+        if (event.message.role === 'assistant') {
+          return this.handleMessageEnd(event.message)
+        }
+        return { detected: false }
       case 'turn_end':
-        return this.handleTurnEnd(event.message)
+        if (event.message.role === 'assistant') {
+          return this.handleTurnEnd(event.message)
+        }
+        return { detected: false }
       case 'agent_start':
         this.reset()
         return { detected: false }
