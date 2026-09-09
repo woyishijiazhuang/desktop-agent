@@ -6,6 +6,7 @@ import {
   SandboxManager,
   checkWindowsSandboxStatusAsync,
   installWindowsSandboxAsync,
+  resolveSrtWin,
   type SandboxRuntimeConfig
 } from '@anthropic-ai/sandbox-runtime'
 import { db } from '../database'
@@ -182,7 +183,7 @@ export async function getSandboxPlatformStatus(): Promise<SandboxPlatformStatus>
     let provisioned = false
     let error: string | undefined
     try {
-      const st = await checkWindowsSandboxStatusAsync()
+      const st = await checkWindowsSandboxStatusAsync({ srtWin: getSrtWinSpawn() })
       // status.user.exists + wfp.installed 才视为供给完成（未提权时 wfp 会降级为 cannot-read）
       const user = st?.user as { exists?: boolean } | undefined
       const wfp = st?.wfp as { installed?: boolean; state?: string } | undefined
@@ -212,7 +213,7 @@ export async function provisionWindowsSandbox(): Promise<{
     return { ok: false, error: '仅 Windows 需要沙箱供给' }
   }
   try {
-    const result = await installWindowsSandboxAsync()
+    const result = await installWindowsSandboxAsync({ srtWin: getSrtWinSpawn() })
     return {
       ok: true,
       message: typeof result === 'string' ? result : JSON.stringify(result)
@@ -288,6 +289,15 @@ function buildRuntimeConfig(settings: SandboxSettings): SandboxRuntimeConfig {
     config.seccomp = { applyPath: seccomp }
   }
   return config
+}
+
+/**
+ * 获取 srt-win spawn 配置（打包环境从 resources 目录查找，开发环境返回 undefined）。
+ * 供 status/install 等无需 SandboxManager 的入口使用。
+ */
+function getSrtWinSpawn() {
+  const p = packagedSrtWinPath()
+  return p ? resolveSrtWin({ path: p }) : undefined
 }
 
 /** 幂等初始化 srt（含按需 updateConfig 同步网络白名单）；初始化失败抛错（fail-closed）。 */
