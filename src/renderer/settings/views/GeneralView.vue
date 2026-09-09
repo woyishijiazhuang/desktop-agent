@@ -22,8 +22,9 @@ const theme = useThemeStore()
 const windowStore = useWindowStore()
 const message = useMessage()
 
-/** 开机自启状态（登录项由系统持久化）。 */
-const autoLaunch = ref(false)
+/** 开机自启状态（登录项由系统持久化）。null = 尚未从系统查询到真实值；
+ * 开关在值为 null 时不渲染，避免先用默认值画出、查询返回后触发滑入动画（见下方 v-if）。 */
+const autoLaunch = ref<boolean | null>(null)
 
 async function onAutoLaunchChange(value: boolean): Promise<void> {
   try {
@@ -233,7 +234,11 @@ onMounted(async () => {
           <span class="data-row__label">开机自启</span>
           <span class="data-row__hint">登录系统后自动启动应用</span>
         </div>
-        <NSwitch :value="autoLaunch" @update:value="onAutoLaunchChange" />
+        <NSwitch
+          v-if="autoLaunch !== null"
+          :value="autoLaunch"
+          @update:value="onAutoLaunchChange"
+        />
       </div>
       <div class="data-row data-row--gap">
         <div class="data-row__info">

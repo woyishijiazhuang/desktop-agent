@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { NButton, NIcon, NPopover, NSpin } from 'naive-ui'
 import { ArchiveOutline } from '@vicons/ionicons5'
-import { init as echartsInit, type ECharts, type EChartsCoreOption } from '@renderer/utils/echarts'
+import type { ECharts, EChartsCoreOption } from '@renderer/utils/echarts'
 import { useChatStore } from '@renderer/store/useChatStore'
 import { useThemeStore } from '@renderer/store/useThemeStore'
 import { mainClient } from '@renderer/utils/main-client'
@@ -156,10 +156,18 @@ const chartOption = computed<EChartsCoreOption>(() => {
   }
 })
 
-function renderChart(): void {
-  if (!chartEl.value) return
-  if (!chart) chart = echartsInit(chartEl.value)
+function renderChart(): Promise<void> {
+  if (!chartEl.value) return Promise.resolve()
+  if (!chart) {
+    // echarts 仅在弹层首次打开时按需加载（按钮本体是纯 SVG，不依赖 echarts）
+    return import('@renderer/utils/echarts').then(({ init }) => {
+      if (!chartEl.value) return
+      chart = init(chartEl.value)
+      chart.setOption(chartOption.value, true)
+    })
+  }
   chart.setOption(chartOption.value, true)
+  return Promise.resolve()
 }
 
 function disposeChart(): void {
@@ -172,7 +180,7 @@ watch(popoverShow, async (show) => {
   if (show) {
     await refresh()
     await nextTick()
-    renderChart()
+    void renderChart()
   } else {
     disposeChart()
   }

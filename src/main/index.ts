@@ -4,6 +4,7 @@ import { electronApp } from '@electron-toolkit/utils'
 // 其自带 polyfill 仅从 node-canvas 取（未安装）→ 提前注入第三方实现，避免解析 PDF 报
 // 「DOMMatrix is not defined」。mdize 惰性加载，此处先注入即可覆盖后续所有文档解析。
 import DOMMatrixPolyfill from '@thednp/dommatrix'
+import { performance } from 'node:perf_hooks'
 import { ipcMainServices } from './service'
 import {
   getActiveWorkspaceWindow,
@@ -71,12 +72,19 @@ app.whenReady().then(async () => {
   // 安装语音 VAD 资源协议处理器（appasset:// 供渲染进程 fetch onnx / ort wasm）
   installVoiceAssetProtocol()
 
-  // 启动补种随包内置技能到 userData/skills（失败仅告警），须在窗口创建前完成，
-  // 保证首次打开技能管理页即可看到内置技能，Agent 首轮即可发现
-  await seedBuiltinSkills()
+  // 启动补种随包内置技能到 userData/skills（失败仅告警，见 skills-store）。补种只影响
+  // 「技能管理页可见/Agent 技能发现」，均在用户操作后才发生：这里只发起不 await，
+  // 与窗口创建并行，避免磁盘 IO 卡住首窗（skills-store 幂等，重复播种直接跳过）。
+  const skillsSeedT0 = performance.now()
+  void seedBuiltinSkills()
+    .then(() => log.info('内置技能播种完成', { elapsedMs: Math.round(performance.now() - skillsSeedT0) }))
+    .catch((e) => log.warn('内置技能播种失败', { err: e instanceof Error ? e.message : String(e) }))
 
   // 恢复工作区窗口：按 last_opened_at 倒序为每个工作区建窗口（无工作区时创建默认工作区）
-  void restoreStartupWindows()
+  const windowsRestoreT0 = performance.now()
+  void restoreStartupWindows().then(() =>
+    log.info('工作区窗口恢复完成', { elapsedMs: Math.round(performance.now() - windowsRestoreT0) })
+  )
   createTray()
   createAppMenu()
   // 自动更新：注册 electron-updater 事件；打包版开启时做启动延迟检查 + 周期兜底

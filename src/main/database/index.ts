@@ -1,6 +1,7 @@
 import { app } from 'electron'
 import { DatabaseSync } from 'node:sqlite'
 import path from 'node:path'
+import { performance } from 'node:perf_hooks'
 import { mkdirSync } from 'node:fs'
 import { createLogger } from '../utils/log'
 import { initSchema } from './schema'
@@ -24,6 +25,10 @@ export * from './types'
 export const DELETED_SESSION_RETENTION_DAYS = 30
 
 const log = createLogger('db')
+
+// 启动打点：db 打开发生在主进程模块图 import 阶段（早于 app ready），
+// 在此记录自身耗时，配合 window-manager/index 的加载完成日志还原完整启动链路。
+const dbStartT0 = performance.now()
 
 const dbPath = path.join(app.getPath('userData'), 'data.db')
 const raw = new DatabaseSync(dbPath, {
@@ -89,7 +94,8 @@ const sessions = createSessionsApi(raw, {
 const purged = sessions.purgeExpiredDeletedSessions(DELETED_SESSION_RETENTION_DAYS)
 log.info('数据库已打开', {
   path: dbPath,
-  purgedExpiredSessions: purged
+  purgedExpiredSessions: purged,
+  openMs: Math.round(performance.now() - dbStartT0)
 })
 
 /** 数据库单例（按领域分组的 API 门面）。 */
