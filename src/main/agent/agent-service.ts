@@ -289,16 +289,15 @@ export class AgentService extends IpcService {
       // agent_end 已由事件桥推送（错误/中止均携带）时不补发，
       // 避免第二个无 error 的 agent_end 覆盖真实失败态（错误轮次不弹错、重试条丢失）。
       if (this.manager.hasRunEnded(sessionId)) return
-      // 兜底：确保 renderer 收到结束信号解除 busy
+      // 兜底：确保 renderer 收到结束信号解除 busy，携带 error 让前端弹提示 + 标红
+      const errorMsg = err instanceof Error ? err.message : String(err)
       rendererClient.agentEvent.onEvent({
         sessionId,
-        event: { type: 'agent_end', messages: agent.state.messages }
+        event: { type: 'agent_end', messages: agent.state.messages },
+        error: errorMsg
       })
-      // 兜底路径也补一条失败通知（事件桥未推送 agent_end 时）
-      void notifyAgentFinished({
-        title: '任务出错',
-        body: err instanceof Error ? err.message : String(err)
-      })
+      // 兜底路径也补一条桌面通知（事件桥未推送 agent_end 时）
+      void notifyAgentFinished({ title: '任务出错', body: errorMsg })
     })
   }
 
