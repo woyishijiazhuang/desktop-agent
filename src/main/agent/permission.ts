@@ -43,8 +43,9 @@ const log = createLogger('permission')
  * 3. 其余 → ask。文件型操作无持久白名单（路径型 always 意义有限），仅支持会话放行。
  *
  * install_skill：从外部平台下载并落盘不可信代码，恒 ask（仅本次，无会话/总是放行）。
+ * mcp_call：第三方 MCP 工具调用，ask（支持本会话放行，无持久白名单）。
  */
-const DANGEROUS_TOOLS = new Set(['write_file', 'edit_file', 'bash', 'install_skill'])
+const DANGEROUS_TOOLS = new Set(['write_file', 'edit_file', 'bash', 'install_skill', 'mcp_call'])
 
 /** settings 表中存储的 bash 持久白名单 key（值为 string[]，按词级前缀匹配）。 */
 export const SETTING_BASH_ALLOWLIST = 'bashAllowlist'
@@ -126,6 +127,8 @@ const DENY_PATTERNS: RegExp[] = [
 const sessionBashAllow = new Map<string, string[]>()
 /** 本会话放行：文件路径（sessionId → 路径集合）。 */
 const sessionFileAllow = new Map<string, Set<string>>()
+/** 本会话放行：MCP 工具调用（sessionId → server/tool 集合）。 */
+const sessionMcpAllow = new Map<string, Set<string>>()
 
 /**
  * 决策结果：
@@ -213,6 +216,8 @@ function summarizeToolArgs(toolName: string, args: unknown): string {
       return str('path')
     case 'install_skill':
       return str('name') || str('path')
+    case 'mcp_call':
+      return `${str('server')}/${str('tool')}`
     default:
       return str('path') || ''
   }
@@ -260,6 +265,13 @@ export function createBeforeToolCallHook(
         return { block: true, reason: sandboxWriteDeniedMessage(path) }
       }
       decision = await decideFile(sessionId, path)
+    } else if (toolCall.name === 'mcp_call') {
+      const target = summarizeToolArgs(toolCall.name, ctx.args)
+      if (sessionMcpAllow.get(sessionId)?.has(target)) {
+        decision = { decision: 'allow', reason: '本会话 MCP 放行' }
+      } else {
+        decision = { decision: 'ask', hardAsk: false, target }
+      }
     } else {
       decision = {
         decision: 'ask',
@@ -352,6 +364,12 @@ function recordSessionAllow(ctx: PermissionCtx): void {
     const set = sessionFileAllow.get(ctx.sessionId) ?? new Set<string>()
     set.add(path)
     sessionFileAllow.set(ctx.sessionId, set)
+  } else if (ctx.toolName === 'mcp_call') {
+    const target = ctx.target
+    if (!target) return
+    const set = sessionMcpAllow.get(ctx.sessionId) ?? new Set<string>()
+    set.add(target)
+    sessionMcpAllow.set(ctx.sessionId, set)
   }
 }
 

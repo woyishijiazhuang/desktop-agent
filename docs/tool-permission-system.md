@@ -127,10 +127,10 @@ denyReadRoots   = 用户 denyReadRoots 配置
 ### 6.1 DANGEROUS_TOOLS 集合
 
 ```typescript
-const DANGEROUS_TOOLS = new Set(['write_file', 'edit_file', 'bash', 'install_skill'])
+const DANGEROUS_TOOLS = new Set(['write_file', 'edit_file', 'bash', 'install_skill', 'mcp_call'])
 ```
 
-只有这 4 个工具名进入权限判定。其余工具**完全不经过此层**，直接放行。
+只有这 5 个工具名进入权限判定。其余工具（read_file、list_files、glob、grep、web_search 等）**完全不经过此层**，直接放行。
 
 ### 6.2 bash 命令决策（decideBash）
 
@@ -190,9 +190,19 @@ const DANGEROUS_TOOLS = new Set(['write_file', 'edit_file', 'bash', 'install_ski
 
 ### 6.4 install_skill 处理
 
-不在 `decideBash` / `decideFile` 中处理。在 `createBeforeToolCallHook` 的 else 分支（第 263–268 行）直接返回 `ask(soft)`。恒弹确认，仅本次，无会话/总是放行选项。
+不在 `decideBash` / `decideFile` 中处理。在 `createBeforeToolCallHook` 的 else 分支（第 275–281 行）直接返回 `ask(soft)`。恒弹确认，仅本次，无会话/总是放行选项。
 
-### 6.5 自动放行机制（isRunAutoAllowed）
+### 6.5 MCP 工具调用处理（mcp_call）
+
+**源码**：permission.ts 第 268–274 行
+
+`mcp_call` 通过元工具模式间接暴露第三方 MCP server 的工具。由于 MCP 工具是动态发现的，无法在编译期预分类安全性，因此：
+
+- 首次调用：`ask(soft)`，弹出确认 UI，摘要显示 `server/tool`（如 `my-server/read_file`）。
+- 用户点「本会话允许」后：同 `server/tool` 的后续调用自动放行。
+- 无持久白名单（MCP 工具动态发现，路径 always 无意义）。
+
+### 6.6 自动放行机制（isRunAutoAllowed）
 
 **源码**：permission.ts 第 188–202 行
 
@@ -204,11 +214,11 @@ const DANGEROUS_TOOLS = new Set(['write_file', 'edit_file', 'bash', 'install_ski
 | `isVoiceAutoApprove?.()` | 语音模式无确认 UI 入口，自动放行 |
 | `SETTING_PERMISSION_AUTO_APPROVE` | 全局设置「跳过工具确认」开启 |
 
-**硬约束**：`hardAsk=true`（破坏性命令）**不受任何自动放行覆盖**（第 271–272 行，检查在 `isRunAutoAllowed` 之前）。
+**硬约束**：`hardAsk=true`（破坏性命令）**不受任何自动放行覆盖**（第 278–279 行，检查在 `isRunAutoAllowed` 之前）。
 
-### 6.6 破坏性命令 deny 兜底
+### 6.7 破坏性命令 deny 兜底
 
-decision 为 `ask` 且 `hardAsk=true` 时（permission.ts 第 271–272 行）：
+decision 为 `ask` 且 `hardAsk=true` 时（permission.ts 第 278–279 行）：
 
 ```typescript
 if (!decision.hardAsk && isRunAutoAllowed(sessionId, isVoiceAutoApprove)) return undefined
@@ -221,7 +231,7 @@ if (!decision.hardAsk && isRunAutoAllowed(sessionId, isVoiceAutoApprove)) return
 
 破坏性命令永远弹确认。
 
-### 6.7 权限确认交互流程
+### 6.8 权限确认交互流程
 
 **源码**：permission.ts 第 282–316 行
 
@@ -274,7 +284,7 @@ if (!decision.hardAsk && isRunAutoAllowed(sessionId, isVoiceAutoApprove)) return
 | scope | 行为 | 适用范围 | 存储 |
 |-------|------|----------|------|
 | `once` | 仅本次放行 | 所有工具 | 内存（无需存储） |
-| `session` | 本会话放行 | bash（命令词级前缀）+ write/edit（精确路径） | `sessionBashAllow` / `sessionFileAllow` Map |
+| `session` | 本会话放行 | bash（命令词级前缀）+ write/edit（精确路径）+ mcp_call（server/tool） | `sessionBashAllow` / `sessionFileAllow` / `sessionMcpAllow` Map |
 | `always` | 持久白名单 | **仅 bash 且非 hardAsk** | `settings.bashAllowlist` 持久化 |
 
 **关键限制**：
@@ -304,11 +314,13 @@ if (!decision.hardAsk && isRunAutoAllowed(sessionId, isVoiceAutoApprove)) return
 | 工具 / 场景 | 是否被跳过 | 原因 |
 |-------------|-----------|------|
 | bash 非破坏性命令 | 跳过确认 | `isRunAutoAllowed` → allow |
-| bash 破坏性命令（rm -rf、sudo 等） | **仍然硬弹确认** | `hardAsk=true`，第 272 行显式拦截 |
+| bash 破坏性命令（rm -rf、sudo 等） | **仍然硬弹确认** | `hardAsk=true`，第 278 行显式拦截 |
 | write_file / edit_file（边界内） | 本来就不弹 | `decideFile` 返回 allow |
 | write_file / edit_file（边界外，沙箱关闭） | 跳过确认 | `isRunAutoAllowed` 生效 |
 | write_file / edit_file（沙箱区外） | 跳过确认但仍被硬拒 | 第 2 层沙箱策略直接 block |
 | install_skill | 跳过确认 | `isRunAutoAllowed` 生效 |
+| mcp_call（首次） | 跳过确认 | `isRunAutoAllowed` 生效 |
+| mcp_call（本会话已放行） | 本来就不弹 | 会话放行命中 |
 | 计划模式下任何危险工具 | **仍然拦截** | 第 3 层在第 4 层之前就拦截了 |
 
 **核心原则**：自动放行永远无法覆盖 `hardAsk`（破坏性命令）。
@@ -334,7 +346,11 @@ if (!decision.hardAsk && isRunAutoAllowed(sessionId, isVoiceAutoApprove)) return
   │
   ├─ 第4层 DANGEROUS_TOOLS 检查
   │   ├─ 不在集合中 → 直接放行
-  │   └─ 在集合中 → decideBash / decideFile / install_skill
+  │   └─ 在集合中（write_file / edit_file / bash / install_skill / mcp_call）
+  │       ├─ bash  → decideBash（deny→hardAsk / 只读→allow / 白名单→allow ...）
+  │       ├─ write/edit → decideFile（边界内→allow / 会话放行→allow / ask）
+  │       ├─ mcp_call → 会话放行命中→allow / ask(soft)
+  │       ├─ install_skill → ask(soft)，恒弹
   │       ├─ allow → 放行
   │       ├─ ask(soft) + isRunAutoAllowed → 放行
   │       ├─ ask(hardAsk) → 始终弹确认（不可自动放行）
