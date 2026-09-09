@@ -20,11 +20,11 @@ const FINGERPRINT_LEN = 60
 /** 语义级检测：同一指纹出现多少次判定为循环 */
 const SEMANTIC_THRESHOLD = 3
 
-/** 跨轮次检测：工具调用序列循环检测的回溯窗口 */
-const TOOL_CALL_WINDOW = 6
+/** 跨轮次检测：工具调用序列循环检测的回溯窗口（需容纳同序列连续 3 次，故按序列长×3 预留） */
+const TOOL_CALL_WINDOW = 9
 
-/** 跨轮次检测：连续相同工具调用次数阈值 */
-const SAME_TOOL_REPEAT_THRESHOLD = 3
+/** 跨轮次检测：连续相同工具调用次数阈值（放宽：2~4 次连续多为逐项处理的正常调用，5 次起判） */
+const SAME_TOOL_REPEAT_THRESHOLD = 5
 
 /** 跨轮次检测：连续 stopReason=length 的阈值 */
 const LENGTH_STOP_THRESHOLD = 3
@@ -326,20 +326,26 @@ export class LoopDetector {
         }
       }
 
-      // ── 工具调用序列背靠背重复检测 ──
-      if (this.toolCallHistory.length >= 2) {
+      // ── 工具调用序列循环检测（多步序列须连续出现 3 次才判定）──
+      // 单步（len=1）的重复由 same_tool_repeat（阈值 5）负责，避免把同一工具的
+      // 连续正常查询（如多次 read_file/grep/mcp_tools）误判为循环；此处只处理多步
+      // 模式（如 A→B→A→B…）。同序列仅出现 2 次多为正常推进，不算循环。
+      if (this.toolCallHistory.length >= 3) {
         const recent = this.toolCallHistory.slice(-TOOL_CALL_WINDOW)
-        // 检查是否存在背靠背的相同序列
-        for (let len = 1; len <= Math.floor(recent.length / 2); len++) {
-          const last = recent.slice(-len)
-          const prev = recent.slice(-len * 2, -len)
-          if (last.length === prev.length && last.length > 0 &&
-            JSON.stringify(last) === JSON.stringify(prev)) {
-            log.warn('工具调用序列循环检测', { sequenceLength: len, toolNames: last[0] })
+        for (let len = 2; len <= Math.floor(recent.length / 3); len++) {
+          const b1 = recent.slice(-len * 3, -len * 2)
+          const b2 = recent.slice(-len * 2, -len)
+          const b3 = recent.slice(-len)
+          if (
+            b1.length === len &&
+            JSON.stringify(b1) === JSON.stringify(b2) &&
+            JSON.stringify(b2) === JSON.stringify(b3)
+          ) {
+            log.warn('工具调用序列循环检测', { sequenceLength: len, toolNames: b3[0] })
             return this.trigger({
               detected: true,
               kind: 'tool_call_loop',
-              message: `工具调用序列 [${last.map(s => s.join('→')).join(', ')}] 重复出现，疑似循环，已中止。`
+              message: `工具调用序列 [${b3.map(s => s.join('→')).join(', ')}] 已连续出现 3 次，疑似循环，已中止。`
             })
           }
         }
