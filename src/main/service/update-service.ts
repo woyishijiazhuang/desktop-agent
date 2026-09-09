@@ -134,14 +134,14 @@ function isNoReleaseError(err: unknown): boolean {
 function handleError(err: unknown): void {
   const message = friendlyError(err)
   if (isNoReleaseError(err)) {
-    // 更新源尚无发布记录（如首次发行前）：语义等同「已是最新」，不展示错误
+    // 更新源尚无发布记录（如首次发行前）：语义等同「已是最新」，不展示错误。
+    // 不在此处弹 toast，由 update-not-available 事件统一触发，避免重复弹窗。
     log.info('暂无可用更新（源上没有发布记录）', { error: message })
     state.phase = 'upToDate'
     state.error = undefined
     state.availableVersion = undefined
     state.lastCheckedAt = Date.now()
     pushState()
-    if (lastCheckUserInitiated) toast('success', '已是最新版本')
     return
   }
   log.warn('自动更新失败', { error: message })
@@ -177,10 +177,13 @@ function wireUpdater(): void {
     }
   })
   autoUpdater.on('update-not-available', () => {
-    state.availableVersion = undefined
-    state.error = undefined
-    state.lastCheckedAt = Date.now()
-    setPhase('upToDate')
+    // handleError 已将 phase 设为 upToDate 时不再重复设置，仅补发 toast
+    if (state.phase !== 'upToDate') {
+      state.availableVersion = undefined
+      state.error = undefined
+      state.lastCheckedAt = Date.now()
+      setPhase('upToDate')
+    }
     if (lastCheckUserInitiated) toast('success', '已是最新版本')
   })
   autoUpdater.on('download-progress', (progress: ProgressInfo) => {

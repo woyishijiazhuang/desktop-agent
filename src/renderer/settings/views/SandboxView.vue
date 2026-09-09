@@ -61,6 +61,8 @@ async function toggleEnabled(v: boolean): Promise<void> {
   try {
     await settings.saveSandboxEnabled(v)
     message.success(v ? '沙箱已开启，新启动的命令将被隔离' : '沙箱已关闭')
+    // 刷新平台状态卡片，使「当前沙箱已开启/未开启」文字同步更新
+    void loadPlatformStatus()
   } catch (err) {
     message.error(err instanceof Error ? err.message : '保存失败')
   }
