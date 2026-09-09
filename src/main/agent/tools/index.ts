@@ -14,6 +14,7 @@ import { installSkillTool } from './install-skill'
 import { readSkillTool } from './read-skill'
 import { listMemoriesTool, addMemoryTool, updateMemoryTool, deleteMemoryTool } from './memory'
 import { searchKnowledgeTool } from './knowledge'
+import { searchMessagesTool } from './search-messages'
 import { notifyTool } from './notify'
 import { createPlanModeTools } from './plan-mode'
 import { createAskUserTool } from './ask-user'
@@ -30,7 +31,8 @@ import {
   SETTING_ENABLED_TOOLS,
   SETTING_MEMORY_ENABLED,
   SETTING_SKILLS_ENABLED,
-  SETTING_KB_ENABLED
+  SETTING_KB_ENABLED,
+  SETTING_MESSAGE_SEARCH_ENABLED
 } from '../types'
 import type { ToolInfo } from '../types'
 
@@ -178,6 +180,7 @@ const TOOL_REGISTRY: ToolRegistryEntry[] = [
   single(updateMemoryTool),
   single(deleteMemoryTool),
   single(searchKnowledgeTool),
+  single(searchMessagesTool, false),
   single(notifyTool)
 ]
 
@@ -187,6 +190,8 @@ const SKILL_TOOLS = new Set(['find_skill', 'install_skill', 'read_skill'])
 const MEMORY_TOOLS = new Set(['list_memories', 'add_memory', 'update_memory', 'delete_memory'])
 /** 知识库域工具：受「知识库」总开关（kbEnabled）控制。 */
 const KB_TOOLS = new Set(['search_knowledge'])
+/** 消息搜索域工具：受「消息搜索」总开关（messageSearchEnabled）控制。 */
+const MESSAGE_SEARCH_TOOLS = new Set(['search_messages'])
 /** bash 辅助工具：随 bash 一起启停（单独关闭 bash 时一并移除）。 */
 const BASH_AUX_TOOLS = new Set(['bash_output', 'kill_shell', 'bash_input'])
 
@@ -245,6 +250,8 @@ function isToolCurrentlyEnabled(name: string): boolean {
   if (!memoryEnabled && MEMORY_TOOLS.has(name)) return false
   const kbEnabled = db.getSetting<boolean>(SETTING_KB_ENABLED) !== false
   if (!kbEnabled && KB_TOOLS.has(name)) return false
+  const messageSearchEnabled = db.getSetting<boolean>(SETTING_MESSAGE_SEARCH_ENABLED) === true
+  if (!messageSearchEnabled && MESSAGE_SEARCH_TOOLS.has(name)) return false
   const bashEnabled = overrides['bash'] ?? true
   if (!bashEnabled && (name === 'bash' || BASH_AUX_TOOLS.has(name))) return false
   return true

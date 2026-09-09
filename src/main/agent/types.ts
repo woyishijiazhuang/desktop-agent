@@ -339,6 +339,9 @@ export const SETTING_SKILLS_ENABLED = 'skillsEnabled'
 /** settings 表中存储的「知识库」总开关 key（知识库检索工具注入，默认开启）。 */
 export const SETTING_KB_ENABLED = 'kbEnabled'
 
+/** settings 表中存储的「消息搜索」总开关 key（历史消息搜索工具注入，默认关闭）。 */
+export const SETTING_MESSAGE_SEARCH_ENABLED = 'messageSearchEnabled'
+
 /** settings 表中存储的「知识库 embedding 配置」key（JSON，见 knowledge-service 的 KbEmbeddingSettings）。 */
 export const SETTING_KB_EMBEDDING_CONFIG = 'kb.embeddingConfig'
 
