@@ -28,6 +28,7 @@ import {
   dropSessionWorkdir
 } from './workdir'
 import { readAgentMdForInjection } from './agent-md'
+import { LoopDetector } from './loop-detector'
 import { createLogger } from '../utils/log'
 import { notifyAgentFinished } from '../service/notifier'
 import type { AgentEventPayload, ThinkingLevel } from './types'
@@ -137,6 +138,10 @@ export class AgentManager {
    * agent 循环无法识别导致不执行 + 编造答案；工具保留才能拿到真实数据。
    */
   private voiceRuns = new Map<string, { fast: boolean; savedThinkingLevel?: ThinkingLevel }>()
+  /** 每个会话的循环检测器（与 Agent 实例同生命周期）。 */
+  private loopDetectors = new Map<string, LoopDetector>()
+  /** 循环检测触发的错误消息（agent_end 消费后移除）。 */
+  private loopDetectorErrors = new Map<string, string>()
   /** 串行化 Agent 创建/淘汰慢路径的锁（promise-chain），避免并发 cache-miss 竞争。 */
   private createLock: Promise<void> = Promise.resolve()
 
@@ -385,6 +390,9 @@ export class AgentManager {
     this.endedRuns.delete(sessionId)
     // 语音 run 标记随 Agent 生命周期清理（agent_end 正常路径已消费；驱逐时防残留误注入）
     this.voiceRuns.delete(sessionId)
+    // 循环检测器随 Agent 生命周期清理
+    this.loopDetectors.delete(sessionId)
+    this.loopDetectorErrors.delete(sessionId)
     // 子代理宿主随 Agent 一并注销，防悬挂引用
     unregisterSubagentHost(sessionId)
     // 清理会话工作目录缓存（会话被驱逐后事件路由/工具解析不再命中内存缓存）
@@ -660,7 +668,26 @@ export class AgentManager {
       if (event.type === 'agent_start') {
         persistedAssistantThisRun = false
         clearPlanMode(sessionId)
+        // 初始化/重置循环检测器
+        let detector = this.loopDetectors.get(sessionId)
+        if (!detector) {
+          detector = new LoopDetector()
+          this.loopDetectors.set(sessionId, detector)
+        }
+        detector.reset()
+        detector.setAbortFn(() => agent.abort())
       }
+
+      // ── 循环检测（三层防护）──
+      const loopDetector = this.loopDetectors.get(sessionId)
+      if (loopDetector && !loopDetector.wasTriggered) {
+        const loopResult = loopDetector.feedEvent(event)
+        if (loopResult.detected && loopResult.kind) {
+          log.warn('循环检测触发', { sessionId, kind: loopResult.kind, message: loopResult.message })
+          this.loopDetectorErrors.set(sessionId, loopResult.message ?? '检测到循环，已中止')
+        }
+      }
+
       // 轮次计数 + 超限保护：每轮结束 +1；达到配置上限时中止 agent 并标记，
       // 使 agent_end 携带「已达最大轮次」错误提示（而非静默的 aborted）。
       if (event.type === 'turn_end') {
@@ -769,22 +796,30 @@ export class AgentManager {
         // LRU 满被暂停：同上，携带提示而非静默 aborted。
         const lruPause = this.lruPaused.get(sessionId)
         if (lruPause !== undefined) this.lruPaused.delete(sessionId)
+        // 循环检测触发：携带检测器生成的具体错误消息。
+        const loopError = this.loopDetectorErrors.get(sessionId)
+        if (loopError !== undefined) this.loopDetectorErrors.delete(sessionId)
         const effectiveError =
-          limitHitValue !== undefined
-            ? maxTurnsReachedMessage(limitHitValue)
-            : lruPause !== undefined
-              ? lruPause
-              : err
+          loopError !== undefined
+            ? loopError
+            : limitHitValue !== undefined
+              ? maxTurnsReachedMessage(limitHitValue)
+              : lruPause !== undefined
+                ? lruPause
+                : err
         const messages = effectiveError
           ? agent.state.messages.filter((m) => !isEmptyErrorCarrier(m))
           : agent.state.messages
         event = { ...event, messages }
         // 中止（aborted）是用户主动行为，不弹错误提示；仅真实失败才携带 error。
         // 依据错误载体消息的 stopReason 区分（pi-ai 对中止置 "aborted"，对错误置 "error"）。
+        // 注意：循环检测也会调用 agent.abort()，但不应视为用户中止。
         const carrier = agent.state.messages.find(
           (m): m is AssistantMessage => m.role === 'assistant' && !!m.errorMessage
         )
-        const aborted = limitHitValue === undefined && !!err && carrier?.stopReason === 'aborted'
+        const loopDetector = this.loopDetectors.get(sessionId)
+        const loopWasTriggered = loopDetector?.wasTriggered ?? false
+        const aborted = !loopWasTriggered && limitHitValue === undefined && !!err && carrier?.stopReason === 'aborted'
         if (aborted) {
           log.info('本轮运行中止（用户操作）', { sessionId })
         } else if (effectiveError) {
