@@ -8,6 +8,7 @@ import {
   installWindowsSandboxAsync,
   type SandboxRuntimeConfig
 } from '@anthropic-ai/sandbox-runtime'
+import { db } from '../database'
 import { createLogger } from '../utils/log'
 import { resolveSessionWorkdir } from './workdir'
 import type { BashSandboxWrapper } from './bash-session'
@@ -21,13 +22,6 @@ import {
 } from './types'
 
 const log = createLogger('sandbox')
-
-/** 懒加载 database：仅在真正读取设置时引入（避免 sandbox 模块顶层依赖 electron/db，便于独立测试）。 */
-let dbPromise: Promise<typeof import('../database')> | null = null
-function loadDb(): Promise<typeof import('../database')> {
-  dbPromise ??= import('../database')
-  return dbPromise
-}
 
 /**
  * bash 沙箱集成（Anthropic sandbox-runtime 封装）。
@@ -55,9 +49,8 @@ export interface SandboxSettings {
   networkAllowlist: string[]
 }
 
-/** 读取当前沙箱配置（settings 表，无记录时用默认值）。db 懒加载，调用方可注入替身便于测试。 */
-export async function readSandboxSettings(): Promise<SandboxSettings> {
-  const { db } = await loadDb()
+/** 读取当前沙箱配置（settings 表，无记录时用默认值）。 */
+export function readSandboxSettings(): SandboxSettings {
   return {
     enabled: db.getSetting<boolean>(SETTING_SANDBOX_ENABLED) ?? DEFAULT_SANDBOX_ENABLED,
     writableRoots: db.getSetting<string[]>(SETTING_SANDBOX_WRITABLE_ROOTS) ?? [],
@@ -69,7 +62,7 @@ export async function readSandboxSettings(): Promise<SandboxSettings> {
 }
 
 /** 设置读取器（createSandboxWrapper 的依赖注入点：默认读库，测试可注入替身）。 */
-export type SandboxSettingsReader = () => Promise<SandboxSettings>
+export type SandboxSettingsReader = () => SandboxSettings | Promise<SandboxSettings>
 
 // ==================== 文件域策略（文件工具与 bash 沙箱共用同一可写/禁读边界） ====================
 

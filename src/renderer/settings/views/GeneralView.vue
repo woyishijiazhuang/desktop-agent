@@ -175,6 +175,8 @@ async function onDefaultColorChange(key: string | null): Promise<void> {
   try {
     await mainClient.theme.setColor(null, key)
     defaultColor.value = key
+    // 设置窗口不属于任何工作区，主进程不会向其推送 colorChanged，需主动同步
+    theme.applyPalette(await mainClient.theme.getPalette(null))
     message.success('默认主题色已更新')
   } catch (err) {
     message.error(err instanceof Error ? err.message : String(err))
