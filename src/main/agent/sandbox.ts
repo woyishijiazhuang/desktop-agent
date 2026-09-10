@@ -8,6 +8,7 @@ import {
   checkWindowsSandboxStatusAsync,
   installWindowsSandboxAsync,
   resolveSrtWin,
+  verifyWindowsWfpEgress,
   type SandboxRuntimeConfig
 } from '@anthropic-ai/sandbox-runtime'
 import { db } from '../database'
@@ -185,10 +186,21 @@ export async function getSandboxPlatformStatus(): Promise<SandboxPlatformStatus>
     let error: string | undefined
     try {
       const st = await checkWindowsSandboxStatusAsync({ srtWin: getSrtWinSpawn() })
-      // status.user.exists + wfp.installed 才视为供给完成（未提权时 wfp 会降级为 cannot-read）
-      const user = st?.user as { exists?: boolean } | undefined
-      const wfp = st?.wfp as { installed?: boolean; state?: string } | undefined
-      provisioned = Boolean(user?.exists && wfp?.installed)
+      // 供给完成 = srt-sandbox 账户存在 + WFP 出站栅栏生效。
+      // WFP 枚举受管理员门控：非提权时 wfp.state 为 cannot-read，需用 verifyWindowsWfpEgress 行为验证。
+      const user = st?.user
+      const wfp = st?.wfp
+      if (user?.provisioned && wfp?.state === 'installed') {
+        provisioned = true
+      } else if (user?.provisioned && wfp?.state === 'cannot-read') {
+        // 非提权无法枚举 BFE，退而做行为验证（spawn srt-win runner 测试出站是否被 WFP 拦截）
+        try {
+          await verifyWindowsWfpEgress({ srtWin: getSrtWinSpawn() })
+          provisioned = true
+        } catch {
+          provisioned = false
+        }
+      }
     } catch (err) {
       error = err instanceof Error ? err.message : String(err)
     }
