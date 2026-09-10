@@ -52,9 +52,10 @@ export const HEADER_HEIGHT = 32
 export const WINDOW_BG_DARK = '#18181b'
 export const WINDOW_BG_LIGHT = '#ffffff'
 
-/** Windows 原生标题栏（titleBarOverlay）配色，与 header 视图 --bg-soft / --text-1 token 对齐。 */
-export const HEADER_BG_DARK = '#1f1f23'
-export const HEADER_BG_LIGHT = '#fafafa'
+/** Windows 原生标题栏（titleBarOverlay）背景：纯透明，透出 header 视图的 --bg-soft 背景
+ *  与底部 border-bottom 分隔线（Windows 实测可用；全透明回退默认色的坑仅见于 Linux，本分支不涉及）。 */
+export const HEADER_OVERLAY_BG = 'rgba(0, 0, 0, 0)'
+/** Windows 原生标题栏按钮图标颜色（symbolColor），随主题切换。 */
 export const HEADER_FG_DARK = '#f4f4f5'
 export const HEADER_FG_LIGHT = '#18181b'
 
@@ -78,7 +79,7 @@ nativeTheme.on('updated', () => {
     ) {
       const dark = nativeTheme.shouldUseDarkColors
       win.setTitleBarOverlay({
-        color: dark ? HEADER_BG_DARK : HEADER_BG_LIGHT,
+        color: HEADER_OVERLAY_BG,
         symbolColor: dark ? HEADER_FG_DARK : HEADER_FG_LIGHT
       })
     }
@@ -313,7 +314,7 @@ function createAppWindow(
         ? {
             titleBarStyle: 'hidden',
             titleBarOverlay: {
-              color: dark ? HEADER_BG_DARK : HEADER_BG_LIGHT,
+              color: HEADER_OVERLAY_BG,
               symbolColor: dark ? HEADER_FG_DARK : HEADER_FG_LIGHT,
               height: HEADER_HEIGHT
             }

@@ -138,12 +138,16 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* 主题切换时的平滑过渡（首屏已在 mount 前应用 .dark，不会触发动画） */
+/*
+ * 主题切换统一 0.3s 过渡：
+ * 自绘部分（body/header）与 Naive UI 表单组件（NInput/NSelect 默认 0.3s）时长对齐，
+ * 无需覆盖第三方组件。系统原生控件（titleBarOverlay）为瞬时，属原生无法加过渡的固有差异。
+ */
 @media (prefers-reduced-motion: no-preference) {
   body {
     transition:
-      background-color 0.2s ease,
-      color 0.2s ease;
+      background-color 0.3s ease,
+      color 0.3s ease;
   }
 }
 
