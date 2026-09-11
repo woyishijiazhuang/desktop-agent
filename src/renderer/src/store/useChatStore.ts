@@ -8,13 +8,20 @@ import { useModelConfigsStore } from './useModelConfigsStore'
 import { useSessionStore } from './useSessionStore'
 import { useSettingsStore } from './useSettingsStore'
 import { applyChatEvent, mergeTranscript } from '../service/chat-events'
-import type { ToolStatus, SessionChatState } from '../service/chat-events'
+import type {
+  ToolStatus,
+  SessionChatState,
+  ComposerAttachment,
+  ComposerSkill
+} from '../service/chat-events'
 import type { ModelKey, ThinkingLevel } from '@main/agent/types'
 import { formatModelKey, isThinkingLevel, parseModelKey } from '@main/agent/types'
 import type { Message as DbMessage } from '@main/database'
 
 // 重新导出容器与工具状态类型，保持既有 import 路径（如 ToolCallCard）不变。
 export type { ToolStatus, SessionChatState } from '../service/chat-events'
+// 附件 / 技能类型从 chat-events 定义并在此再导出，保持既有 import 路径（组件 / composable）不变。
+export type { ComposerAttachment, ComposerSkill } from '../service/chat-events'
 
 /** 会话滚动锚点：锚定到消息行（mid）+ 该行相对视口顶部的偏移（offset）。 */
 export interface ScrollAnchor {
@@ -24,21 +31,6 @@ export interface ScrollAnchor {
 
 /** 临时态虚拟会话的容器 key（currentSessionId 为 null 时视图代理指向它）。 */
 const EPHEMERAL_KEY = '__ephemeral__'
-
-/** 发送时携带的附件（ChatInput 收集，image 直接作为多模态 block 发送）。 */
-export interface ComposerAttachment {
-  id: string
-  kind: 'image' | 'file'
-  name: string
-  size: number
-  /** image：data URL（渲染预览用） */
-  dataUrl?: string
-  mimeType?: string
-  /** image：base64（无 data: 前缀，发送时构造 ImageContent） */
-  base64?: string
-  /** file：纯文本 / 文档解析后的文本内容 */
-  text?: string
-}
 
 /** 从附件列表提取可发送的图片 block（图片且带完整 base64/mimeType）。 */
 function toImageBlocks(attachments?: ComposerAttachment[]): ImageContent[] {
@@ -106,6 +98,7 @@ export const useChatStore = defineStore('chat', () => {
       toolStatus: {},
       lastTurnFailed: false,
       prefillText: '',
+      composerDraft: { text: '', attachments: [], skills: [] },
       hasMore: false,
       oldestLoadedId: null,
       loadingOlder: false,
@@ -164,6 +157,27 @@ export const useChatStore = defineStore('chat', () => {
     get: () => current.value?.prefillText ?? '',
     set: (v: string) => {
       if (current.value) current.value.prefillText = v
+    }
+  })
+
+  // 输入框草稿（文本 / 待发送附件 / 已选技能）：读写当前会话容器，切换会话自动指向对应草稿，
+  // 实现「每个对话的输入内容独立」。临时态（currentSessionId=null）落在虚拟容器，新建对话即空。
+  const composerText = computed({
+    get: () => current.value?.composerDraft.text ?? '',
+    set: (v: string) => {
+      if (current.value) current.value.composerDraft.text = v
+    }
+  })
+  const composerAttachments = computed<ComposerAttachment[]>({
+    get: () => current.value?.composerDraft.attachments ?? [],
+    set: (v: ComposerAttachment[]) => {
+      if (current.value) current.value.composerDraft.attachments = v
+    }
+  })
+  const composerSkills = computed<ComposerSkill[]>({
+    get: () => current.value?.composerDraft.skills ?? [],
+    set: (v: ComposerSkill[]) => {
+      if (current.value) current.value.composerDraft.skills = v
     }
   })
 
@@ -271,8 +285,10 @@ export const useChatStore = defineStore('chat', () => {
     }
     const seq = ++sessionRequestSeq
     if (force || state.messages.length === 0) {
-      // 首次进入 / 强制重载：清空容器状态后从 DB 加载（避免残留旧数据）
-      Object.assign(state, createEmptyState(), { hydrated: false })
+      // 首次进入 / 强制重载：清空容器状态后从 DB 加载（避免残留旧数据）。
+      // 输入框草稿不随消息重载清空（保留用户正在编辑的内容）。
+      const draft = state.composerDraft
+      Object.assign(state, createEmptyState(), { hydrated: false, composerDraft: draft })
     }
     // 未初始化会话：先加载历史再切换 currentSessionId。若先切换，加载瞬间 messages
     // 为空，MessageList 会闪回欢迎页再弹出内容（切换会话时明显闪烁）。加载期间用户
@@ -345,7 +361,9 @@ export const useChatStore = defineStore('chat', () => {
       })
     ])
     const rows = [...older, ...fromTarget]
-    Object.assign(state, createEmptyState(), { hydrated: false })
+    // 保留目标会话已存在的输入框草稿（跳转不应清空用户在该会话的编辑内容）
+    const draft = state.composerDraft
+    Object.assign(state, createEmptyState(), { hydrated: false, composerDraft: draft })
     state.messages = rows.map(toDisplayMessage) as unknown as AgentMessage[]
     state.hasMore = older.length === PAGE_SIZE - 1
     state.oldestLoadedId = rows.length > 0 ? (rows[0] as { id: number }).id : null
@@ -642,6 +660,9 @@ export const useChatStore = defineStore('chat', () => {
     compressSummary,
     lastTurnFailed,
     prefillText,
+    composerText,
+    composerAttachments,
+    composerSkills,
     hasMore,
     oldestLoadedId,
     loadingOlder,

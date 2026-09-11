@@ -21,7 +21,7 @@ import {
   MicOutline,
   MicOffOutline
 } from '@vicons/ionicons5'
-import { useChatStore, type ComposerAttachment } from '@renderer/store/useChatStore'
+import { useChatStore, type ComposerAttachment, type ComposerSkill } from '@renderer/store/useChatStore'
 import { useModelConfigsStore } from '@renderer/store/useModelConfigsStore'
 import { useSettingsStore, THINKING_LEVEL_OPTIONS } from '@renderer/store/useSettingsStore'
 import { useAttachments } from '@renderer/composables/useAttachments'
@@ -35,13 +35,24 @@ const emit = defineEmits<{
   send: [text: string, attachments?: ComposerAttachment[], skills?: string[]]
   abort: []
 }>()
-const text = ref('')
 
 const chatStore = useChatStore()
 const modelConfigs = useModelConfigsStore()
 const settings = useSettingsStore()
 const message = useMessage()
 const fileInputRef = ref<HTMLInputElement | null>(null)
+
+/** 输入文本：绑定当前会话草稿，切换会话各自独立（不跨会话串内容）。 */
+const text = computed({
+  get: () => chatStore.composerText,
+  set: (v: string) => (chatStore.composerText = v)
+})
+
+/** 待发送附件：绑定当前会话草稿。 */
+const attachments = computed<ComposerAttachment[]>({
+  get: () => chatStore.composerAttachments,
+  set: (v: ComposerAttachment[]) => (chatStore.composerAttachments = v)
+})
 
 // 语音对话（点击一次持续对话：VAD 断句 + ASR 转写 + TTS 朗读，可打断）
 const voice = useVoiceChat()
@@ -112,14 +123,20 @@ const imageDisabled = computed(() => {
 })
 
 /** 附件管理（拖拽 / 粘贴 / 选择收集，图片受模型多模态能力约束）。 */
-const { attachments, dragOver, onDrop, onPaste, onFileInputChange, removeAttachment } =
-  useAttachments({ imageDisabled: () => imageDisabled.value, message })
+const { dragOver, onDrop, onPaste, onFileInputChange, removeAttachment } = useAttachments({
+  attachments,
+  imageDisabled: () => imageDisabled.value,
+  message
+})
 
 // ---- 技能选择（单次生效：发送后清空） ----
 /** 已安装技能列表（打开下拉时刷新）。 */
 const installedSkills = ref<InstalledSkill[]>([])
-/** 本次待发送选中的技能（id + 展示名）。 */
-const selectedSkills = ref<{ id: string; name: string }[]>([])
+/** 本次待发送选中的技能（id + 展示名），绑定当前会话草稿，切换会话各自独立。 */
+const selectedSkills = computed<ComposerSkill[]>({
+  get: () => chatStore.composerSkills,
+  set: (v: ComposerSkill[]) => (chatStore.composerSkills = v)
+})
 
 /** 已启用技能列表（停用技能不在聊天框展示，与「停用 = 彻底不可用」语义一致）。 */
 const enabledSkills = computed(() => installedSkills.value.filter((s) => s.enabled))

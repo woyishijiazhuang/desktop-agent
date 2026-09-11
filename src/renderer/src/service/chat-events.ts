@@ -23,6 +23,34 @@ export interface ToolStatus {
   progress?: { downloaded: number; total: number }
 }
 
+/** 发送时携带的附件（ChatInput 收集，image 直接作为多模态 block 发送）。 */
+export interface ComposerAttachment {
+  id: string
+  kind: 'image' | 'file'
+  name: string
+  size: number
+  /** image：data URL（渲染预览用） */
+  dataUrl?: string
+  mimeType?: string
+  /** image：base64（无 data: 前缀，发送时构造 ImageContent） */
+  base64?: string
+  /** file：纯文本 / 文档解析后的文本内容 */
+  text?: string
+}
+
+/** 输入框草稿中的已选技能（id + 展示名，发送后清空）。 */
+export interface ComposerSkill {
+  id: string
+  name: string
+}
+
+/** 单个会话的输入框草稿：文本 / 待发送附件 / 已选技能，切换会话时各自独立保留。 */
+export interface ComposerDraft {
+  text: string
+  attachments: ComposerAttachment[]
+  skills: ComposerSkill[]
+}
+
 /**
  * 单个会话的实时聊天状态（多会话并发的核心数据结构）。
  * 每个会话独立维护消息流 / busy / 工具状态 / 错误，互不干扰：
@@ -38,6 +66,8 @@ export interface SessionChatState {
   lastTurnFailed: boolean
   /** 一次性回填文本：recall 把失败消息文本塞回输入框时设置，ChatInput 消费后清空。 */
   prefillText: string
+  /** 输入框草稿（文本 / 待发送附件 / 已选技能）：按会话独立，切换会话互不影响。 */
+  composerDraft: ComposerDraft
   /** 历史消息分页：每页条数（首屏只加载最近一页，向上滚动加载更早）。 */
   hasMore: boolean
   /** 已加载最旧一条消息的 DB id（向上加载的分页边界）。 */
