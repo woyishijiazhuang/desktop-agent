@@ -40,6 +40,22 @@ files:
   - 'node_modules/@ricky0123/vad-web/dist/vad.worklet.bundle.min.js'
 asarUnpack:
   - resources/**
+# Electron Fuses：打包时翻转 Electron 二进制内的特性位（签名后由 OS 保证不可回改）。
+# 仅影响发布包，dev 直接跑 node_modules/electron 不经打包，行为不变。
+# 校验：npx @electron/fuses read --app dist/mac-arm64/桌面助手.app
+electronFuses:
+  runAsNode: false # 禁止 ELECTRON_RUN_AS_NODE 把应用本体当裸 Node 运行（LOLBin 攻击面）
+  enableCookieEncryption: true # Cookie 库用系统密钥加密存储（单向变更，新应用可直接开）
+  enableNodeOptionsEnvironmentVariable: false # 忽略 NODE_OPTIONS / NODE_EXTRA_CA_CERTS 注入
+  enableNodeCliInspectArguments: false # 忽略 --inspect 调试参数，SIGUSR1 也无法挂调试器
+  enableEmbeddedAsarIntegrityValidation: true # 加载 app.asar 前校验嵌入的 SHA256（mac≥16/win≥30，哈希由 builder 自动注入）
+  onlyLoadAppFromAsar: true # 只从 app.asar 找应用代码，封堵 resources/app 目录旁路
+  loadBrowserProcessSpecificV8Snapshot: false # 未使用自定义 V8 快照
+  grantFileProtocolExtraPrivileges: false # 收回 file:// 页面的 Node 集成/关 webSecurity 特权（本应用 preload + contextIsolation，不依赖）
+  # 本机/CI 无 Developer ID 时签名步骤会整体跳过，翻转二进制后原有 linker 签名失效，
+  # Apple Silicon 会直接 SIGKILL。开启此项让 @electron/fuses 翻转后对主二进制重新 ad-hoc 签名。
+  # 将来用正式证书签名时，builder 的正式签名会覆盖它，无副作用。
+  resetAdHocDarwinSignature: true
 # srt（bash 沙箱）随包携带的平台 helper，按平台拆分：
 #  - Windows 需 srt-win.exe（沙箱账户供给/WFP 与进程隔离后端）
 #  - Linux 需 apply-seccomp（seccomp 过滤器落地二进制）
