@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/oxfmt/configuration_schema.json",
+  "singleQuote": true,
+  "semi": false,
+  "printWidth": 100,
+  "trailingComma": "none",
+  "ignorePatterns": [
+    "out",
+    "dist",
+    "pnpm-lock.yaml",
+    "LICENSE.md",
+    "tsconfig.json",
+    "tsconfig.*.json",
+    "src/renderer/src/assets/geo/china.json"
+  ]
+}

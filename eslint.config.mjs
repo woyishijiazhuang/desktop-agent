@@ -1,6 +1,7 @@
 import { defineConfig } from 'eslint/config'
 import tseslint from '@electron-toolkit/eslint-config-ts'
-import eslintConfigPrettier from '@electron-toolkit/eslint-config-prettier'
+// 仅关闭与格式化器（oxfmt）冲突的风格规则，不运行格式化检查
+import eslintConfigPrettier from 'eslint-config-prettier'
 import eslintPluginVue from 'eslint-plugin-vue'
 import vueParser from 'vue-eslint-parser'
 

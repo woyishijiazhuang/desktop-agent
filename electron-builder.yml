@@ -10,7 +10,7 @@ files:
   - '!src/*'
   - '!{scripts,docs,.trae}/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
-  - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
+  - '!{.eslintcache,eslint.config.mjs,.oxfmtrc.jsonc,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml,pnpm-workspace.yaml,.editorconfig,.gitignore}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
   - '!electron-builder.yml'
