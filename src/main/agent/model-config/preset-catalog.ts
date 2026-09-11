@@ -1,6 +1,7 @@
 import type { Provider } from '@earendil-works/pi-ai'
 import { builtinProviders } from '@earendil-works/pi-ai/providers/all'
 import type { ApiFormat, ModelPeakPeriod } from '../../database'
+import { toFriendlyModelError } from './error-message'
 
 /** 预置服务商信息（AddModelDialog 的服务商选择器用） */
 export interface PresetProviderInfo {
@@ -160,8 +161,10 @@ export async function fetchPresetModelsOnline(
       ...(isAnthropic ? { 'anthropic-version': '2023-06-01', 'x-api-key': apiKey } : {})
     },
     signal: AbortSignal.timeout(10000)
+  }).catch((err) => {
+    throw new Error(toFriendlyModelError(err instanceof Error ? err.message : String(err)))
   })
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${res.statusText}`)
+  if (!res.ok) throw new Error(toFriendlyModelError(`HTTP ${res.status} ${res.statusText}`))
   const data = (await res.json()) as {
     data?: {
       id?: string

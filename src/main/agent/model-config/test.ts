@@ -2,6 +2,7 @@ import type { MutableModels } from '@earendil-works/pi-ai'
 import { db } from '../../database'
 import { createLogger } from '../../utils/log'
 import { getDecryptedApiKey } from './crypto'
+import { toFriendlyModelError } from './error-message'
 import { buildModel } from './register'
 
 const log = createLogger('modelConfig')
@@ -37,7 +38,7 @@ export async function testModelConfig(
   try {
     for await (const ev of stream) {
       if (ev.type === 'error') {
-        const err = ev.error.errorMessage ?? '连接失败'
+        const err = toFriendlyModelError(ev.error.errorMessage)
         log.warn('模型连通性测试失败', { configId, error: err })
         return { ok: false, error: err }
       }
@@ -47,7 +48,7 @@ export async function testModelConfig(
     }
     return { ok: false, error: '未收到任何响应' }
   } catch (err) {
-    const error = err instanceof Error ? err.message : String(err)
+    const error = toFriendlyModelError(err instanceof Error ? err.message : String(err))
     log.warn('模型连通性测试失败', { configId, error })
     return { ok: false, error }
   }
