@@ -1,6 +1,6 @@
 import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { installSkill } from '../skills-store'
+import { installSkill } from '../skills/skills-store'
 import { getFindSkillSource } from './find-skill'
 import { FIND_SKILL_SOURCE_LABELS, type FindSkillSource } from '../types'
 import { createLogger } from '../../utils/log'

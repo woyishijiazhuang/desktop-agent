@@ -1,6 +1,6 @@
 import { reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
-import type { WindowState } from '../../../main/service/window-service'
+import type { WindowState } from '../../../main/services/window-service'
 import { mainClient } from '../utils/main-client'
 
 export const useWindowStore = defineStore('window', () => {

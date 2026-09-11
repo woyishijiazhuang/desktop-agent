@@ -325,21 +325,6 @@ watch(
   }
 )
 
-// 用户填写 API key 后自动尝试拉取（防抖）
-let fetchTimer: ReturnType<typeof setTimeout> | null = null
-watch(
-  () => form.apiKey,
-  (key) => {
-    if (fetchTimer) clearTimeout(fetchTimer)
-    if (form.mode !== 'preset' || !form.presetProvider) return
-    if (!key.trim()) {
-      if (!isEdit.value) onlineModels.value = []
-      return
-    }
-    fetchTimer = setTimeout(() => void refreshOnline(), 500)
-  }
-)
-
 // 选中在线模型：预填高级配置（仅新增模式；编辑模式保留已存值）。
 // 仅 Anthropic 等返回 capabilities 的服务商能提供元数据，其余留默认值由用户补充。
 watch(
@@ -412,6 +397,10 @@ const canRefreshOnline = computed(
     !!form.presetProvider && (!!form.apiKey.trim() || (isEdit.value && !!props.editing?.hasApiKey))
 )
 
+// 拉取时机：仅在输入完成（失焦 / 回车）后触发，避免输入到一半就开始检测。
+// autoFetchedKey 记录最近一次已用于拉取的表单 key，重复失焦不重复请求。
+let autoFetchedKey = ''
+
 /** 从服务商在线拉取模型：优先用表单 key；编辑模式无新 key 时用已存 key。 */
 async function refreshOnline(): Promise<void> {
   if (!form.presetProvider || !canRefreshOnline.value) return
@@ -421,12 +410,32 @@ async function refreshOnline(): Promise<void> {
     onlineModels.value = key
       ? await store.listPresetModelsOnline(form.presetProvider, key)
       : await store.listPresetModelsOnlineById(props.editing!.id)
+    if (key) autoFetchedKey = key
     message.success(`拉取到 ${onlineModels.value.length} 个在线模型`)
   } catch (err) {
-    message.error(err instanceof Error ? err.message : String(err))
+    message.error(errorMessage(err))
   } finally {
     refreshing.value = false
   }
+}
+
+/** API Key 输入完成（失焦 / 回车）后拉取模型列表。 */
+function onApiKeyCommit(): void {
+  if (form.mode !== 'preset') return
+  const key = form.apiKey.trim()
+  if (!key) {
+    if (!isEdit.value) onlineModels.value = []
+    autoFetchedKey = ''
+    return
+  }
+  if (!form.presetProvider || key === autoFetchedKey) return
+  void refreshOnline()
+}
+
+/** 提取可读错误信息：去掉 Electron ipcRenderer.invoke 追加的英文前缀与 Error: 包装。 */
+function errorMessage(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  return raw.replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, '')
 }
 
 function buildInput(): CreateModelConfigInput {
@@ -470,7 +479,7 @@ async function onSave(): Promise<void> {
     }
     close()
   } catch (err) {
-    message.error(err instanceof Error ? err.message : String(err))
+    message.error(errorMessage(err))
   } finally {
     saving.value = false
   }
@@ -483,7 +492,7 @@ async function onTest(): Promise<void> {
   try {
     testResult.value = await store.test(props.editing.id)
   } catch (err) {
-    testResult.value = { ok: false, error: err instanceof Error ? err.message : String(err) }
+    testResult.value = { ok: false, error: errorMessage(err) }
   } finally {
     testing.value = false
   }
@@ -533,6 +542,8 @@ async function openGetKey(): Promise<void> {
           :placeholder="isEdit ? '已配置（重新输入覆盖，留空不变）' : 'sk-...'"
           autocomplete="off"
           spellcheck="false"
+          @blur="onApiKeyCommit"
+          @keyup.enter="onApiKeyCommit"
         />
         <NButton
           v-if="currentPreset?.getKeyUrl"
@@ -572,8 +583,8 @@ async function openGetKey(): Promise<void> {
             从服务商在线拉取模型
           </NButton>
           <span class="add-model__hint"
-            >模型列表始终从服务商在线拉取；填写 API
-            密钥后自动获取，编辑已有模型时使用已保存的密钥。</span
+            >模型列表始终从服务商在线拉取；API
+            密钥输入完成后（失焦或回车）自动获取，编辑已有模型时使用已保存的密钥。</span
           >
         </div>
         <NInput

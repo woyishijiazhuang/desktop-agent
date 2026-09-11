@@ -1,9 +1,9 @@
 # IPC 视图能力模型铺路与渲染层容错守卫 —— 改动清单
 
 > 记录时间：2026-09-04
-> 状态：**方案已确认，尚未实施**
-> 背景：为保证未来「设置窗口独立入口」拆分（见 [first-paint-strategy.md](first-paint-strategy.md) 方案二）不被 IPC 投递架构卡住，先行铺路：把 main 侧「内容视图=全量注册」的隐含假设收敛为可扩展的能力决策点，并给渲染层加容错守卫。本次**不拆设置窗口**。
-> 前置上下文：render-client 推送目标已改为从 header 视图骨架类自动推导（见 [render-client.ts](../src/main/service/render-client.ts) 顶部注释），不再维护手写 VIEW_ROUTES。
+> 状态：**已实施**（2026-09 落地，设置窗口独立入口已随之上线，见 [first-paint-strategy.md](first-paint-strategy.md) 方案二）
+> 背景：为保证「设置窗口独立入口」拆分不被 IPC 投递架构卡住，先行铺路：把 main 侧「内容视图=全量注册」的隐含假设收敛为可扩展的能力决策点，并给渲染层加容错守卫。原计划本期不拆设置窗口，随后已一并落地。
+> 前置上下文：render-client 推送目标已改为从 header 视图骨架类自动推导（见 [render-client.ts](../src/main/infra/render-client.ts) 顶部注释），不再维护手写 VIEW_ROUTES。
 
 ---
 
@@ -43,20 +43,20 @@
 
 **目标**：agent 事件本就属于工作区窗口。现在无会话归属时兜底 `broadcastToViews` 会把它们**冗余广播到设置窗口**（今天因设置窗口也注册了 AgentEventService 而不崩，纯浪费；拆分后不收敛即崩）。
 
-| #   | 改动                                                                                                                                                                                       | 位置                                                          |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| B1  | `deliver` 中 `service === 'agentEvent'` 的兜底分支（sessionId 解析不到时）改为只遍历工作区窗口的 content 投递，不再发设置窗口                                                              | `src/main/service/render-client.ts` `deliver`                 |
-| B2  | 提取 `broadcastToWorkspaceViews(channel, message, target)`，让 B1 与已有 `deliverBackgroundSessions`（[render-client.ts](../src/main/service/render-client.ts)）共用，避免两处各写一套遍历 | `src/main/service/window-manager.ts`（或 render-client 内部） |
+| #   | 改动                                                                                                                                                                                     | 位置                                                        |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| B1  | `deliver` 中 `service === 'agentEvent'` 的兜底分支（sessionId 解析不到时）改为只遍历工作区窗口的 content 投递，不再发设置窗口                                                            | `src/main/infra/render-client.ts` `deliver`                 |
+| B2  | 提取 `broadcastToWorkspaceViews(channel, message, target)`，让 B1 与已有 `deliverBackgroundSessions`（[render-client.ts](../src/main/infra/render-client.ts)）共用，避免两处各写一套遍历 | `src/main/infra/window-manager.ts`（或 render-client 内部） |
 
 ## 4. C. 视图能力模型建缝（本期只加结构）
 
 **目标**：把「哪些窗口的内容视图该收到某条推送」收敛到**单一决策点**，今后拆设置窗口只改这一处。
 
-| #   | 改动                                                                                                                                                                                                                                                                     | 位置                                |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------- |
-| C1  | 新增 `collectContentTargets(service, method): AppWindow[]`：默认返回全部应用窗口；`agentEvent.*` 返回工作区窗口（服务化 B1 收敛逻辑）；header 可达性（`headerReachableMethods`）判定保留不动                                                                             | `src/main/service/render-client.ts` |
-| C2  | `deliver` 兜底分支与相关广播改走 C1，消除散落的窗口集合判断                                                                                                                                                                                                              | 同上                                |
-| C3  | 在 C1 上方注释写明契约：**拆设置窗口时唯一增量 = 给设置入口加能力骨架（仿 [header-view-services.ts](../src/renderer/src/service/header-view-services.ts)）并在 `collectContentTargets` 追加「settings 内容视图只收 X 集合」过滤**；本期 settings==full SPA，无需任何枚举 | 同上                                |
+| #   | 改动                                                                                                                                                                                                                                                                     | 位置                              |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------- |
+| C1  | 新增 `collectContentTargets(service, method): AppWindow[]`：默认返回全部应用窗口；`agentEvent.*` 返回工作区窗口（服务化 B1 收敛逻辑）；header 可达性（`headerReachableMethods`）判定保留不动                                                                             | `src/main/infra/render-client.ts` |
+| C2  | `deliver` 兜底分支与相关广播改走 C1，消除散落的窗口集合判断                                                                                                                                                                                                              | 同上                              |
+| C3  | 在 C1 上方注释写明契约：**拆设置窗口时唯一增量 = 给设置入口加能力骨架（仿 [header-view-services.ts](../src/renderer/src/service/header-view-services.ts)）并在 `collectContentTargets` 追加「settings 内容视图只收 X 集合」过滤**；本期 settings==full SPA，无需任何枚举 | 同上                              |
 
 ## 5. D. 验证清单
 
@@ -73,21 +73,22 @@
 - 设置窗口独立 HTML 入口拆分（future）；
 - 骨架屏、入口 JS 瘦身（属 [first-paint-strategy.md](first-paint-strategy.md) 第 7 节）。
 
-## 7. 未来拆设置窗口时的增量清单（预览）
+## 7. 拆设置窗口时的增量清单（已实施）
 
-验证 C 的缝是否够用，届时按此执行：
+C 的缝已验证够用，实际按此执行并落地：
 
-1. 设置入口注册裁剪为子集（settings-sync / theme-sync / model-config-sync / ui，按 first-paint-strategy.md 第 4 节盘点各面板引用）；
-2. 新增 settings 侧能力骨架模块（仿 header-view-services.ts），设置入口以子类注入实现；
-3. `collectContentTargets` 追加 settings 过滤；A 的守卫兜底保留作保险。
+1. 设置入口注册裁剪为子集（settings-sync / theme-sync / model-config-sync / ui / updateEvents，见 [settings/main.ts](../src/renderer/settings/main.ts)）；
+2. settings 侧直接以 `initializeSafeRendererServices` 注入裁剪集（未再单独建骨架模块，守卫本身即为裁剪注册入口）；
+3. `collectContentTargets` 以 `service === 'agentEvent'` 过滤 settings（见 [render-client.ts](../src/main/infra/render-client.ts)）；A 的守卫兜底保留作保险。
 
 ---
 
 ## 决策记录与待办
 
 - 2026-09-04：确认「渲染层容错守卫 + agent 事件收敛 + 能力决策点建缝」为铺路范围，拆分设置窗口明确排除在本期之外。
-- 待办：
-  - [ ] A1–A4 守卫实施；
-  - [ ] B1–B2 agent 事件收敛；
-  - [ ] C1–C3 能力决策点；
-  - [ ] D 验证清单逐项回归。
+- 2026-09：上述铺路随设置窗口独立入口一并实施完成；B2 实际以 `collectContentTargets` 复用（而非单列 `broadcastToWorkspaceViews`），后台会话按工作区过滤走 `deliverBackgroundSessions`。
+- 已实施：
+  - [x] A1–A4 守卫实施（`utils/ipc-guard.ts` + 三处视图切换）；
+  - [x] B1–B2 agent 事件收敛（兜底只发工作区窗口，后台会话按工作区过滤）；
+  - [x] C1–C3 能力决策点（`collectContentTargets`）；
+  - [x] D 验证清单逐项回归。

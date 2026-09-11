@@ -1,6 +1,6 @@
 import { IpcService } from 'electron-ipc-service/renderer'
-import type { WindowState } from '@main/service/window-service'
-import type { ThemePalette } from '@main/service/theme-palettes'
+import type { WindowState } from '@main/services/window-service'
+import type { ThemePalette } from '@main/infra/theme-palettes'
 
 /**
  * header 视图（标题栏，src/renderer/header/index.ts）注册的接收服务骨架。

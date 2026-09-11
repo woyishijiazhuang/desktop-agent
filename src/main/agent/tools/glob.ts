@@ -2,7 +2,7 @@ import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { stat } from 'node:fs/promises'
 import { relative } from 'node:path'
-import { resolveAgentSessionWorkdir } from '../workdir'
+import { resolveAgentSessionWorkdir } from '../runtime/workdir'
 import { createGlobMatcher, toPosix, walkFiles } from './fs-walk'
 import { createLogger } from '../../utils/log'
 

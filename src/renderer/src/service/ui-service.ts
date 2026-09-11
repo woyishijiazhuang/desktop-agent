@@ -1,6 +1,6 @@
 import { IpcService } from 'electron-ipc-service/renderer'
 import { useWindowStore } from '../store/useWindowStore'
-import type { WindowState } from 'src/main/service/window-service'
+import type { WindowState } from 'src/main/services/window-service'
 import { showToast } from '../utils/toast'
 import type { ShowToastOptions } from '../utils/toast'
 import type { SettingsTabKey } from '@main/agent/types'

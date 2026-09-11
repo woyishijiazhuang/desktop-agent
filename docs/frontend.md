@@ -201,9 +201,9 @@ UI 动作（输入/切换会话/改设置）
 
 - **路径**：[store/useThemeStore.ts](file:///Users/hupengfei/Documents/my-app/src/renderer/src/store/useThemeStore.ts)
 - **store 名**：`theme`
-- **职责**：主题模式（light/dark/auto），在 `<html>` 上切换 `.dark` 类，联动 Naive UI 与 markdown 主题。
+- **职责**：主题模式（light / dark / system）与主题色 palette，在 `<html>` 上切换 `.dark` 类并注入 `--primary*` CSS 变量，联动 Naive UI 与 markdown 主题。
 
-**关键设计**：纯 renderer 关注点，`localStorage` 持久化（key `app.theme`，同步读取防 FOUC）；`isDark = mode==='dark' || (auto && systemDark)`；auto 模式经 `matchMedia` 监听系统外观；`syncWindowBackground` 同步主进程窗口底色（`#ffffff`/`#18181b`，防 resize 露白）。main.ts 中 mount 前调用一次同步应用。
+**关键设计**：主进程为唯一真源——模式持久化于 settings 表、由 `ThemeService` 驱动 `nativeTheme.themeSource`，主题色持久化于 `workspaces.theme_color` / settings。渲染层只做同步跟随：`matchMedia('(prefers-color-scheme: dark)')` 随 themeSource 自动变化，据此维护 `isDark` 并切换 `<html>.dark`；`apply()` 以 inline style 注入 `--primary*`（palette 未拉取前回退默认紫罗兰 token）；启动时经 `theme.getMode` / `theme.getPalette` 异步拉取，`theme.colorChanged` 推送时更新。主进程在创建窗口前已按设置应用 themeSource，故首帧即正确。
 
 ### 3.8 useWindowStore
 
@@ -343,14 +343,14 @@ namespace `agentEvent`：`onEvent(payload)` —— 所有会话事件路由到�
 
 ### 4.7 Utils
 
-| 文件                   | 职责                                                                                                                                                                     |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `utils/main-client.ts` | `createIpcRendererClient<IpcMainServices>()` IPC 客户端单例                                                                                                              |
-| `utils/messageText.ts` | 消息 block 判别与文本提取：`FileTextBlock`/`SkillTextBlock` + 守卫 + `extractUserText`（排除文件/技能块）                                                                |
-| `utils/toolResult.ts`  | 工具结果/参数摘要：`summarizeToolResult`（退出码/字节/条数，失败显首行）、`summarizeToolArgs`（reason 缺失时从关键参数推导意图）                                         |
-| `utils/codeBlock.ts`   | 代码块包装与格式化：`toCodeFence`（内容自适应反引号长度、按语言包围栏）、`tryPrettyJSON`（JSON pretty-print，供工具结果/参数按 JSON 高亮）                               |
-| `utils/toast.ts`       | 全局 toast：`registerToast` 由 ToastBridge 注册，`showToast` 供 UiService IPC 使用（API 未就绪时降级 console）                                                           |
-| `utils/format.ts`      | `formatContextWindow`（2 的幂次按 1024 换算、整千按 1000、1M 附近统一「1M」）、`formatTokens`（千分位）、`formatCompactTokens`（图表轴）、`formatCost`（¥ 自适应小数位） |
+| 文件                   | 职责                                                                                                                                                                                 |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `utils/main-client.ts` | `createIpcRendererClient<IpcMainServices>()` IPC 客户端单例                                                                                                                          |
+| `utils/messageText.ts` | 消息 block 判别与用户文本提取：`FileTextBlock`/`SkillTextBlock` + 守卫 + `extractUserText`（排除文件/技能块）；通用文本提取 `extractMessageText` 已迁至共享层 `@shared/message-text` |
+| `utils/toolResult.ts`  | 工具结果/参数摘要：`summarizeToolResult`（退出码/字节/条数，失败显首行）、`summarizeToolArgs`（reason 缺失时从关键参数推导意图）                                                     |
+| `utils/codeBlock.ts`   | 代码块包装与格式化：`toCodeFence`（内容自适应反引号长度、按语言包围栏）、`tryPrettyJSON`（JSON pretty-print，供工具结果/参数按 JSON 高亮）                                           |
+| `utils/toast.ts`       | 全局 toast：`registerToast` 由 ToastBridge 注册，`showToast` 供 UiService IPC 使用（API 未就绪时降级 console）                                                                       |
+| `utils/format.ts`      | `formatContextWindow`（2 的幂次按 1024 换算、整千按 1000、1M 附近统一「1M」）、`formatTokens`（千分位）、`formatCompactTokens`（图表轴）、`formatCost`（¥ 自适应小数位）             |
 
 ### 4.8 Assets
 
@@ -361,9 +361,10 @@ namespace `agentEvent`：`onEvent(payload)` —— 所有会话事件路由到�
 
 ### 4.9 自定义标题栏（header）
 
-- **路径**：[src/renderer/header/](file:///Users/hupengfei/Documents/my-app/src/renderer/header)（index.html / index.css / index.ts）
+- **路径**：[src/renderer/header/](file:///Users/hupengfei/Documents/my-app/src/renderer/header)（index.html / index.ts；样式内联在 index.html `<head>`，随 HTML 同步解析、先于渲染生效，避免模块 CSS 后注入的首帧闪烁）
 - **机制**：主进程 `BaseWindow` 上独立 WebContentsView（高 32px，与主进程 `HEADER_HEIGHT` 一致），弹窗永远无法遮盖。
-- **实现**：不引入 Vue/Pinia/Naive UI，纯 TS 轻量实现。主题从 `localStorage('app.theme')` 读取并给 `<html>` 落 `.dark`（与 useThemeStore 同规则，监听 storage 事件同步）；注册 `HeaderUiService`（namespace `ui`，只消费 `windowStateChange`）+ `NoopAgentEventService`（空实现防广播报错）；按钮点击 → `mainClient.window.triggerWindowAction(...)`；`render(state)` 按窗口状态切换 html class（`win-max/win-focused/win-on-top/win-native`）。
+- **实现**：不引入 Vue/Pinia/Naive UI，纯 TS 轻量实现。主题以主进程 `nativeTheme` 为唯一真源，本视图经 `prefers-color-scheme`（`matchMedia`）跟随给 `<html>` 落 `.dark`；主题色经 `mainClient.theme.getPalette` 拉取 + `theme.colorChanged` 推送后注入 `--primary*` CSS 变量。注册 `HeaderUiService`（namespace `ui`，消费 `windowStateChange`）+ `HeaderThemeService`（namespace `theme`，消费 `colorChanged`），经 `initializeSafeRendererServices` 容错注册（未注册方法 warn 忽略、不崩页面）。`render(state)` 按窗口状态切换 html class（`win-max` / `win-focused` / `win-on-top` / `win-custom`）；按钮点击 → `mainClient.window.triggerWindowAction(...)`。
+- **推送可达性**：骨架 [header-view-services.ts](file:///Users/hupengfei/Documents/my-app/src/renderer/src/service/header-view-services.ts) 是「标题栏接收哪些推送」的唯一事实源——main（render-client）在模块加载时遍历骨架类方法，命中才以 `all` 同时投递标题栏，其余只发内容视图。新增接收方法只需改两处：骨架类声明签名 + 本视图子类 override 实现，main 侧自动推导，无需改路由表。
 
 ---
 
@@ -459,9 +460,9 @@ pi-ai 的 Message 无稳定 id，仅有 timestamp（可能重复）/ toolCallId�
 
 ### 主题 store（useThemeStore）
 
-- 三模式 `light` / `dark` / `auto`（默认 auto）；`localStorage` 持久化（`STORAGE_KEY='app.theme'`）。
-- `isDark = mode==='dark' || (mode==='auto' && systemDark)`；`apply()` 切换 `<html>.dark`；`syncWindowBackground` 同步主进程窗口底色。
-- main.ts 在 mount 前同步调用，首屏即落 `.dark`。
+- 三模式 `light` / `dark` / `system`（默认 system）；模式由主进程持久化于 settings 表（`ThemeService` 驱动 `nativeTheme.themeSource`），渲染层只经 `prefers-color-scheme` 跟随。
+- `isDark` 直接取自 `matchMedia('(prefers-color-scheme: dark)')`；`apply()` 切换 `<html>.dark` 并注入 `--primary*` 变量；主题色经 `theme.getPalette` 拉取、`theme.colorChanged` 推送更新（palette 未就绪时回退默认紫罗兰 token）。
+- 主进程启动时 `applyStoredThemeMode()` 先于窗口创建应用 themeSource，首屏即正确；设置页 `setMode` 落库并驱动 nativeTheme，无需渲染层重挂载。
 
 ### Naive UI 主题集成（App.vue）
 
@@ -469,9 +470,9 @@ pi-ai 的 Message 无稳定 id，仅有 timestamp（可能重复）/ toolCallId�
 - `themeOverrides.common`：浅色 brand（主色 `#7c3aed` + 8px 圆角 + Inter 字体族）；深色 darkSurface（主色提亮 `#a78bfa`，表面色/文字色/边框对齐 base.css zinc token）。
 - markstream-vue 自带 `.dark .markstream-vue` 覆盖据 `<html>.dark` 翻转 markdown 暗色。
 
-### 自定义标题栏（header/index.css）
+### 自定义标题栏（header/index.html 内联样式）
 
-32px 高度、`-webkit-app-region: drag` 拖拽区（按钮区 no-drag）；`win-native`（macOS 原生红绿灯模式）隐藏品牌与自绘按钮；`win-on-top` 置顶高亮 pin 按钮；`win-max` 切换最大化/还原图标；失焦降透明度。
+32px 高度、`-webkit-app-region: drag` 拖拽区（按钮区 no-drag）；`win-custom`（非原生标题栏模式）显示品牌与自绘窗口控制按钮；`win-on-top` 置顶高亮 pin 按钮；`win-max` 切换最大化/还原图标；聚焦态由 `.win-focused` 驱动（`html:not(.win-focused)` 时品牌/标题/按钮降透明度）。
 
 ---
 

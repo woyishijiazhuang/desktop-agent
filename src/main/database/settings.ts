@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { SettingRow } from './types'
-import { isThemeColorKey } from '../service/theme-palettes'
+import { isThemeColorKey } from '../infra/theme-palettes'
 import {
   SETTINGS_TAB_KEYS,
   SETTING_VOICE_API_KEY,
@@ -120,6 +120,8 @@ const SETTING_VALIDATORS: Record<string, (v: unknown) => boolean> = {
 /** 设置项域 API（index.ts 组装进 db 门面）。 */
 export interface SettingsApi {
   getSetting<T = unknown>(key: string): T | undefined
+  /** 批量读取：一次 SQL 取回多个 key，降低渲染层冷启动的 IPC 往返次数。 */
+  getSettings(keys: string[]): Record<string, unknown>
   setSetting(key: string, value: unknown): void
   deleteSetting(key: string): void
 }
@@ -133,6 +135,18 @@ export function createSettingsApi(db: DatabaseSync): SettingsApi {
         | undefined
       if (!row) return undefined
       return JSON.parse(row.value) as T
+    },
+
+    getSettings(keys: string[]): Record<string, unknown> {
+      const result: Record<string, unknown> = {}
+      if (keys.length === 0) return result
+      const placeholders = keys.map(() => '?').join(', ')
+      const stmt = db.prepare(`SELECT key, value FROM settings WHERE key IN (${placeholders})`)
+      const rows = stmt.all(...keys) as unknown as SettingRow[]
+      for (const row of rows) {
+        result[row.key] = JSON.parse(row.value)
+      }
+      return result
     },
 
     setSetting(key: string, value: unknown): void {

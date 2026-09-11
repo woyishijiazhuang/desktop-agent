@@ -20,7 +20,7 @@ import { useCopy } from '@renderer/composables/useCopy'
 import { useStickToBottomPause } from '@renderer/composables/useStickToBottomPause'
 import { tryPrettyJSON, toCodeFence } from '@renderer/utils/codeBlock'
 import { summarizeToolArgs, summarizeToolResult } from '@renderer/utils/toolResult'
-import { extractMessageText } from '@renderer/utils/messageText'
+import { extractMessageText } from '@shared/message-text'
 
 /**
  * 工具调用卡片：展示 toolCall 的意图（reason）/ 参数 / 执行状态 / 执行结果。

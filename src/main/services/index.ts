@@ -1,0 +1,91 @@
+import { initializeIpcMainServices } from 'electron-ipc-service'
+import { dialog } from 'electron'
+import { AppService } from './app-service'
+import { DbService } from './db-service'
+import { WindowService } from './window-service'
+import { ThemeService } from './theme-service'
+import { AgentService } from './agent-service'
+import { McpService } from './mcp-service'
+import { ModelConfigService } from './model-config-service'
+import { KnowledgeService } from './knowledge-service'
+import { BashService } from './bash-service'
+import { WorkspaceService } from './workspace-service'
+import { VoiceService } from './voice-service'
+import { UpdateService } from './update-service'
+import { setWindowCloseGuard } from '../infra/window-manager'
+import { clearSessionPermissions } from '../agent/runtime/permission'
+import { bashSessionManager } from '../agent/runtime/bash-session'
+import { createLogger } from '../utils/log'
+
+const log = createLogger('service')
+
+// Register all services — this sets up IPC handlers in the main process
+export const ipcMainServices = initializeIpcMainServices([
+  AppService,
+  DbService,
+  WindowService,
+  ThemeService,
+  AgentService,
+  McpService,
+  ModelConfigService,
+  KnowledgeService,
+  BashService,
+  WorkspaceService,
+  VoiceService,
+  UpdateService
+])
+void ipcMainServices
+log.debug('IPC services 已注册', {
+  namespaces: [
+    'app',
+    'db',
+    'window',
+    'theme',
+    'agent',
+    'mcp',
+    'modelConfig',
+    'knowledge',
+    'bash',
+    'workspace',
+    'voice',
+    'update'
+  ]
+})
+
+// MCP 配置变更不再驱逐 Agent：MCP 工具经 mcp_tools/mcp_call 元工具按需发现与调用（不预注入），
+// 变更只影响后续发现的目录内容与实时可用性校验，在途会话无需中断（见 agent/mcp/index.ts）。
+
+// 工作区删除后驱逐其会话的内存 Agent，并释放会话级内存资源（本会话放行规则、持久化 shell）。
+// 在 service 层接线，避免 workspace-service 反向依赖 agent-service 造成循环引用。
+ipcMainServices.workspace.setOnSessionsRemoved(async (sessionIds) => {
+  for (const id of sessionIds) {
+    clearSessionPermissions(id)
+    bashSessionManager.disposeSession(id)
+    await ipcMainServices.agent.evictSession(id)
+  }
+})
+
+// 窗口关闭守卫：工作区有会话正在生成时弹确认，确认后中断生成再关闭。
+// 目的：不让 AI 完全静默后台运行（可能触发工具审批/ask_user 而无人处理）；
+// 用户取消则保持窗口；最小化不经过 close，不受影响。
+setWindowCloseGuard(async (aw) => {
+  const workdir = aw.workdir
+  if (!workdir) return 'allow'
+  if (!ipcMainServices.agent.hasRunningSessions(workdir)) return 'allow'
+  const { response } = await dialog.showMessageBox(aw.win, {
+    type: 'warning',
+    buttons: ['取消', '关闭并中断'],
+    defaultId: 0,
+    cancelId: 0,
+    title: '会话正在生成',
+    message: '该工作区有会话正在生成，关闭窗口将中断它',
+    detail:
+      '继续关闭会中止正在进行的对话（含可能等待确认的工具操作）；已生成的内容已保存，可重新打开窗口继续。'
+  })
+  if (response !== 1) return 'blocked'
+  await ipcMainServices.agent.abortSessionsByWorkdir(workdir)
+  return 'allow'
+})
+
+// Export the combined type for the renderer's createIpcRendererClient
+export type IpcMainServices = typeof ipcMainServices

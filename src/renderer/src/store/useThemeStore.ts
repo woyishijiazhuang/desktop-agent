@@ -2,7 +2,7 @@ import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
 import { mainClient } from '../utils/main-client'
 import type { ThemeMode } from '@main/agent/types'
-import type { ThemeColorTokens, ThemePalette } from '@main/service/theme-palettes'
+import type { ThemeColorTokens, ThemePalette } from '@main/infra/theme-palettes'
 
 /**
  * 默认紫罗兰 token（与 base.css :root 及 theme-palettes 的 violet 一致）：

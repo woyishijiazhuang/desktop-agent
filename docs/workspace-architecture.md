@@ -100,7 +100,7 @@ CREATE INDEX idx_sessions_workdir_active ON sessions(workdir, last_active_at);
 ### 3.3 移除全局 workdir 设置
 
 - `src/main/database/settings.ts` 白名单删除 `'agent.workdir'`。
-- `src/main/agent/agent-service.ts` 的 `getWorkdir/setWorkdir` 移除，`pickWorkdir` 迁入工作区服务（见 §4.4）。
+- `src/main/services/agent-service.ts` 的 `getWorkdir/setWorkdir` 移除，`pickWorkdir` 迁入工作区服务（见 §4.4）。
 
 ---
 
@@ -108,7 +108,7 @@ CREATE INDEX idx_sessions_workdir_active ON sessions(workdir, last_active_at);
 
 ### 4.1 窗口管理器多窗口化（核心）
 
-`src/main/service/window-manager.ts` 由单窗口重构为多窗口：
+`src/main/infra/window-manager.ts` 由单窗口重构为多窗口：
 
 ```ts
 type WorkspaceWindow = {
@@ -148,26 +148,26 @@ settingsWindow: { win: BaseWindow; headerView; contentView } | null
 
 **方案**：主进程以 `event.sender` 为凭据自动注入 workdir，渲染层不显式传参。
 
-- 在 `src/main/service/index.ts` 的 `initializeIpcMainServices` 外增加一层 `withWorkspaceScope(svc, scopedMethods)` 包装：对标记为工作区作用域的方法，分发前经 `getWorkspaceByWebContents(sender)` 解析 workdir，作为额外首参注入 `method(event, workdir, ...args)`；无法解析则抛错。
+- 在 `src/main/services/index.ts` 的 `initializeIpcMainServices` 外增加一层 `withWorkspaceScope(svc, scopedMethods)` 包装：对标记为工作区作用域的方法，分发前经 `getWorkspaceByWebContents(sender)` 解析 workdir，作为额外首参注入 `method(event, workdir, ...args)`；无法解析则抛错。
 - 工作区作用域的方法清单（约定）：
   - `db.*`：listSessionsPaged / searchSessions / listDeletedSessions / purgeTrash / createSession 相关
   - `agent.*`：会话级操作（send / evictSession / getSessionContext 等）
   - `bash.*`：会话级 shell 操作
-- 推送事件路由（`src/main/service/render-client.ts`）：`agentEvent.*` 携带 `sessionId` → 经 `sessionWorkdirCache`（Map<sessionId, workdir>，创建/驱逐时维护）解析目标工作区 → `sendToWorkspace`；主题/模型配置等全局事件 → `broadcastToWorkspaces` + 设置窗口。
+- 推送事件路由（`src/main/infra/render-client.ts`）：`agentEvent.*` 携带 `sessionId` → 经 `sessionWorkdirCache`（Map<sessionId, workdir>，创建/驱逐时维护）解析目标工作区 → `sendToWorkspace`；主题/模型配置等全局事件 → `broadcastToWorkspaces` + 设置窗口。
 - 新增 `db.settingChanged { key }` 广播：设置变更后推送所有窗口，触发对应 store 刷新（当前各窗口独立加载、无同步机制，需补齐）。
 
 > P2 前置 spike：确认 `electron-ipc-service` 的分发是否支持包装层拦截（方法签名 `(event, ...args)` 约定），验证 BaseWindow 多窗口下推送通道可用性。
 
 ### 4.3 workdir 解析链路（全局 → 按会话）
 
-- 新建 `src/main/agent/workdir.ts`：`resolveAgentWorkdir()` 替换为 `resolveSessionWorkdir(sessionId)`（读 session 行 workdir，配 `Map<sessionId, workdir>` 轻量缓存，Agent 驱逐时清理）。
+- 新建 `src/main/agent/runtime/workdir.ts`：`resolveAgentWorkdir()` 替换为 `resolveSessionWorkdir(sessionId)`（读 session 行 workdir，配 `Map<sessionId, workdir>` 轻量缓存，Agent 驱逐时清理）。
 - `src/main/agent/agent-manager.ts` `createAgent(sessionId)`：从 session 行取 workdir，固化到 Agent 实例；系统提示词组装（`buildSystemCapabilitySections(workdir, shellKind)`）与 `buildMemorySection(workdir)`（§5）按该 workdir 生成。
 - 工具侧 `src/main/agent/tools/{bash,glob,grep,download}.ts`：`buildTools({ sessionId })` 已持有 sessionId，改为 `resolveSessionWorkdir(sessionId)` 取默认 cwd/root；bash 的 `PersistentShell.run({cwd})` 与 `startBackground({cwd})` 传该 workdir。
 - `BashSessionManager.defaults` 已按 sessionId 键控，天然隔离，无需改。
 
 ### 4.4 新增 `WorkspaceService`（namespace `workspace`）
 
-在 `src/main/service/workspace-service.ts` 新增，注册进 `src/main/service/index.ts`：
+在 `src/main/services/workspace-service.ts` 新增，注册进 `src/main/services/index.ts`：
 
 | 方法                                                    | 说明                                                                         |
 | ------------------------------------------------------- | ---------------------------------------------------------------------------- |
@@ -283,11 +283,11 @@ agent.md 不迁移（按需创建）。
 | 阶段            | 内容                                                                | 复杂度 | 涉及主要文件                                                                                                             |
 | --------------- | ------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------ |
 | P0 数据层       | workspaces 表 + sessions.workdir + API 过滤 + 迁移                  | 小     | `database/schema.ts`、`database/sessions.ts`、`database/workspaces.ts`（新）、`database/types/*`、`database/settings.ts` |
-| P1 窗口泛化     | 单窗口 → 多窗口 Map、启动恢复、bounds 持久化、多窗口重建            | 大     | `service/window-manager.ts`、`main/index.ts`、`service/window-service.ts`                                                |
-| P2 IPC 作用域   | sender → workdir 注入、事件按工作区路由、settingChanged 广播        | 大     | `service/index.ts`、`service/render-client.ts`、`service/db-service.ts`、`service/workspace-service.ts`（新）            |
-| P3 workdir 链路 | resolveSessionWorkdir、Agent 持 workdir、工具/提示词改造            | 中     | `agent/workdir.ts`、`agent/agent-manager.ts`、`agent/tools/*`                                                            |
-| P4 记忆系统     | buildMemorySection 注入 agent.md、大小上限、agent.md 编辑器         | 中     | `agent/agent-manager.ts`、`service/workspace-service.ts`、`components/settings/WorkspacePanel.vue`（新）                 |
-| P5 设置独立窗口 | createAppWindow 参数化、托盘/菜单入口、窗口类型识别、工作区管理 tab | 中     | `service/window-manager.ts`、`service/tray-service.ts`、`service/app-menu-service.ts`、`SettingsView.vue`                |
+| P1 窗口泛化     | 单窗口 → 多窗口 Map、启动恢复、bounds 持久化、多窗口重建            | 大     | `infra/window-manager.ts`、`main/index.ts`、`services/window-service.ts`                                                 |
+| P2 IPC 作用域   | sender → workdir 注入、事件按工作区路由、settingChanged 广播        | 大     | `services/index.ts`、`infra/render-client.ts`、`services/db-service.ts`、`services/workspace-service.ts`（新）           |
+| P3 workdir 链路 | resolveSessionWorkdir、Agent 持 workdir、工具/提示词改造            | 中     | `agent/runtime/workdir.ts`、`agent/agent-manager.ts`、`agent/tools/*`                                                    |
+| P4 记忆系统     | buildMemorySection 注入 agent.md、大小上限、agent.md 编辑器         | 中     | `agent/agent-manager.ts`、`services/workspace-service.ts`、`components/settings/WorkspacePanel.vue`（新）                |
+| P5 设置独立窗口 | createAppWindow 参数化、托盘/菜单入口、窗口类型识别、工作区管理 tab | 中     | `infra/window-manager.ts`、`infra/tray-service.ts`、`infra/app-menu-service.ts`、`SettingsView.vue`                      |
 | P6 渲染层       | 窗口身份、会话作用域、空态、设置窗口路由                            | 中     | `store/useWindowStore.ts`、`store/useSessionStore.ts`、`ChatView.vue`、`router/index.ts`                                 |
 | P7 回归验证     | 老数据迁移验证、多窗口交互、Windows/Linux 回归                      | 中     | —                                                                                                                        |
 

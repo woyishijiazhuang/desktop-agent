@@ -3,8 +3,8 @@ import {
   HeaderThemeService as HeaderThemeServiceBase,
   HeaderUiService as HeaderUiServiceBase
 } from '@renderer/service/header-view-services'
-import type { WindowState } from '@main/service/window-service'
-import type { ThemePalette } from '@main/service/theme-palettes'
+import type { WindowState } from '@main/services/window-service'
+import type { ThemePalette } from '@main/infra/theme-palettes'
 import { mainClient } from '@renderer/utils/main-client'
 
 /**

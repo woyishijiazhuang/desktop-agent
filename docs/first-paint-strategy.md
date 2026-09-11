@@ -32,7 +32,7 @@
 | 现象                     | 现状（2026-09-09）                                                                                                                                                                                                                                                                                                                                                                                     |
 | ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | 首页白屏、加载慢         | [index.html](file:///Users/hupengfei/Documents/my-app/src/renderer/index.html) 中 `#app` 为空，首帧无可绘制内容；内容需等入口 JS 下载 → 解析 → 执行 → Vue 挂载后才出现。干净构建实测（`out/renderer/assets`，minified）：入口 `index-*.js` 约 **1.27MB**；echarts 此前以 modulepreload 随启动预载（独立 `echarts-*.js` 约 **1.9MB**），2026-09-09 已改按需加载（见 §5），窗口首启 JS ≈ 4.0MB → ≈ 2.1MB |
-| 设置窗口「先开窗后加载」 | **已解决（方案二落地）**：设置窗口改载独立轻量入口 `settings/index.html`，不再加载聊天 SPA 静态链（见 [window-manager.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/window-manager.ts#L248-L267) `loadAppViews` 与 [electron.vite.config.ts](file:///Users/hupengfei/Documents/my-app/electron.vite.config.ts#L37-L44) `rendererInput`）                                               |
+| 设置窗口「先开窗后加载」 | **已解决（方案二落地）**：设置窗口改载独立轻量入口 `settings/index.html`，不再加载聊天 SPA 静态链（见 [window-manager.ts](file:///Users/hupengfei/Documents/my-app/src/main/infra/window-manager.ts#L248-L267) `loadAppViews` 与 [electron.vite.config.ts](file:///Users/hupengfei/Documents/my-app/electron.vite.config.ts#L37-L44) `rendererInput`）                                                 |
 | 参照系                   | [header/index.html](file:///Users/hupengfei/Documents/my-app/src/renderer/header/index.html) 是无框架静态页（HTML + 少量 TS），从不感觉慢 —— 印证「独立轻量入口 + 静态首帧」是项目内已验证的模式                                                                                                                                                                                                       |
 
 相关文件：多页入口配置见 [electron.vite.config.ts](file:///Users/hupengfei/Documents/my-app/electron.vite.config.ts)（`rendererInput` 含 `index` / `header` / `settings` 三个入口）；设置窗口内容在 [src/renderer/settings/](file:///Users/hupengfei/Documents/my-app/src/renderer/settings/index.html)；`SettingsView` 的原单文件结构已随方案二拆分为 `settings/` 下多视图。
@@ -45,14 +45,14 @@
 
 - 做法：在入口 HTML `<body>` 直接写静态骨架 DOM + 内联 `<style>`，**不依赖任何 JS**。
   - 骨架做**通用品牌占位**（logo + 标题 + 简单线条/色块区域），不做像素级 UI 复刻：复用成本低，且对工作区/设置两类窗口都适配，避免无 JS 时按 hash 分支的麻烦。
-  - 颜色内联写**明暗两套**（`prefers-color-scheme`），与主进程 `WINDOW_BG_DARK/LIGHT`（[window-manager.ts](file:///e:/code/desktop-agent/src/main/service/window-manager.ts)）对齐，避免深色模式闪白。
+  - 颜色内联写**明暗两套**（`prefers-color-scheme`），与主进程 `WINDOW_BG_DARK/LIGHT`（[window-manager.ts](file:///e:/code/desktop-agent/src/main/infra/window-manager.ts)）对齐，避免深色模式闪白。
 - CSP 约束：项目 CSP 禁止内联 `script`，但放行内联 `style`（`style-src 'self' 'unsafe-inline'`），故内联 CSS 合法；骨架的淡出/移除只能由打包 JS 完成。建议骨架作为 `#app` 的兄弟节点、由 `App.vue onMounted` 后移除；或放 `#app` 内由 `mount()` 整体替换（瞬时切换，无动画）。
 - 收益：白屏 → 首帧即见窗口底色与占位 UI。
 - 风险：低，纯 HTML/CSS 改动。
 
 ## 4. 方案二：设置窗口独立轻量入口
 
-> 状态：**已实施**。落地形态为「独立 Vue 轻量入口」（非 §6 的静态布局）：新增 [src/renderer/settings/](file:///Users/hupengfei/Documents/my-app/src/renderer/settings/index.html) 入口，[loadAppViews](file:///Users/hupengfei/Documents/my-app/src/main/service/window-manager.ts#L248-L267) 对 `workdir === null` 的窗口直接载 `settings/index.html`，初始 tab 经 hash（`#/settings/<tab>`）注入，首帧即正确分类。下述拆分步骤作为当时的实现要点记录。
+> 状态：**已实施**。落地形态为「独立 Vue 轻量入口」（非 §6 的静态布局）：新增 [src/renderer/settings/](file:///Users/hupengfei/Documents/my-app/src/renderer/settings/index.html) 入口，[loadAppViews](file:///Users/hupengfei/Documents/my-app/src/main/infra/window-manager.ts#L248-L267) 对 `workdir === null` 的窗口直接载 `settings/index.html`，初始 tab 经 hash（`#/settings/<tab>`）注入，首帧即正确分类。下述拆分步骤作为当时的实现要点记录。
 
 **目标**：设置窗口不再加载整份聊天 SPA，只加载设置页自身所需依赖。
 
@@ -60,7 +60,7 @@
   1. 新增 `src/renderer/settings.html` + 精简入口（独立 `main.ts`）。
   2. 入口最小引导：仍挂 `NConfigProvider / NMessageProvider / NDialogProvider` + Pinia + **迷你路由**（单条 `/settings` 路由，满足 `SettingsView` 对 `useRoute` 读 tab 的依赖）；**不引导 chat 相关代码**（聊天 store、sidebar、markstream、语音等不进加载图）。
   3. 渲染层服务按需裁剪：[service/index.ts](file:///e:/code/desktop-agent/src/renderer/src/service/index.ts) 现有 5 个服务，只保留设置页真正用到的（settings-sync / theme-sync / model-config-sync / ui-service 大概率需要，agent-event 等不需要）；实施前需逐一盘点各设置面板引用的 store/service。
-  4. [window-manager.ts](file:///e:/code/desktop-agent/src/main/service/window-manager.ts) `loadAppViews`：设置窗口（`workdir === null`）contentView 改载 `settings.html`，不再带 hash；初始 tab 改经 query（`settings.html?tab=...`）注入，保持「首帧即正确 tab」。
+  4. [window-manager.ts](file:///e:/code/desktop-agent/src/main/infra/window-manager.ts) `loadAppViews`：设置窗口（`workdir === null`）contentView 改载 `settings.html`，不再带 hash；初始 tab 改经 query（`settings.html?tab=...`）注入，保持「首帧即正确 tab」。
   5. 共享代码（store/service 基础模块）由 Rollup 自动抽成 shared chunk，各窗口只加载自己需要的部分。
 - 收益：设置窗口加载量从 ~5MB 降至仅设置相关依赖（聊天独有的大件被排除是主要收益）。
 - 风险与回归点：需确认设置入口同样走 `window.initWindow` 等主进程窗口初始化链路；回归验证 tab 记忆、「管理工作区」跳转（`openSettingsTab`）、主题/模型配置同步、标题栏模式切换后的 `recreateAllWindows`（重建含设置窗口，需覆盖新加载分支）。
@@ -142,21 +142,21 @@
 - 启动：`pnpm exec electron . --remote-debugging-port=9222`，再经 CDP（`/json/list` 找对应入口 target）连渲染进程。
 - **不要用 reload 模拟冷启动**：同进程内 V8 会缓存模块编译结果，reload 是热数据（实测 reload 总 CPU 仅 ~90ms）；真冷启动须开全新进程且不 reload。
 - 聊天窗口冷启动（本机 M 系，生产构建）：`load` 143ms、首帧 **212ms**（DOM 3453 节点 = 完整聊天 UI）；主线程 Task 累计 ~30–90ms，其余由 Chromium 在 worker 线程并行解析编译 JS（故主线程 CPU Profile 几乎空闲属正常）。
-- 设置窗口冷打开：窗口创建 ≈120ms，渲染 `load` 105ms、首帧 176ms——内容约 0.2s 就绪，但窗口 `show: true` 随建随显（见 [window-manager.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/window-manager.ts#L286-L308)），这就是「先见空白窗」的来源。
+- 设置窗口冷打开：窗口创建 ≈120ms，渲染 `load` 105ms、首帧 176ms——内容约 0.2s 就绪，但窗口 `show: true` 随建随显（见 [window-manager.ts](file:///Users/hupengfei/Documents/my-app/src/main/infra/window-manager.ts#L286-L308)），这就是「先见空白窗」的来源。
 - 局限：Electron（Chromium 136）下 Tracing 的 `v8.compile` 类别未采到事件，逐脚本 parse/编译拆分建议改用 GUI DevTools Performance 录一次冷启动查看。
 
 ### 9.2 主进程启动链路打点（已实施）
 
 各段已带结构化耗时字段写 electron-log（macOS：`~/Library/Logs/desktop-agent/main.log`）：
 
-| 打点                           | 代码位置                                                                                                   | 含义                                              |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `数据库已打开 openMs`          | [database/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/database/index.ts#L95-L99)           | db 打开耗时（主模块 import 阶段，早于 app ready） |
-| `应用启动`                     | main/index.ts whenReady                                                                                    | 主进程就绪                                        |
-| `创建应用窗口`                 | window-manager.ts                                                                                          | 窗口随建随显（show: true，不等待内容）            |
-| `内置技能播种完成 elapsedMs`   | [main/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/index.ts#L75-L87)                        | 补种耗时（不 await，与窗口创建并行）              |
-| `内容视图加载完成 loadMs`      | [window-manager.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/window-manager.ts#L368-L371) | 窗口创建 → contentView `did-finish-load`          |
-| `工作区窗口恢复完成 elapsedMs` | main/index.ts                                                                                              | `restoreStartupWindows` 全量完成                  |
+| 打点                           | 代码位置                                                                                                 | 含义                                              |
+| ------------------------------ | -------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `数据库已打开 openMs`          | [database/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/database/index.ts#L95-L99)         | db 打开耗时（主模块 import 阶段，早于 app ready） |
+| `应用启动`                     | main/index.ts whenReady                                                                                  | 主进程就绪                                        |
+| `创建应用窗口`                 | window-manager.ts                                                                                        | 窗口随建随显（show: true，不等待内容）            |
+| `内置技能播种完成 elapsedMs`   | [main/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/index.ts#L75-L87)                      | 补种耗时（不 await，与窗口创建并行）              |
+| `内容视图加载完成 loadMs`      | [window-manager.ts](file:///Users/hupengfei/Documents/my-app/src/main/infra/window-manager.ts#L368-L371) | 窗口创建 → contentView `did-finish-load`          |
+| `工作区窗口恢复完成 elapsedMs` | main/index.ts                                                                                            | `restoreStartupWindows` 全量完成                  |
 
 实测一次：db 17ms → 应用启动 → 创建应用窗口 →（并行）技能播种 173ms 于窗口创建之后完成 → 内容视图 `loadMs` 254ms。技能播种从 `await` 改为启动即发起后，首窗创建不再被其磁盘 IO 卡住。
 

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // 预设主题色色板选择器：浅色 primary 作色块预览，选中态描边高亮。
 // 供设置页全局默认主题色与工作区卡片自定义主题色复用。
-import { THEME_COLOR_KEYS, THEME_PALETTES, type ThemeColorKey } from '@main/service/theme-palettes'
+import { THEME_COLOR_KEYS, THEME_PALETTES, type ThemeColorKey } from '@main/infra/theme-palettes'
 
 defineProps<{
   /** 当前选中主题色 key；null = 跟随全局默认（仅 allow-default 时可选）。 */

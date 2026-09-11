@@ -26,7 +26,7 @@ import {
   isPathWithinAny,
   isSandboxWriteAllowed,
   sandboxWriteDeniedMessage
-} from '../sandbox'
+} from '../runtime/sandbox'
 import {
   SETTING_ENABLED_TOOLS,
   SETTING_MEMORY_ENABLED,
@@ -251,7 +251,7 @@ function isToolCurrentlyEnabled(name: string): boolean {
   const kbEnabled = db.getSetting<boolean>(SETTING_KB_ENABLED) !== false
   if (!kbEnabled && KB_TOOLS.has(name)) return false
   const messageSearchEnabled = db.getSetting<boolean>(SETTING_MESSAGE_SEARCH_ENABLED) === true
-  if (!messageSearchEnabled && MESSAGE_SEARCH_TOOLS.has(name)) return true
+  if (!messageSearchEnabled && MESSAGE_SEARCH_TOOLS.has(name)) return false
   const bashEnabled = overrides['bash'] ?? true
   if (!bashEnabled && (name === 'bash' || BASH_AUX_TOOLS.has(name))) return false
   return true

@@ -3,7 +3,7 @@ import { MicVAD, utils } from '@ricky0123/vad-web'
 import { useMessage } from 'naive-ui'
 import { useChatStore } from '@renderer/store/useChatStore'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
-import { extractMessageText } from '@renderer/utils/messageText'
+import { extractMessageText } from '@shared/message-text'
 import { mainClient } from '@renderer/utils/main-client'
 
 /** 语音会话阶段：off=未开启 / listening=等待说话 / recording=正在录音 /

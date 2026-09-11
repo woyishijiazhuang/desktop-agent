@@ -29,11 +29,12 @@ function uid(): string {
  * - 图片输入受模型多模态能力约束（imageDisabled 由调用方实时传入）
  */
 export function useAttachments(options: {
+  /** 待发送附件容器（由调用方提供，按会话独立：切换会话时指向对应草稿）。 */
+  attachments: Ref<ComposerAttachment[]>
   /** 当前模型是否不支持图片（返回布尔，随模型切换实时生效）。 */
   imageDisabled: () => boolean
   message: MessageApi
 }): {
-  attachments: Ref<ComposerAttachment[]>
   dragOver: Ref<boolean>
   onDrop: (e: DragEvent) => void
   onPaste: (e: ClipboardEvent) => void
@@ -41,7 +42,7 @@ export function useAttachments(options: {
   removeAttachment: (id: string) => void
 } {
   /** 待发送附件（图片 / 纯文本），发送成功或移除后清空。 */
-  const attachments = ref<ComposerAttachment[]>([])
+  const attachments = options.attachments
   /** 拖拽悬停高亮。 */
   const dragOver = ref(false)
 
@@ -203,7 +204,6 @@ export function useAttachments(options: {
   }
 
   return {
-    attachments,
     dragOver,
     onDrop,
     onPaste,

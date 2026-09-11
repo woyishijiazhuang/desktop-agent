@@ -2,8 +2,8 @@ import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { mkdir } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
-import { resolveAgentSessionWorkdir } from '../workdir'
-import { bashSessionManager, formatBytes } from '../bash-session'
+import { resolveAgentSessionWorkdir } from '../runtime/workdir'
+import { bashSessionManager, formatBytes } from '../runtime/bash-session'
 import { createLogger } from '../../utils/log'
 
 const log = createLogger('tool:download')

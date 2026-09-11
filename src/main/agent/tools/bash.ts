@@ -1,6 +1,6 @@
 import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { resolveAgentSessionWorkdir } from '../workdir'
+import { resolveAgentSessionWorkdir } from '../runtime/workdir'
 import { db } from '../../database'
 import { getShellEnv } from '../../utils/shell-env'
 import { SETTING_AGENT_ENV } from '../types'
@@ -10,8 +10,8 @@ import {
   formatBytes,
   resolveShell,
   setBashSandboxWrapper
-} from '../bash-session'
-import { createSandboxWrapper } from '../sandbox'
+} from '../runtime/bash-session'
+import { createSandboxWrapper } from '../runtime/sandbox'
 import { createLogger } from '../../utils/log'
 
 const log = createLogger('tool:bash')

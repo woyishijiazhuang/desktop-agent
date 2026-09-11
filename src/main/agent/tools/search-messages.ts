@@ -2,7 +2,7 @@ import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool, AgentToolResult } from '@earendil-works/pi-agent-core'
 import { db } from '../../database'
 import { createLogger } from '../../utils/log'
-import { extractMessageText } from '../../utils/message-text'
+import { extractMessageText } from '@shared/message-text'
 
 const log = createLogger('tool:search-messages')
 

@@ -1,36 +1,32 @@
 import { Agent } from '@earendil-works/pi-agent-core'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { Model, Api, AssistantMessage } from '@earendil-works/pi-ai'
-import { rendererClient } from '../service/render-client'
+import { rendererClient } from '../infra/render-client'
 import { db } from '../database'
-import { toCreateMessageParams, rowsToAgentMessages } from './convert'
+import { toCreateMessageParams, rowsToAgentMessages } from './context/convert'
 import { buildTools } from './tools'
-import { resolveShell } from './bash-session'
-import {
-  getDecryptedApiKey,
-  ensureAllModelConfigsRegistered,
-  resolveAssistantCost
-} from './model-config'
-import { createBeforeToolCallHook } from './permission'
-import { clearPlanMode, isPlanMode, finalizePlanProgress } from './plan-mode'
-import { clearSessionInteractions } from './interaction'
+import { resolveShell } from './runtime/bash-session'
+import { getDecryptedApiKey, ensureAllModelConfigsRegistered, resolveAssistantCost } from './model'
+import { createBeforeToolCallHook } from './runtime/permission'
+import { clearPlanMode, isPlanMode, finalizePlanProgress } from './runtime/plan-mode'
+import { clearSessionInteractions } from './runtime/interaction'
 import {
   registerSubagentHost,
   unregisterSubagentHost,
   PLAN_READONLY_TOOLS,
   SUBAGENT_EXCLUDED_TOOLS
 } from './subagent'
-import { getModelsInstance, resolveModel, completeText } from './models'
+import { getModelsInstance, resolveModel, completeText } from './model/models'
 import {
   resolveAgentSessionWorkdir,
   resolveSessionWorkdir,
   cacheSessionWorkdir,
   dropSessionWorkdir
-} from './workdir'
-import { readAgentMdForInjection } from './agent-md'
-import { LoopDetector } from './loop-detector'
+} from './runtime/workdir'
+import { readAgentMdForInjection } from './context/agent-md'
+import { LoopDetector } from './runtime/loop-detector'
 import { createLogger } from '../utils/log'
-import { notifyAgentFinished } from '../service/notifier'
+import { notifyAgentFinished } from '../infra/notifier'
 import type { AgentEventPayload, ThinkingLevel } from './types'
 import {
   SETTING_DEFAULT_MODEL,
