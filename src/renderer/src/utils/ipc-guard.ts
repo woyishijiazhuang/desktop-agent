@@ -50,7 +50,8 @@ export function initializeSafeRendererServices<T extends readonly IpcServiceCons
 ): IpcServices<T> {
   const services = createSafeIpcRendererServices(Services)
   const register = (window as unknown as Record<string, unknown>)[IPC_RENDERER_SERVICE_FN] as
-    ((cb: (message: RendererServiceMessage) => void) => void) | undefined
+    | ((cb: (message: RendererServiceMessage) => void) => void)
+    | undefined
   if (!register) {
     throw new Error(
       'IPC channel is not available. Make sure to call `initializeIpcPreload()` in the preload script.'

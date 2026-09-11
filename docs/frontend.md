@@ -34,18 +34,18 @@
 
 ### 技术栈
 
-| 依赖 | 作用 |
-|---|---|
-| Vue 3 | `<script setup>` 组合式 API |
-| Pinia | 状态管理（setup store 形式） |
-| Vue Router 4 | hash 模式，路由懒加载 |
-| Naive UI | 组件库，通过 `NConfigProvider` 联动主题 |
-| `markstream-vue` | 流式 Markdown 渲染器（chat 模式 + final 标志 + echarts 语言级覆盖）；代码块统一走 markstream（JSON 用 Monaco 高亮、纯文本用 pre 轻量渲染），已替代 NCode + highlight.js |
-| `vue-stick-to-bottom` | 粘底滚动，ResizeObserver 驱动 |
-| `@vicons/ionicons5` | 图标 |
-| `electron-ipc-service` | 双向 IPC 客户端/服务端框架 |
-| `@earendil-works/pi-agent-core` / `pi-ai` | Agent 事件与消息类型 |
-| `echarts` | 用量统计与图表块渲染 |
+| 依赖                                      | 作用                                                                                                                                                                    |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Vue 3                                     | `<script setup>` 组合式 API                                                                                                                                             |
+| Pinia                                     | 状态管理（setup store 形式）                                                                                                                                            |
+| Vue Router 4                              | hash 模式，路由懒加载                                                                                                                                                   |
+| Naive UI                                  | 组件库，通过 `NConfigProvider` 联动主题                                                                                                                                 |
+| `markstream-vue`                          | 流式 Markdown 渲染器（chat 模式 + final 标志 + echarts 语言级覆盖）；代码块统一走 markstream（JSON 用 Monaco 高亮、纯文本用 pre 轻量渲染），已替代 NCode + highlight.js |
+| `vue-stick-to-bottom`                     | 粘底滚动，ResizeObserver 驱动                                                                                                                                           |
+| `@vicons/ionicons5`                       | 图标                                                                                                                                                                    |
+| `electron-ipc-service`                    | 双向 IPC 客户端/服务端框架                                                                                                                                              |
+| `@earendil-works/pi-agent-core` / `pi-ai` | Agent 事件与消息类型                                                                                                                                                    |
+| `echarts`                                 | 用量统计与图表块渲染                                                                                                                                                    |
 
 渲染进程通过 `electron-ipc-service/renderer` 的类型化客户端与主进程通信：渲染进程调主进程方法（`mainClient.app.*`、`mainClient.db.*`、`mainClient.window.*`、`mainClient.agent.*`、`mainClient.mcp.*`、`mainClient.modelConfig.*`），主进程通过命名空间服务（`UiService`、`AgentEventService`）反向推送事件。
 
@@ -68,6 +68,7 @@ CSP 策略（[index.html](file:///Users/hupengfei/Documents/my-app/src/renderer/
 **[utils/main-client.ts](file:///Users/hupengfei/Documents/my-app/src/renderer/src/utils/main-client.ts)**：单行导出 `mainClient = createIpcRendererClient<IpcMainServices>()`，是渲染进程调主进程的统一入口（类型由主进程 `IpcMainServices` 推导）。覆盖命名空间：`app`、`db`、`window`、`agent`、`mcp`、`modelConfig`。
 
 **[service/index.ts](file:///Users/hupengfei/Documents/my-app/src/renderer/src/service/index.ts)**：注册主进程反向推送的接收服务。
+
 - `UiService`（namespace `ui`）：`windowStateChange(state)` → `Object.assign(windowStore.state, state)`；`showToast(options)` → 经 `utils/toast.ts` 调 Naive UI `useMessage()` 弹出全局 toast；`trayAction(action)` → 派发 `CustomEvent('tray-action')`，App.vue 监听后导航。
 - `AgentEventService`（namespace `agentEvent`）：`onEvent(payload)` 路由到对应会话的 chat store 容器（含 rAF 流式限频）；`onPermissionRequest(req)` → `usePermissionStore().enqueue(req)`；`onSessionUpdate(session)` → `useSessionStore().upsertSession(session)` + `useChatStore().updateCompress(session)`（压缩成功后同步分界元信息）。
 
@@ -107,40 +108,41 @@ UI 动作（输入/切换会话/改设置）
 - **职责**：**多会话聊天状态容器**（按 sessionId 存每会话实时状态）+ 「当前会话」视图代理 + 全部聊天动作。
 
 **核心结构**：
+
 - `sessions = reactive<Record<string, SessionChatState>>`：每会话独立容器（messages/isBusy/toolStatus/error/lastTurnFailed/model 等）。
 - `current` computed：指向 `currentSessionId` 对应容器；临时态（`currentSessionId === null`）指向虚拟 key `__ephemeral__`。聊天组件通过同名字段读取「当前会话视图」，后台会话事件照常更新各自容器（侧栏据此显示「生成中/失败」状态点）。
 
 **Key state（当前会话视图）**：
 
-| 字段 | 含义 |
-|---|---|
-| `currentSessionId` | 当前会话 id；`null` 表示临时空对话（ephemeral） |
-| `messages` | 当前会话消息列表（user/assistant/toolResult） |
-| `isBusy` | 是否正在生成 |
-| `error` | 错误提示文本 |
-| `toolStatus` | 工具调用实时状态，key = toolCallId |
-| `currentModelKey` | 当前会话生效模型键；`null` = 无可用模型 |
-| `lastTurnFailed` | 上一轮是否真实失败（非中止） |
-| `prefillText` | 一次性回填文本（recall 失败消息时回填输入框） |
+| 字段                                    | 含义                                                                                  |
+| --------------------------------------- | ------------------------------------------------------------------------------------- |
+| `currentSessionId`                      | 当前会话 id；`null` 表示临时空对话（ephemeral）                                       |
+| `messages`                              | 当前会话消息列表（user/assistant/toolResult）                                         |
+| `isBusy`                                | 是否正在生成                                                                          |
+| `error`                                 | 错误提示文本                                                                          |
+| `toolStatus`                            | 工具调用实时状态，key = toolCallId                                                    |
+| `currentModelKey`                       | 当前会话生效模型键；`null` = 无可用模型                                               |
+| `lastTurnFailed`                        | 上一轮是否真实失败（非中止）                                                          |
+| `prefillText`                           | 一次性回填文本（recall 失败消息时回填输入框）                                         |
 | `compressLastIndex` / `compressSummary` | 压缩分界元信息：最后一个被压缩消息的 DB id / 摘要全文（MessageList 据此渲染分界卡片） |
 
 **Key actions**：
 
-| action | 行为 |
-|---|---|
-| `hydrateState(sessionId)` | 分页加载最近 `PAGE_SIZE=30` 条；`deriveLastTurnFailed` + `deriveToolStatus` 推导失败态与持久化工具状态 |
-| `loadMoreMessages()` | 以 `oldestLoadedId` 为边界向上翻页并 prepend |
-| `enterEphemeral()` | 清空当前视图 + `currentSessionId=null`，不写库；模型设为「上次使用/默认」、思考级别设为「上次使用」 |
-| `selectModel(key)` | 更新容器 + `setLastUsed`；会话已落库时写回 `session.model`、touch 置顶、驱逐内存 Agent（下一轮生效） |
-| `selectThinkingLevel(level)` | 写回会话行 + 写回「上次使用思考级别」（新建会话继承）+ 实时同步内存 Agent（`setThinkingLevel`，无需驱逐） |
-| `send(text)` | 临时态先置 `isBusy=true` 上锁 → `createSession({model})` → 虚拟容器整体迁移为新会话容器（免重载）→ 乐观 push userMsg → `mainClient.agent.prompt`；未选模型时拦截并提示 |
-| `abort()` / `retry()` / `regenerate()` | 对应主进程 IPC |
-| `recallLastMessage()` | 回收末条失败 user 消息回填输入框（`prefillText`） |
-| `applyEvent(sessionId, event, error)` | 核心事件分发（定位容器 + 惰性初始化，委托 `chat-events.ts` 纯函数） |
-| `jumpToMessage(messageId)` | 搜索跳转：已加载窗口内发定位信号，否则加载含目标的窗口 |
-| `updateCompress(session)` | main 压缩成功后经 onSessionUpdate 同步当前会话容器的压缩分界元信息 |
-| `forkFromMessage(userMessageId)` | 从某 user 消息复制历史开新分支 |
-| `removeSessionState(sessionId)` | 删除会话后清理容器防内存泄漏 |
+| action                                 | 行为                                                                                                                                                                   |
+| -------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `hydrateState(sessionId)`              | 分页加载最近 `PAGE_SIZE=30` 条；`deriveLastTurnFailed` + `deriveToolStatus` 推导失败态与持久化工具状态                                                                 |
+| `loadMoreMessages()`                   | 以 `oldestLoadedId` 为边界向上翻页并 prepend                                                                                                                           |
+| `enterEphemeral()`                     | 清空当前视图 + `currentSessionId=null`，不写库；模型设为「上次使用/默认」、思考级别设为「上次使用」                                                                    |
+| `selectModel(key)`                     | 更新容器 + `setLastUsed`；会话已落库时写回 `session.model`、touch 置顶、驱逐内存 Agent（下一轮生效）                                                                   |
+| `selectThinkingLevel(level)`           | 写回会话行 + 写回「上次使用思考级别」（新建会话继承）+ 实时同步内存 Agent（`setThinkingLevel`，无需驱逐）                                                              |
+| `send(text)`                           | 临时态先置 `isBusy=true` 上锁 → `createSession({model})` → 虚拟容器整体迁移为新会话容器（免重载）→ 乐观 push userMsg → `mainClient.agent.prompt`；未选模型时拦截并提示 |
+| `abort()` / `retry()` / `regenerate()` | 对应主进程 IPC                                                                                                                                                         |
+| `recallLastMessage()`                  | 回收末条失败 user 消息回填输入框（`prefillText`）                                                                                                                      |
+| `applyEvent(sessionId, event, error)`  | 核心事件分发（定位容器 + 惰性初始化，委托 `chat-events.ts` 纯函数）                                                                                                    |
+| `jumpToMessage(messageId)`             | 搜索跳转：已加载窗口内发定位信号，否则加载含目标的窗口                                                                                                                 |
+| `updateCompress(session)`              | main 压缩成功后经 onSessionUpdate 同步当前会话容器的压缩分界元信息                                                                                                     |
+| `forkFromMessage(userMessageId)`       | 从某 user 消息复制历史开新分支                                                                                                                                         |
+| `removeSessionState(sessionId)`        | 删除会话后清理容器防内存泄漏                                                                                                                                           |
 
 ### 3.2 chat-events.ts（事件纯函数）
 
@@ -148,6 +150,7 @@ UI 动作（输入/切换会话/改设置）
 - **职责**：定义 `SessionChatState`/`ToolStatus` 数据结构，提供 `applyChatEvent`（事件分发表）与 `mergeTranscript`（agent_end 权威列表合并）两个**纯函数**。
 
 **事件分发表**：
+
 - `agent_start` → isBusy=true、error=null；
 - `message_start` → 推入新消息（仅 assistant/toolResult；user 已由 send 乐观加入）；
 - `message_update` / `message_end` → **就地替换列表末条同 role 消息**（流式更新/finalize 共用，timestamp 不变 → 稳定 key 不变 → 增量渲染）；
@@ -215,42 +218,53 @@ UI 动作（输入/切换会话/改设置）
 ### 4.1 入口与根组件
 
 #### [index.html](file:///Users/hupengfei/Documents/my-app/src/renderer/index.html)
+
 HTML 外壳。CSP meta；`<div id="app">`；加载 `/src/main.ts`。
 
 #### [main.ts](file:///Users/hupengfei/Documents/my-app/src/renderer/src/main.ts)
+
 应用引导。注册 markstream echarts 覆盖；`createPinia()`；mount 前同步应用主题；挂载。
 
 #### [App.vue](file:///Users/hupengfei/Documents/my-app/src/renderer/src/App.vue)
+
 根组件。Provider 链（`NConfigProvider` → `NMessageProvider` → `NDialogProvider` → `ToastBridge` + router-view）。`themeOverrides` 按 isDark 切换：共享品牌覆盖（主色紫罗兰 `#7c3aed`、8px 圆角、Inter 字体族）+ 深色专属 surface 覆盖（bodyColor `#18181b`、cardColor `#1f1f23` 等，与 base.css token 对齐）。监听 `TRAY_ACTION_EVENT`（托盘动作导航）。
 
 #### [env.d.ts](file:///Users/hupengfei/Documents/my-app/src/renderer/src/env.d.ts)
+
 `vite/client` 模块声明。
 
 ### 4.2 路由与 IPC 层
 
 #### [router/index.ts](file:///Users/hupengfei/Documents/my-app/src/renderer/src/router/index.ts)
+
 hash 路由，`DefaultLayout` 包裹 `/chat` 与 `/settings` 子路由（懒加载）；`afterEach` 设 document.title。
 
 #### [service/index.ts](file:///Users/hupengfei/Documents/my-app/src/renderer/src/service/index.ts)
+
 注册 `UiService` + `AgentEventService`（见 [第 2 节](#2-应用架构)）。
 
 #### [service/ui-service.ts](file:///Users/hupengfei/Documents/my-app/src/renderer/src/service/ui-service.ts)
+
 namespace `ui`：`showToast`、`windowStateChange`、`trayAction`（CustomEvent 解耦，导出 `TRAY_ACTION_EVENT`）。
 
 #### [service/agent-event-service.ts](file:///Users/hupengfei/Documents/my-app/src/renderer/src/service/agent-event-service.ts)
+
 namespace `agentEvent`：`onEvent(payload)` —— 所有会话事件路由到对应 useChatStore 容器；**流式限频**——当前会话 `message_update` 走 rAF 缓冲（本地大模型每秒数百条，同一帧只保留最新一条），`message_end/agent_end/tool_*` 等权威事件前强制 flush；后台会话直接 apply（不触发渲染）。`onPermissionRequest`、`onSessionUpdate`。
 
 #### [utils/main-client.ts](file:///Users/hupengfei/Documents/my-app/src/renderer/src/utils/main-client.ts)
+
 `mainClient = createIpcRendererClient<IpcMainServices>()`。
 
 ### 4.3 布局
 
 #### [layouts/DefaultLayout.vue](file:///Users/hupengfei/Documents/my-app/src/renderer/src/layouts/DefaultLayout.vue)
+
 纯承载 `<router-view />`（标题栏已迁至主进程独立 WebContentsView）。**权限确认弹窗挂在此全局布局**：无论聊天页/设置页，权限请求都能及时展示，避免「在设置页时请求只入队不展示、Agent 静默挂起」。
 
 ### 4.4 视图（Views）
 
 #### [views/ChatView.vue](file:///Users/hupengfei/Documents/my-app/src/renderer/src/views/ChatView.vue)
+
 聊天主视图。
 
 - 挂 `<SessionSidebar />` + 右侧主区（权限确认弹窗已移至全局 DefaultLayout）。
@@ -261,6 +275,7 @@ namespace `agentEvent`：`onEvent(payload)` —— 所有会话事件路由到�
 - `<MessageList :messages :is-busy :compress-last-index :compress-summary @send @regenerate />` + `<ChatInput :is-busy @send @abort />`；主区 `max-width: 960px` 居中。
 
 #### [views/SettingsView.vue](file:///Users/hupengfei/Documents/my-app/src/renderer/src/views/SettingsView.vue)
+
 设置页。左侧 8 类导航（通用 / 模型 / 用量 / 工具 / 技能 / 记忆 / MCP / 数据与诊断）+ 右侧内容区。
 
 - `onMounted`：并行加载 settings、modelConfigs、回收站计数、开机自启、诊断目录、版本号。
@@ -272,76 +287,76 @@ namespace `agentEvent`：`onEvent(payload)` —— 所有会话事件路由到�
 
 #### chat/
 
-| 组件 | 职责 |
-|---|---|
-| `chat/ChatInput.vue` | 输入区：文本框 + 附件（拖拽/粘贴/选择）+ 技能多选 chips + 模型选择器 + 思考级别选择器 + 发送/中止；图片受模型多模态能力约束 |
-| `chat/MessageList.vue` | 消息列表：稳定 key + 粘底滚动（isBusy 时 smooth）+ toolResult 并入工具卡 + 顶部哨兵自动加载历史 + 搜索跳转定位/高亮 + 压缩分界卡片（`compressLastIndex` 后渲染 CompressDivider）+ 空会话欢迎页 |
-| `chat/MessageItem.vue` | 单条消息行：user/assistant 左右分离（user 右气泡，assistant 左全宽）；拆解 thinking/toolCall/text（流式 `final` 标记）；孤儿 toolResult 结果卡；失败标记行（空内容 + finishReason=error → 错误提示卡）；悬停操作条（时间/复制/分支/重生成） |
-| `chat/CompressDivider.vue` | 压缩分界卡片：「以上 N 条已压缩为摘要」，点击展开显示摘要全文 |
-| `chat/ToolCallCard.vue` | 工具调用卡片：工具名 + AI 意图说明 + 状态 + 结果摘要；展开分「参数」「结果」两区（NCode 懒渲染 + JSON pretty） |
-| `chat/ReasoningBlock.vue` | 思考过程块：流式中自动展开滚动，结束自动收起；纯文本展示防注入 |
-| `chat/EChartsBlock.vue` | markstream 语言级覆盖：```echarts 围栏 → ECharts 图表（跟随主题 dark 重建，流式/不可解析回退源码） |
-| `chat/UserImageBlock.vue` | 用户消息图片：base64 直接显示 / `file:` 引用经 IPC 读盘（模块级缓存），点击全屏预览 |
-| `chat/UserFileBlock.vue` | 用户消息文件内容块：折叠卡片，展开显示解析文本 |
-| `chat/UserSkillBlock.vue` | 用户消息技能块：技能名卡片，展开查看 SKILL.md 全文 |
+| 组件                       | 职责                                                                                                                                                                                                                                        |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `chat/ChatInput.vue`       | 输入区：文本框 + 附件（拖拽/粘贴/选择）+ 技能多选 chips + 模型选择器 + 思考级别选择器 + 发送/中止；图片受模型多模态能力约束                                                                                                                 |
+| `chat/MessageList.vue`     | 消息列表：稳定 key + 粘底滚动（isBusy 时 smooth）+ toolResult 并入工具卡 + 顶部哨兵自动加载历史 + 搜索跳转定位/高亮 + 压缩分界卡片（`compressLastIndex` 后渲染 CompressDivider）+ 空会话欢迎页                                              |
+| `chat/MessageItem.vue`     | 单条消息行：user/assistant 左右分离（user 右气泡，assistant 左全宽）；拆解 thinking/toolCall/text（流式 `final` 标记）；孤儿 toolResult 结果卡；失败标记行（空内容 + finishReason=error → 错误提示卡）；悬停操作条（时间/复制/分支/重生成） |
+| `chat/CompressDivider.vue` | 压缩分界卡片：「以上 N 条已压缩为摘要」，点击展开显示摘要全文                                                                                                                                                                               |
+| `chat/ToolCallCard.vue`    | 工具调用卡片：工具名 + AI 意图说明 + 状态 + 结果摘要；展开分「参数」「结果」两区（NCode 懒渲染 + JSON pretty）                                                                                                                              |
+| `chat/ReasoningBlock.vue`  | 思考过程块：流式中自动展开滚动，结束自动收起；纯文本展示防注入                                                                                                                                                                              |
+| `chat/EChartsBlock.vue`    | markstream 语言级覆盖：```echarts 围栏 → ECharts 图表（跟随主题 dark 重建，流式/不可解析回退源码）                                                                                                                                          |
+| `chat/UserImageBlock.vue`  | 用户消息图片：base64 直接显示 / `file:` 引用经 IPC 读盘（模块级缓存），点击全屏预览                                                                                                                                                         |
+| `chat/UserFileBlock.vue`   | 用户消息文件内容块：折叠卡片，展开显示解析文本                                                                                                                                                                                              |
+| `chat/UserSkillBlock.vue`  | 用户消息技能块：技能名卡片，展开查看 SKILL.md 全文                                                                                                                                                                                          |
 
 #### settings/
 
-| 组件 | 职责 |
-|---|---|
-| `settings/AddModelDialog.vue` | 添加/编辑模型弹窗：预置（catalog 选择 + 在线拉取）或自定义（API 格式/Base URL）；高级配置含多模态/推理/上下文/输出上限/自定义定价；测试连接 |
-| `settings/McpPanel.vue` | 「MCP」页容器，装配 McpServersCard |
-| `settings/McpServerDialog.vue` | MCP server 新增/编辑弹窗：stdio（命令+参数+环境变量）或 HTTP/SSE（URL），测试连接 |
-| `settings/McpServersCard.vue` | MCP 服务器卡片：列表（传输/启停/连接状态/工具数）、增删改、启停与测试 |
-| `settings/MemoryPanel.vue` | 记忆页：总开关 + 记忆工具开关 + 手动添加/搜索/编辑/删除/清空记忆条目 |
-| `settings/SkillsPanel.vue` | 技能页：技能总开关 + FindSkillCard + 技能工具开关 + InstalledSkillsCard |
-| `settings/SystemPromptEditor.vue` | 系统提示编辑器：本地草稿 + placeholder 展示内置默认全文，保存/恢复默认 |
-| `settings/ToolSwitches.vue` | 通用工具开关列表（工具/技能/记忆三面板复用） |
-| `settings/ToolsPanel.vue` | 工具页：通用工具开关 + bash 白名单查看/移除 + WebSearchCard |
-| `settings/UsagePanel.vue` | 用量统计：时间范围、汇总卡片、ECharts 每日趋势堆叠柱、按模型分布条形图 |
-| `settings/WebSearchCard.vue` | 网页搜索（Tavily）：启用开关 + API Key 保存/清除/测试（Key 加密存 main） |
-| `settings/FindSkillCard.vue` | 技能搜索：启用开关 + 数据源切换（字节/腾讯）+ 测试连接 + 官网入口 |
-| `settings/InstalledSkillsCard.vue` | 已安装技能列表：启停/卸载/打开目录，展示来源/版本/下载数 |
+| 组件                               | 职责                                                                                                                                        |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `settings/AddModelDialog.vue`      | 添加/编辑模型弹窗：预置（catalog 选择 + 在线拉取）或自定义（API 格式/Base URL）；高级配置含多模态/推理/上下文/输出上限/自定义定价；测试连接 |
+| `settings/McpPanel.vue`            | 「MCP」页容器，装配 McpServersCard                                                                                                          |
+| `settings/McpServerDialog.vue`     | MCP server 新增/编辑弹窗：stdio（命令+参数+环境变量）或 HTTP/SSE（URL），测试连接                                                           |
+| `settings/McpServersCard.vue`      | MCP 服务器卡片：列表（传输/启停/连接状态/工具数）、增删改、启停与测试                                                                       |
+| `settings/MemoryPanel.vue`         | 记忆页：总开关 + 记忆工具开关 + 手动添加/搜索/编辑/删除/清空记忆条目                                                                        |
+| `settings/SkillsPanel.vue`         | 技能页：技能总开关 + FindSkillCard + 技能工具开关 + InstalledSkillsCard                                                                     |
+| `settings/SystemPromptEditor.vue`  | 系统提示编辑器：本地草稿 + placeholder 展示内置默认全文，保存/恢复默认                                                                      |
+| `settings/ToolSwitches.vue`        | 通用工具开关列表（工具/技能/记忆三面板复用）                                                                                                |
+| `settings/ToolsPanel.vue`          | 工具页：通用工具开关 + bash 白名单查看/移除 + WebSearchCard                                                                                 |
+| `settings/UsagePanel.vue`          | 用量统计：时间范围、汇总卡片、ECharts 每日趋势堆叠柱、按模型分布条形图                                                                      |
+| `settings/WebSearchCard.vue`       | 网页搜索（Tavily）：启用开关 + API Key 保存/清除/测试（Key 加密存 main）                                                                    |
+| `settings/FindSkillCard.vue`       | 技能搜索：启用开关 + 数据源切换（字节/腾讯）+ 测试连接 + 官网入口                                                                           |
+| `settings/InstalledSkillsCard.vue` | 已安装技能列表：启停/卸载/打开目录，展示来源/版本/下载数                                                                                    |
 
 #### sidebar/
 
-| 组件 | 职责 |
-|---|---|
+| 组件                         | 职责                                                                                                                                                                   |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `sidebar/SessionSidebar.vue` | 左侧会话侧栏：搜索（标题过滤 + 消息全文搜索防抖，命中跳转定位）、新建对话（临时态）、置顶/日期/归档分组、底部主题切换/压缩历史/设置/关于入口、重命名弹窗、压缩确认弹窗 |
-| `sidebar/SessionItem.vue` | 单条会话行：图标 + 标题 + 置顶标记 + 状态点（busy 脉冲/error 红点）+ 相对时间 + 三点菜单（置顶/归档/导出 MD\|JSON/重命名/删除） |
+| `sidebar/SessionItem.vue`    | 单条会话行：图标 + 标题 + 置顶标记 + 状态点（busy 脉冲/error 红点）+ 相对时间 + 三点菜单（置顶/归档/导出 MD\|JSON/重命名/删除）                                        |
 
 #### permission/ 与全局
 
-| 组件 | 职责 |
-|---|---|
+| 组件                              | 职责                                                                                                                               |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | `permission/PermissionDialog.vue` | 危险工具权限确认弹窗：工具名 + 参数 NCode；拒绝/允许一次/本次会话/总是允许（仅 bash 且非破坏性命令）；关闭视作拒绝；破坏性命令警示 |
-| `AboutDialog.vue` | 关于弹窗：产品简介 + 技术栈 + 关键能力标签 + 版本号（经 `app.getAppVersion` 实时获取） |
-| `ToastBridge.vue` | 在 Provider 子树内捕获 `useMessage()` 并 `registerToast` 到 `utils/toast`，供非组件上下文使用 |
+| `AboutDialog.vue`                 | 关于弹窗：产品简介 + 技术栈 + 关键能力标签 + 版本号（经 `app.getAppVersion` 实时获取）                                             |
+| `ToastBridge.vue`                 | 在 Provider 子树内捕获 `useMessage()` 并 `registerToast` 到 `utils/toast`，供非组件上下文使用                                      |
 
 ### 4.6 Composables
 
-| 文件 | 职责 |
-|---|---|
-| `composables/useAttachments.ts` | 附件收集：图片（dataURL/base64，受模型多模态约束）、文档（经 main 解析为文本）、纯文本；拖拽/粘贴/选择三入口 + 剪贴板截图兜底；大小上限与主进程一致 |
-| `composables/useCopy.ts` | 剪贴板复制 + Naive message 反馈 |
+| 文件                                  | 职责                                                                                                                                                                                         |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `composables/useAttachments.ts`       | 附件收集：图片（dataURL/base64，受模型多模态约束）、文档（经 main 解析为文本）、纯文本；拖拽/粘贴/选择三入口 + 剪贴板截图兜底；大小上限与主进程一致                                          |
+| `composables/useCopy.ts`              | 剪贴板复制 + Naive message 反馈                                                                                                                                                              |
 | `composables/useStableMessageKeys.ts` | 为无稳定 id 的 AgentMessage 生成稳定 key：signature = role::timestamp::toolCallId，流式期间末条替换签名不变 → key 不变 → markstream 增量渲染；含流式热路径优化（前缀引用比较，仅重映射末条） |
 
 ### 4.7 Utils
 
-| 文件 | 职责 |
-|---|---|
-| `utils/main-client.ts` | `createIpcRendererClient<IpcMainServices>()` IPC 客户端单例 |
-| `utils/messageText.ts` | 消息 block 判别与文本提取：`FileTextBlock`/`SkillTextBlock` + 守卫 + `extractUserText`（排除文件/技能块） |
-| `utils/toolResult.ts` | 工具结果/参数摘要：`summarizeToolResult`（退出码/字节/条数，失败显首行）、`summarizeToolArgs`（reason 缺失时从关键参数推导意图） |
-| `utils/codeBlock.ts` | 代码块包装与格式化：`toCodeFence`（内容自适应反引号长度、按语言包围栏）、`tryPrettyJSON`（JSON pretty-print，供工具结果/参数按 JSON 高亮） |
-| `utils/toast.ts` | 全局 toast：`registerToast` 由 ToastBridge 注册，`showToast` 供 UiService IPC 使用（API 未就绪时降级 console） |
-| `utils/format.ts` | `formatContextWindow`（2 的幂次按 1024 换算、整千按 1000、1M 附近统一「1M」）、`formatTokens`（千分位）、`formatCompactTokens`（图表轴）、`formatCost`（¥ 自适应小数位） |
+| 文件                   | 职责                                                                                                                                                                     |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `utils/main-client.ts` | `createIpcRendererClient<IpcMainServices>()` IPC 客户端单例                                                                                                              |
+| `utils/messageText.ts` | 消息 block 判别与文本提取：`FileTextBlock`/`SkillTextBlock` + 守卫 + `extractUserText`（排除文件/技能块）                                                                |
+| `utils/toolResult.ts`  | 工具结果/参数摘要：`summarizeToolResult`（退出码/字节/条数，失败显首行）、`summarizeToolArgs`（reason 缺失时从关键参数推导意图）                                         |
+| `utils/codeBlock.ts`   | 代码块包装与格式化：`toCodeFence`（内容自适应反引号长度、按语言包围栏）、`tryPrettyJSON`（JSON pretty-print，供工具结果/参数按 JSON 高亮）                               |
+| `utils/toast.ts`       | 全局 toast：`registerToast` 由 ToastBridge 注册，`showToast` 供 UiService IPC 使用（API 未就绪时降级 console）                                                           |
+| `utils/format.ts`      | `formatContextWindow`（2 的幂次按 1024 换算、整千按 1000、1M 附近统一「1M」）、`formatTokens`（千分位）、`formatCompactTokens`（图表轴）、`formatCost`（¥ 自适应小数位） |
 
 ### 4.8 Assets
 
-| 文件 | 要点 |
-|---|---|
-| `assets/base.css` | 全站 CSS 变量 token 体系（详见 [第 7 节](#7-样式与主题)） |
+| 文件              | 要点                                                                                                 |
+| ----------------- | ---------------------------------------------------------------------------------------------------- |
+| `assets/base.css` | 全站 CSS 变量 token 体系（详见 [第 7 节](#7-样式与主题)）                                            |
 | `assets/main.css` | 引入 base.css；body overflow hidden + user-select none（桌面应用感），code 行内样式，`#app` 撑满视口 |
 
 ### 4.9 自定义标题栏（header）
@@ -364,13 +379,13 @@ namespace `agentEvent`：`onEvent(payload)` —— 所有会话事件路由到�
    - `await mainClient.agent.prompt(sessionId, text, images?, files?, skills?)`（主进程跑 Agent，流式事件经 `AgentEventService.onEvent` 回推）。
 3. **事件回流**（`AgentEventService.onEvent` → `chat.applyEvent(sessionId, event)` → `applyChatEvent` 纯函数）：
 
-| 事件 | 处理 |
-|---|---|
-| `agent_start` | isBusy=true、error=null |
-| `message_start` | 推入新消息（assistant/toolResult） |
-| `message_update` / `message_end` | 就地替换末条同 role 消息（流式 token 增量 / finalize） |
-| `tool_execution_start` / `tool_execution_end` | 更新 `toolStatus[toolCallId]`（running/completed/error） |
-| `agent_end` | `mergeTranscript` 合并权威 transcript（兼容压缩裁剪 + 分页窗口）、isBusy=false；有 error → lastTurnFailed=true。主进程在「失败但未产出内容」时补失败标记行（finishReason=error），重读库后 MessageItem 渲染错误提示卡并恢复重试条 |
+| 事件                                          | 处理                                                                                                                                                                                                                              |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `agent_start`                                 | isBusy=true、error=null                                                                                                                                                                                                           |
+| `message_start`                               | 推入新消息（assistant/toolResult）                                                                                                                                                                                                |
+| `message_update` / `message_end`              | 就地替换末条同 role 消息（流式 token 增量 / finalize）                                                                                                                                                                            |
+| `tool_execution_start` / `tool_execution_end` | 更新 `toolStatus[toolCallId]`（running/completed/error）                                                                                                                                                                          |
+| `agent_end`                                   | `mergeTranscript` 合并权威 transcript（兼容压缩裁剪 + 分页窗口）、isBusy=false；有 error → lastTurnFailed=true。主进程在「失败但未产出内容」时补失败标记行（finishReason=error），重读库后 MessageItem 渲染错误提示卡并恢复重试条 |
 
 4. **渲染链**：
    - `MessageList` 接 `:messages` + `:is-busy`；`useStableMessageKeys` 生成稳定 key。
@@ -424,16 +439,16 @@ pi-ai 的 Message 无稳定 id，仅有 timestamp（可能重复）/ toolCallId�
 
 **token 体系**（`:root` 浅色 / `:root.dark` 深色）：设计取向「中性 zinc 灰阶 + 紫罗兰强调色」，暗色对标代码编辑器（VS Code / One Dark / Tokyo Night）中性炭灰底。
 
-| token 分组 | 示例 |
-|---|---|
-| 背景层级 | `--bg`（深色 `#18181b`）/ `--bg-soft` / `--bg-mute` |
-| 边框 | `--border` / `--border-soft` |
-| 文字 | `--text-1`（主）/ `--text-2`（次）/ `--text-3`（弱） |
-| 主题色 | `--primary`（浅 `#7c3aed` / 深 `#a78bfa`）+ hover/pressed/soft |
-| 语义色 | success/warning/error 及 -soft |
-| 代码 | `--code-bg` / `--code-border` |
-| 阴影/圆角 | `--shadow-sm/md`、`--radius` 8px / `--radius-lg` 12px |
-| 消息行 | `--user-msg-bg` / `--hover-bg` / `--msg-max-width` 768px / `--avatar-size` 30px / `--row-gap` 22px |
+| token 分组 | 示例                                                                                               |
+| ---------- | -------------------------------------------------------------------------------------------------- |
+| 背景层级   | `--bg`（深色 `#18181b`）/ `--bg-soft` / `--bg-mute`                                                |
+| 边框       | `--border` / `--border-soft`                                                                       |
+| 文字       | `--text-1`（主）/ `--text-2`（次）/ `--text-3`（弱）                                               |
+| 主题色     | `--primary`（浅 `#7c3aed` / 深 `#a78bfa`）+ hover/pressed/soft                                     |
+| 语义色     | success/warning/error 及 -soft                                                                     |
+| 代码       | `--code-bg` / `--code-border`                                                                      |
+| 阴影/圆角  | `--shadow-sm/md`、`--radius` 8px / `--radius-lg` 12px                                              |
+| 消息行     | `--user-msg-bg` / `--hover-bg` / `--msg-max-width` 768px / `--avatar-size` 30px / `--row-gap` 22px |
 
 兼容旧引用：`--color-background` 等间接 var 引用新 token，自动翻转。
 
@@ -462,20 +477,20 @@ pi-ai 的 Message 无稳定 id，仅有 timestamp（可能重复）/ toolCallId�
 
 ## 8. 关键设计速查
 
-| 设计 | 要点 |
-|---|---|
-| **多会话容器** | `sessions: Record<sessionId, SessionChatState>`，后台会话事件照常更新；`current` 视图代理 + 虚拟 `__ephemeral__` 容器 |
-| **临时空对话（ephemeral）** | `currentSessionId=null` 时不写库，首条消息发送时落库并整体迁移容器；`hasInitialized` 防 remount 破坏临时态 |
-| **currentSessionId 双端同步** | `useChatStore.currentSessionId` 与 `useSessionStore.currentSessionId` 始终同步 |
-| **流式限频** | 当前会话 `message_update` rAF 缓冲（同帧只留最新），权威事件前强制 flush |
-| **稳定 key 渲染** | `signature = role::timestamp::toolCallId` + 记忆表，流式更新就地 patch 而非重挂载 |
-| **transcript 合并** | `mergeTranscript` 以签名交集为重合点合并权威 transcript，兼容压缩裁剪 + 分页窗口 |
-| **流式 Markdown** | 末条 text block `final=false` 走增量渲染，其余 `final=true` 终态渲染；echarts 语言级覆盖 |
-| **粘底滚动** | ResizeObserver 驱动；生成中平滑、空闲即时；用户消息追加强制滚底 |
-| **失败态推导** | `lastTurnFailed` 从历史推导（不重置），错误提示跨页面/重载持久；主进程补失败标记行（finishReason=error）恢复重试入口 |
-| **压缩分界 UI** | chatStore 持有 compressLastIndex/compressSummary；onSessionUpdate 同步；MessageList 渲染 CompressDivider（展开查看摘要） |
-| **模型独立** | 每会话独立模型（`session.model`）；切换模型驱逐内存 Agent，下一轮生效；思考级别实时同步无需驱逐 |
-| **Key 安全** | 渲染进程只接触 `ModelConfigSummary.hasApiKey` 布尔，明文 key 永不进渲染进程 |
-| **主题无 FOUC** | mount 前 `useThemeStore(pinia)` 同步落 `.dark`；Naive UI `NConfigProvider` 联动 |
-| **设置即生效** | 所有设置 save 后驱逐当前 Agent，新设置下一轮生效 |
-| **权限回路** | `onPermissionRequest` 推送 → 全局弹框（DefaultLayout）→ `respondPermission` → 解除 pending，关闭视为拒绝；请求 60s 超时自动拒绝（main 侧兜底） |
+| 设计                          | 要点                                                                                                                                           |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| **多会话容器**                | `sessions: Record<sessionId, SessionChatState>`，后台会话事件照常更新；`current` 视图代理 + 虚拟 `__ephemeral__` 容器                          |
+| **临时空对话（ephemeral）**   | `currentSessionId=null` 时不写库，首条消息发送时落库并整体迁移容器；`hasInitialized` 防 remount 破坏临时态                                     |
+| **currentSessionId 双端同步** | `useChatStore.currentSessionId` 与 `useSessionStore.currentSessionId` 始终同步                                                                 |
+| **流式限频**                  | 当前会话 `message_update` rAF 缓冲（同帧只留最新），权威事件前强制 flush                                                                       |
+| **稳定 key 渲染**             | `signature = role::timestamp::toolCallId` + 记忆表，流式更新就地 patch 而非重挂载                                                              |
+| **transcript 合并**           | `mergeTranscript` 以签名交集为重合点合并权威 transcript，兼容压缩裁剪 + 分页窗口                                                               |
+| **流式 Markdown**             | 末条 text block `final=false` 走增量渲染，其余 `final=true` 终态渲染；echarts 语言级覆盖                                                       |
+| **粘底滚动**                  | ResizeObserver 驱动；生成中平滑、空闲即时；用户消息追加强制滚底                                                                                |
+| **失败态推导**                | `lastTurnFailed` 从历史推导（不重置），错误提示跨页面/重载持久；主进程补失败标记行（finishReason=error）恢复重试入口                           |
+| **压缩分界 UI**               | chatStore 持有 compressLastIndex/compressSummary；onSessionUpdate 同步；MessageList 渲染 CompressDivider（展开查看摘要）                       |
+| **模型独立**                  | 每会话独立模型（`session.model`）；切换模型驱逐内存 Agent，下一轮生效；思考级别实时同步无需驱逐                                                |
+| **Key 安全**                  | 渲染进程只接触 `ModelConfigSummary.hasApiKey` 布尔，明文 key 永不进渲染进程                                                                    |
+| **主题无 FOUC**               | mount 前 `useThemeStore(pinia)` 同步落 `.dark`；Naive UI `NConfigProvider` 联动                                                                |
+| **设置即生效**                | 所有设置 save 后驱逐当前 Agent，新设置下一轮生效                                                                                               |
+| **权限回路**                  | `onPermissionRequest` 推送 → 全局弹框（DefaultLayout）→ `respondPermission` → 解除 pending，关闭视为拒绝；请求 60s 超时自动拒绝（main 侧兜底） |

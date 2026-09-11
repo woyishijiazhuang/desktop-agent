@@ -60,7 +60,9 @@ function getSetting<T>(key: string, fallback: T): T {
 function getApiKey(): string {
   const encryptedB64 = db.getSetting<string>(SETTING_VOICE_API_KEY)
   if (!encryptedB64) {
-    throw new Error('未配置 MiMo 语音 API key，请到「设置 → 语音」填写（platform.xiaomimimo.com 申请，当前限时免费）')
+    throw new Error(
+      '未配置 MiMo 语音 API key，请到「设置 → 语音」填写（platform.xiaomimimo.com 申请，当前限时免费）'
+    )
   }
   return decryptSecret(Buffer.from(encryptedB64, 'base64'))
 }
@@ -127,12 +129,10 @@ export class VoiceService extends IpcService {
    * 返回转写文本；未识别到内容时返回空串（不抛错——渲染层按「没听清」提示重说，
    * 避免把「无有效语音」当业务错误刷 IPC 报错日志）。
    */
-  async asr(
-    audioDataUrl: string,
-    language?: VoiceLanguage
-  ): Promise<{ text: string }> {
+  async asr(audioDataUrl: string, language?: VoiceLanguage): Promise<{ text: string }> {
     const region = getSetting<VoiceRegion>(SETTING_VOICE_REGION, DEFAULT_VOICE_REGION)
-    const lang = language ?? getSetting<VoiceLanguage>(SETTING_VOICE_LANGUAGE, DEFAULT_VOICE_LANGUAGE)
+    const lang =
+      language ?? getSetting<VoiceLanguage>(SETTING_VOICE_LANGUAGE, DEFAULT_VOICE_LANGUAGE)
     const data = await postJson(MIMO_BASE_URLS[region], {
       model: MIMO_ASR_MODEL,
       messages: [
@@ -149,7 +149,10 @@ export class VoiceService extends IpcService {
       typeof content === 'string'
         ? content.trim()
         : Array.isArray(content)
-          ? (content as { text?: string }[]).map((b) => b.text ?? '').join('').trim()
+          ? (content as { text?: string }[])
+              .map((b) => b.text ?? '')
+              .join('')
+              .trim()
           : ''
     if (!text) {
       log.debug('ASR 无有效内容', {})
@@ -163,12 +166,10 @@ export class VoiceService extends IpcService {
    * 语音合成：MiMo TTS，返回 wav 音频 data URL（渲染进程 <audio> 直接播放）。
    * style 为可选自然语言风格指令（如「温柔、口语化」）。
    */
-  async tts(
-    text: string,
-    opts?: { voice?: string; style?: string }
-  ): Promise<{ dataUrl: string }> {
+  async tts(text: string, opts?: { voice?: string; style?: string }): Promise<{ dataUrl: string }> {
     const region = getSetting<VoiceRegion>(SETTING_VOICE_REGION, DEFAULT_VOICE_REGION)
-    const voice = opts?.voice ?? getSetting<string>(SETTING_VOICE_TTS_VOICE, DEFAULT_VOICE_TTS_VOICE)
+    const voice =
+      opts?.voice ?? getSetting<string>(SETTING_VOICE_TTS_VOICE, DEFAULT_VOICE_TTS_VOICE)
     const style = opts?.style ?? getSetting<string>(SETTING_VOICE_TTS_STYLE, '')
     const content = text.trim().slice(0, TTS_MAX_CHARS)
     if (!content) throw new Error('没有可朗读的内容')

@@ -58,7 +58,10 @@ function fingerprintParagraph(text: string): string {
 }
 
 /** 检测文本末尾是否存在长度为 >= windowSize 的连续重复片段 */
-function detectEndRepeat(text: string, windowSize: number): { found: boolean; cleanPrefix?: string } {
+function detectEndRepeat(
+  text: string,
+  windowSize: number
+): { found: boolean; cleanPrefix?: string } {
   if (text.length < windowSize * 2) return { found: false }
   const tail = text.slice(-windowSize)
   const prev = text.slice(-windowSize * 2, -windowSize)
@@ -77,10 +80,13 @@ function detectEndRepeat(text: string, windowSize: number): { found: boolean; cl
 }
 
 /** 检测文本中同一段落是否出现 >= threshold 次（代码块内排除） */
-function detectSemanticRepeat(text: string, threshold: number): { found: boolean; paragraph?: string } {
+function detectSemanticRepeat(
+  text: string,
+  threshold: number
+): { found: boolean; paragraph?: string } {
   // 移除代码块
   const stripped = text.replace(/```[\s\S]*?```/g, '')
-  const paragraphs = stripped.split(/\n\s*\n/).filter(p => p.trim().length > FINGERPRINT_LEN)
+  const paragraphs = stripped.split(/\n\s*\n/).filter((p) => p.trim().length > FINGERPRINT_LEN)
   const seen = new Map<string, number>()
   for (const p of paragraphs) {
     const fp = fingerprintParagraph(p)
@@ -96,9 +102,7 @@ function detectSemanticRepeat(text: string, threshold: number): { found: boolean
 
 /** 从 turn_end 的消息中提取工具调用名称序列 */
 function extractToolNames(message: AssistantMessage): string[] {
-  return message.content
-    .filter((c): c is ToolCall => c.type === 'toolCall')
-    .map(tc => tc.name)
+  return message.content.filter((c): c is ToolCall => c.type === 'toolCall').map((tc) => tc.name)
 }
 
 // ─── LoopDetector 类 ─────────────────────────────────────
@@ -180,17 +184,20 @@ export class LoopDetector {
 
   // ── Layer 1: 流式检测 ──────────────────────────────────
 
-  private handleMessageUpdate(event: Extract<AgentEvent, { type: 'message_update' }>): LoopDetectorResult {
+  private handleMessageUpdate(
+    event: Extract<AgentEvent, { type: 'message_update' }>
+  ): LoopDetectorResult {
     if (this.aborted) return { detected: false }
     const { assistantMessageEvent } = event
-    if (assistantMessageEvent.type === 'done' || assistantMessageEvent.type === 'error') return { detected: false }
+    if (assistantMessageEvent.type === 'done' || assistantMessageEvent.type === 'error')
+      return { detected: false }
 
     // 从 partial message 中提取 thinking 和 text 的累积内容
     const partial = assistantMessageEvent.partial
     if (!partial) return { detected: false }
 
-    const thinkingContent = partial.content.find(c => c.type === 'thinking')
-    const textContent = partial.content.find(c => c.type === 'text')
+    const thinkingContent = partial.content.find((c) => c.type === 'thinking')
+    const textContent = partial.content.find((c) => c.type === 'text')
 
     // ── Thinking block 检测 ──
     if (thinkingContent && thinkingContent.type === 'thinking') {
@@ -213,7 +220,9 @@ export class LoopDetector {
         // 语义级检测
         const semCheck = detectSemanticRepeat(this.thinkingBuffer, SEMANTIC_THRESHOLD)
         if (semCheck.found) {
-          log.warn('Thinking block 语义级循环检测触发', { paragraph: semCheck.paragraph?.slice(0, 40) })
+          log.warn('Thinking block 语义级循环检测触发', {
+            paragraph: semCheck.paragraph?.slice(0, 40)
+          })
           return this.trigger({
             detected: true,
             kind: 'thinking_semantic_loop',
@@ -305,7 +314,7 @@ export class LoopDetector {
           // 严格连续：全为同一工具
           if (count >= SAME_TOOL_REPEAT_THRESHOLD) {
             const tail = this.recentToolNames.slice(-SAME_TOOL_REPEAT_THRESHOLD)
-            if (tail.every(t => t === tool)) {
+            if (tail.every((t) => t === tool)) {
               log.warn('工具连续重复调用检测', { tool, count: tail.length })
               return this.trigger({
                 detected: true,
@@ -345,7 +354,7 @@ export class LoopDetector {
             return this.trigger({
               detected: true,
               kind: 'tool_call_loop',
-              message: `工具调用序列 [${b3.map(s => s.join('→')).join(', ')}] 已连续出现 3 次，疑似循环，已中止。`
+              message: `工具调用序列 [${b3.map((s) => s.join('→')).join(', ')}] 已连续出现 3 次，疑似循环，已中止。`
             })
           }
         }

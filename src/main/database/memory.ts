@@ -56,7 +56,8 @@ export function createMemoriesApi(db: DatabaseSync): MemoryApi {
 
     getMemory(id: string): Memory | undefined {
       const row = db.prepare('SELECT * FROM memories WHERE id = ?').get(id) as unknown as
-        MemoryRow | undefined
+        | MemoryRow
+        | undefined
       return row ? toMemory(row) : undefined
     },
 

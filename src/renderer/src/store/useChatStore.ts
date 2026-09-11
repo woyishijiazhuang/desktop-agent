@@ -452,7 +452,10 @@ export const useChatStore = defineStore('chat', () => {
     const images = toImageBlocks(attachments)
     // 用户正文 + 指定技能块 + 文件内容块 + 图片 block（顺序：正文 → 技能 → 文件 → 图片）
     const userBlocks: (
-      FileTextBlock | SkillTextBlock | { type: 'text'; text: string } | ImageContent
+      | FileTextBlock
+      | SkillTextBlock
+      | { type: 'text'; text: string }
+      | ImageContent
     )[] = [
       ...(trimmed ? [{ type: 'text' as const, text: trimmed }] : []),
       ...(skills ?? []).map((id) => ({ type: 'text' as const, text: '', skill_name: id })),

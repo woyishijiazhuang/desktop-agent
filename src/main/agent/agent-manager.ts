@@ -683,7 +683,11 @@ export class AgentManager {
       if (loopDetector && !loopDetector.wasTriggered) {
         const loopResult = loopDetector.feedEvent(event)
         if (loopResult.detected && loopResult.kind) {
-          log.warn('循环检测触发', { sessionId, kind: loopResult.kind, message: loopResult.message })
+          log.warn('循环检测触发', {
+            sessionId,
+            kind: loopResult.kind,
+            message: loopResult.message
+          })
           this.loopDetectorErrors.set(sessionId, loopResult.message ?? '检测到循环，已中止')
         }
       }
@@ -819,7 +823,11 @@ export class AgentManager {
         )
         const loopDetector = this.loopDetectors.get(sessionId)
         const loopWasTriggered = loopDetector?.wasTriggered ?? false
-        const aborted = !loopWasTriggered && limitHitValue === undefined && !!err && carrier?.stopReason === 'aborted'
+        const aborted =
+          !loopWasTriggered &&
+          limitHitValue === undefined &&
+          !!err &&
+          carrier?.stopReason === 'aborted'
         if (aborted) {
           log.info('本轮运行中止（用户操作）', { sessionId })
         } else if (effectiveError) {

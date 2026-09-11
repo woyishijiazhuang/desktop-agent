@@ -113,7 +113,11 @@ export function createReadFileTool(
         // 超限但可压缩：自动降分辨率 + 转 JPEG 后注入（视觉模型按图块缩放理解，压缩无损于理解）
         if (supportsImages && COMPRESSIBLE_MIME.has(mime)) {
           const compressed = compressImage(buf)
-          if (compressed && compressed.byteLength < bytes && compressed.byteLength <= MAX_IMAGE_BYTES) {
+          if (
+            compressed &&
+            compressed.byteLength < bytes &&
+            compressed.byteLength <= MAX_IMAGE_BYTES
+          ) {
             log.debug('读取图片（超限已自动压缩）', {
               path: p.path,
               originalBytes: bytes,

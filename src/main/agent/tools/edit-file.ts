@@ -273,7 +273,13 @@ const NO_EOL = '\\ No newline at end of file'
  * 保证无尾换行文件（及仅在 EOF 增删换行的编辑）生成的 patch 能被 git apply 正确应用。
  * 返回是否产生了差异行（纯上下文的空 hunk 由调用方丢弃）。
  */
-function emitRegion(out: string[], a: string[], b: string[], aNoEol: boolean, bNoEol: boolean): boolean {
+function emitRegion(
+  out: string[],
+  a: string[],
+  b: string[],
+  aNoEol: boolean,
+  bNoEol: boolean
+): boolean {
   const eolA = (i: number): boolean => i < a.length - 1 || !aNoEol
   const eolB = (j: number): boolean => j < b.length - 1 || !bNoEol
   const n = a.length

@@ -77,7 +77,8 @@ export function createModelConfigsApi(db: DatabaseSync): ModelConfigsApi {
 
     getModelConfig(id: string): ModelConfig | undefined {
       const row = db.prepare('SELECT * FROM model_configs WHERE id = ?').get(id) as unknown as
-        ModelConfigRow | undefined
+        | ModelConfigRow
+        | undefined
       return row ? toModelConfig(row) : undefined
     },
 

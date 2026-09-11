@@ -45,7 +45,8 @@ initSchema(raw)
 // 旧设置项在 P3 替换解析链路时移除（见 agent/workdir.ts 的 resolveSessionWorkdir）。
 function resolveDefaultWorkdir(): string {
   const row = raw.prepare("SELECT value FROM settings WHERE key = 'agent.workdir'").get() as
-    { value: string } | undefined
+    | { value: string }
+    | undefined
   const dir = row ? (JSON.parse(row.value) as string) : path.join(app.getPath('userData'), 'work')
   mkdirSync(dir, { recursive: true })
   return dir

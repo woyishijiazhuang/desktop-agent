@@ -29,11 +29,11 @@
 
 ## 2. 根因分析（基于现状代码与构建产物）
 
-| 现象 | 现状（2026-09-09） |
-|---|---|
-| 首页白屏、加载慢 | [index.html](file:///Users/hupengfei/Documents/my-app/src/renderer/index.html) 中 `#app` 为空，首帧无可绘制内容；内容需等入口 JS 下载 → 解析 → 执行 → Vue 挂载后才出现。干净构建实测（`out/renderer/assets`，minified）：入口 `index-*.js` 约 **1.27MB**；echarts 此前以 modulepreload 随启动预载（独立 `echarts-*.js` 约 **1.9MB**），2026-09-09 已改按需加载（见 §5），窗口首启 JS ≈ 4.0MB → ≈ 2.1MB |
-| 设置窗口「先开窗后加载」 | **已解决（方案二落地）**：设置窗口改载独立轻量入口 `settings/index.html`，不再加载聊天 SPA 静态链（见 [window-manager.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/window-manager.ts#L248-L267) `loadAppViews` 与 [electron.vite.config.ts](file:///Users/hupengfei/Documents/my-app/electron.vite.config.ts#L37-L44) `rendererInput`） |
-| 参照系 | [header/index.html](file:///Users/hupengfei/Documents/my-app/src/renderer/header/index.html) 是无框架静态页（HTML + 少量 TS），从不感觉慢 —— 印证「独立轻量入口 + 静态首帧」是项目内已验证的模式 |
+| 现象                     | 现状（2026-09-09）                                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 首页白屏、加载慢         | [index.html](file:///Users/hupengfei/Documents/my-app/src/renderer/index.html) 中 `#app` 为空，首帧无可绘制内容；内容需等入口 JS 下载 → 解析 → 执行 → Vue 挂载后才出现。干净构建实测（`out/renderer/assets`，minified）：入口 `index-*.js` 约 **1.27MB**；echarts 此前以 modulepreload 随启动预载（独立 `echarts-*.js` 约 **1.9MB**），2026-09-09 已改按需加载（见 §5），窗口首启 JS ≈ 4.0MB → ≈ 2.1MB |
+| 设置窗口「先开窗后加载」 | **已解决（方案二落地）**：设置窗口改载独立轻量入口 `settings/index.html`，不再加载聊天 SPA 静态链（见 [window-manager.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/window-manager.ts#L248-L267) `loadAppViews` 与 [electron.vite.config.ts](file:///Users/hupengfei/Documents/my-app/electron.vite.config.ts#L37-L44) `rendererInput`）                                               |
+| 参照系                   | [header/index.html](file:///Users/hupengfei/Documents/my-app/src/renderer/header/index.html) 是无框架静态页（HTML + 少量 TS），从不感觉慢 —— 印证「独立轻量入口 + 静态首帧」是项目内已验证的模式                                                                                                                                                                                                       |
 
 相关文件：多页入口配置见 [electron.vite.config.ts](file:///Users/hupengfei/Documents/my-app/electron.vite.config.ts)（`rendererInput` 含 `index` / `header` / `settings` 三个入口）；设置窗口内容在 [src/renderer/settings/](file:///Users/hupengfei/Documents/my-app/src/renderer/settings/index.html)；`SettingsView` 的原单文件结构已随方案二拆分为 `settings/` 下多视图。
 
@@ -67,27 +67,29 @@
 
 ## 5. 方案三：首屏 JS 瘦身（echarts 按需加载已实施）
 
-- echarts：[main.ts](file:///e:/code/desktop-agent/src/renderer/src/main.ts) 静态 import `EChartsBlock` → 使 echarts 打进入口；改为 markstream 自定义组件按需动态注册（渲染到 ```` ```echarts ```` 代码块时才加载）。（此条**已实施**，落地记录见下）
+- echarts：[main.ts](file:///e:/code/desktop-agent/src/renderer/src/main.ts) 静态 import `EChartsBlock` → 使 echarts 打进入口；改为 markstream 自定义组件按需动态注册（渲染到 ` ```echarts ` 代码块时才加载）。（此条**已实施**，落地记录见下）
 - 大件清出入口静态链（**仍为可选，未实施**）：用构建分析（如 `rollup-plugin-visualizer`）量化后逐个处理。
 - 收益（旧述，供对照）：入口 3.9MB → 目标约 1.5~2.5MB、不改变「设置窗口复用聊天 SPA」的结构问题——结构问题已由方案二解决。
 
 **已实施（2026-09-09）：echarts 按需加载**
-- 组件懒化：[main.ts](file:///Users/hupengfei/Documents/my-app/src/renderer/src/main.ts) 由静态 `import EChartsBlock` 改为 `defineAsyncComponent(() => import('./components/chat/EChartsBlock.vue'))` 注册进 `setCustomComponents('chat')`——入口只持占位，真正渲染 ```` ```echarts ```` 代码块时才动态加载组件及其 echarts 依赖（产物：独立 `EChartsBlock-*.js` 懒 chunk）。
+
+- 组件懒化：[main.ts](file:///Users/hupengfei/Documents/my-app/src/renderer/src/main.ts) 由静态 `import EChartsBlock` 改为 `defineAsyncComponent(() => import('./components/chat/EChartsBlock.vue'))` 注册进 `setCustomComponents('chat')`——入口只持占位，真正渲染 ` ```echarts ` 代码块时才动态加载组件及其 echarts 依赖（产物：独立 `EChartsBlock-*.js` 懒 chunk）。
 - 弹层懒化：[ContextRingButton.vue](file:///Users/hupengfei/Documents/my-app/src/renderer/src/components/sidebar/ContextRingButton.vue) 移除模块级 echarts import（按钮本体是纯 SVG）；`renderChart` 在「上下文占用」弹层首次打开时才 `import('@renderer/utils/echarts')`。
 - 效果（干净构建实测，minified）：echarts ~1.9MB chunk 不再随窗口启动 modulepreload，改为真正用到才加载；首启 JS ≈ **4.0MB → 2.1MB**（入口 `index-*.js` 约 1.27MB、共享 `update-events-service` 约 0.84MB 等不变）。
-- 回归要点：消息 ```` ```echarts ```` 块渲染 / 自动修复降级 / 「重新生成」/ 地图懒加载，与设置页 UsagePanel 饼图、侧栏上下文占用弹层，均走同一 echarts chunk。
+- 回归要点：消息 ` ```echarts ` 块渲染 / 自动修复降级 / 「重新生成」/ 地图懒加载，与设置页 UsagePanel 饼图、侧栏上下文占用弹层，均走同一 echarts chunk。
 
 ## 6. 引申讨论：像原生 HTML 一样首帧即有完整页面
 
 **本质**：Vue 白屏并非框架缺陷，而是 SPA 的 DOM 全部在浏览器内由 JS 现画、HTML 里只有空壳。要实现「首帧即完整页面」，唯一路径是**让 HTML 文件本身携带真实 DOM**（原生 HTML 即此模式）。可用方案分三类：
 
-| 方案 | 原理 | 首帧效果 | 适配本项目 | 代价 |
-|---|---|---|---|---|
-| A. 构建期预渲染（SSG）：`vite-ssg` / 预渲染插件 | 构建时在 Node 中跑 Vue 各路由，将结果固化为每路由的静态 HTML；窗口直接加载该 HTML，随后 Vue hydrate 接管 | 页面结构与样式立刻可见 | 聊天页不现实：数据全来自 DB/IPC 异步查询，预渲染只能固化静态壳 | renderer 强依赖 preload/IPC（initWindow、主题、DB），预渲染环境无这些 API，需大量 mock/跳过；静态壳收益≈骨架屏。**不建议** |
-| B. MPA 原生多页（无框架或框架只做局部增强） | 每条路由/窗口 = 独立 HTML，HTML 直接写死完整结构（同 header 视图模式） | 打开即是完整页面，无 JS 也可显示 | 适合结构静态页面；设置页整体结构固定，属此列 | 若完全不用 Vue，十几张设置面板（表单/表格/弹窗）原生重写工作量很大 |
-| C. Vue 但「静态 HTML + 局部挂载」（务实折衷） | 各窗口 HTML 先写好完整静态布局（真实结构/文字/样式），Vue 只负责挂载并填充动态数据 | 首帧即完整页面、无白屏 | 设置窗口契合；聊天页仍以骨架 + 瘦身为主 | 需为页面写静态首版布局，改动中等 |
+| 方案                                            | 原理                                                                                                     | 首帧效果                         | 适配本项目                                                     | 代价                                                                                                                       |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------- | -------------------------------- | -------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| A. 构建期预渲染（SSG）：`vite-ssg` / 预渲染插件 | 构建时在 Node 中跑 Vue 各路由，将结果固化为每路由的静态 HTML；窗口直接加载该 HTML，随后 Vue hydrate 接管 | 页面结构与样式立刻可见           | 聊天页不现实：数据全来自 DB/IPC 异步查询，预渲染只能固化静态壳 | renderer 强依赖 preload/IPC（initWindow、主题、DB），预渲染环境无这些 API，需大量 mock/跳过；静态壳收益≈骨架屏。**不建议** |
+| B. MPA 原生多页（无框架或框架只做局部增强）     | 每条路由/窗口 = 独立 HTML，HTML 直接写死完整结构（同 header 视图模式）                                   | 打开即是完整页面，无 JS 也可显示 | 适合结构静态页面；设置页整体结构固定，属此列                   | 若完全不用 Vue，十几张设置面板（表单/表格/弹窗）原生重写工作量很大                                                         |
+| C. Vue 但「静态 HTML + 局部挂载」（务实折衷）   | 各窗口 HTML 先写好完整静态布局（真实结构/文字/样式），Vue 只负责挂载并填充动态数据                       | 首帧即完整页面、无白屏           | 设置窗口契合；聊天页仍以骨架 + 瘦身为主                        | 需为页面写静态首版布局，改动中等                                                                                           |
 
 **关键认知**：
+
 1. 「完整页面」≠「完整数据」：聊天记录、设置值等运行时从 DB/IPC 获取的内容，任何技术都只能后填；原生 HTML 能做到的是页面结构/样式/文字在 HTML 里即完整，数据到达前看到的是真实页面而非空白。
 2. 聊天页不适合逃离 JS：消息流、工具卡片、Markdown 高亮等几乎全动态且强依赖 IPC，预渲染收益低、mock 成本高；其「原生感」用骨架 + 入口瘦身即可接近。
 3. 设置窗口才是值得改造的对象：独立小窗口、结构静态，契合「首帧即完整页面」诉求。
@@ -97,20 +99,24 @@
 ## 7. 实施状态与验证清单
 
 已实施（按时间序）：
+
 1. 设置窗口独立轻量入口（方案二）——设置窗口不再加载聊天 SPA。
 2. echarts 按需加载（方案三第 1 条）——窗口首启 JS ≈ 4.0MB → 2.1MB。
 3. 技能播种解耦 + 主进程启动分段打点（2026-09-09，见 §9）。
 
 已决策不实施 / 已回退：
+
 - 骨架屏（方案一）：用户明确不要。
 - 设置窗口**常驻预载**方案：不采用（常驻 30–50MB 渲染进程内存，用户不接受）。
 - 设置窗口显示策略：曾实施「内容就绪后再显示」（show:false + did-finish-load + 双兜底），并试过 paint 首帧 / 透明度方案消除残余“一瞬闪烁”，受 BaseWindow 隐藏不合成等限制收益不显，用户最终决定**回退为原始「窗口随建随显」**（尝试记录见 §9.4）。
 
 可选后续：
+
 - 评估后 voice/onnx、monaco、全部路由/视图均已按需加载；启动路径剩余约 2.1MB 为应用骨架与共享内核（`index-*` + `update-events-service`），继续拆分的收益有限。
 
 验证清单（`pnpm run typecheck && pnpm exec electron-vite build && pnpm start` 后回归）：
-- 消息中 ```` ```echarts ```` 代码块首次出现时才触发 echarts chunk 加载（devtools Network 可见），图表渲染 / 自动修复降级 / 「重新生成」/ 地图懒加载正常；
+
+- 消息中 ` ```echarts ` 代码块首次出现时才触发 echarts chunk 加载（devtools Network 可见），图表渲染 / 自动修复降级 / 「重新生成」/ 地图懒加载正常；
 - 侧栏「上下文占用」弹层首次打开才加载 echarts，暗 / 亮主题下饼图正常、关闭后实例销毁；
 - 设置页「用量」面板图表（UsagePanel）正常；
 - 从聊天点设置按钮 / 托盘打开设置窗口（独立入口，tab 记忆与跳转）；
@@ -143,14 +149,14 @@
 
 各段已带结构化耗时字段写 electron-log（macOS：`~/Library/Logs/desktop-agent/main.log`）：
 
-| 打点 | 代码位置 | 含义 |
-|---|---|---|
-| `数据库已打开 openMs` | [database/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/database/index.ts#L95-L99) | db 打开耗时（主模块 import 阶段，早于 app ready） |
-| `应用启动` | main/index.ts whenReady | 主进程就绪 |
-| `创建应用窗口` | window-manager.ts | 窗口随建随显（show: true，不等待内容） |
-| `内置技能播种完成 elapsedMs` | [main/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/index.ts#L75-L87) | 补种耗时（不 await，与窗口创建并行） |
-| `内容视图加载完成 loadMs` | [window-manager.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/window-manager.ts#L368-L371) | 窗口创建 → contentView `did-finish-load` |
-| `工作区窗口恢复完成 elapsedMs` | main/index.ts | `restoreStartupWindows` 全量完成 |
+| 打点                           | 代码位置                                                                                                   | 含义                                              |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `数据库已打开 openMs`          | [database/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/database/index.ts#L95-L99)           | db 打开耗时（主模块 import 阶段，早于 app ready） |
+| `应用启动`                     | main/index.ts whenReady                                                                                    | 主进程就绪                                        |
+| `创建应用窗口`                 | window-manager.ts                                                                                          | 窗口随建随显（show: true，不等待内容）            |
+| `内置技能播种完成 elapsedMs`   | [main/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/index.ts#L75-L87)                        | 补种耗时（不 await，与窗口创建并行）              |
+| `内容视图加载完成 loadMs`      | [window-manager.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/window-manager.ts#L368-L371) | 窗口创建 → contentView `did-finish-load`          |
+| `工作区窗口恢复完成 elapsedMs` | main/index.ts                                                                                              | `restoreStartupWindows` 全量完成                  |
 
 实测一次：db 17ms → 应用启动 → 创建应用窗口 →（并行）技能播种 173ms 于窗口创建之后完成 → 内容视图 `loadMs` 254ms。技能播种从 `await` 改为启动即发起后，首窗创建不再被其磁盘 IO 卡住。
 

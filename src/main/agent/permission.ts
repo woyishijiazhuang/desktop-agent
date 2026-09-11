@@ -136,7 +136,8 @@ const sessionMcpAllow = new Map<string, Set<string>>()
  * - ask：需人工确认；hardAsk=true 表示命中破坏性 deny（UI 不给会话/总是，也不受 run 自动放行覆盖）
  */
 type ToolDecision =
-  { decision: 'allow'; reason?: string } | { decision: 'ask'; hardAsk: boolean; target: string }
+  | { decision: 'allow'; reason?: string }
+  | { decision: 'ask'; hardAsk: boolean; target: string }
 
 /** 挂起权限请求登记给交互通道的上下文（回执时记录放行规则用）。 */
 interface PermissionCtx {
@@ -261,7 +262,11 @@ export function createBeforeToolCallHook(
       // 不弹确认条——避免「确认允许 → 执行层又硬拒」的假确认（见 sandbox.ts 文件域策略）。
       const policy = await getSessionFsPolicy(sessionId)
       if (policy && path && !isSandboxWriteAllowed(policy, path)) {
-        log.info('沙箱开启，区外写入直接拒绝（不弹确认）', { sessionId, toolName: toolCall.name, path })
+        log.info('沙箱开启，区外写入直接拒绝（不弹确认）', {
+          sessionId,
+          toolName: toolCall.name,
+          path
+        })
         return { block: true, reason: sandboxWriteDeniedMessage(path) }
       }
       decision = await decideFile(sessionId, path)

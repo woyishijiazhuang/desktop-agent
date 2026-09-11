@@ -136,7 +136,12 @@ function onRemove(s: BackgroundSessionInfo): void {
          渲染 Fragment 根节点导致运行时指令失效并告警，收起/展开也无法隐藏列表 -->
     <div v-show="expanded" class="bg-panel__list">
       <NScrollbar
-        :content-style="{ padding: '0 8px 8px', display: 'flex', flexDirection: 'column', gap: '6px' }"
+        :content-style="{
+          padding: '0 8px 8px',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: '6px'
+        }"
       >
         <div v-for="s in store.sessions" :key="s.id" class="bg-item">
           <div class="bg-item__row">
@@ -174,9 +179,7 @@ function onRemove(s: BackgroundSessionInfo): void {
                 @positive-click="onKill(s)"
               >
                 <template #trigger>
-                  <NButton quaternary size="tiny" :focusable="false" type="error">
-                    终止
-                  </NButton>
+                  <NButton quaternary size="tiny" :focusable="false" type="error"> 终止 </NButton>
                 </template>
                 <template #default>
                   终止「{{ s.command.slice(0, 30) }}」？进程组将被强制结束。

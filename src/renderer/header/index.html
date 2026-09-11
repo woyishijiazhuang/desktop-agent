@@ -152,7 +152,9 @@
         background: var(--bg-soft);
         border-bottom: 1px solid var(--border);
         user-select: none;
-        transition: background-color 0.15s ease, border-color 0.15s ease;
+        transition:
+          background-color 0.15s ease,
+          border-color 0.15s ease;
       }
 
       /* 拖拽区（no-drag 区内的按钮/交互元素可正常点击） */
@@ -359,7 +361,12 @@
             <path d="M9 7 V5 a1 1 0 0 1 1 -1 H20 a1 1 0 0 1 1 1 V15 a1 1 0 0 1 -1 1 H18" />
           </svg>
         </button>
-        <button class="titlebar__btn titlebar__btn--close" id="btn-close" type="button" title="关闭">
+        <button
+          class="titlebar__btn titlebar__btn--close"
+          id="btn-close"
+          type="button"
+          title="关闭"
+        >
           <svg class="titlebar__icon" viewBox="0 0 24 24">
             <line x1="6" y1="6" x2="18" y2="18" />
             <line x1="18" y1="6" x2="6" y2="18" />

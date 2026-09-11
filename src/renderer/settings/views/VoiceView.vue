@@ -143,9 +143,7 @@ const voiceOptions = VOICE_PRESETS.map((v) => ({ label: v.name, value: v.id }))
         <div class="data-row__info">
           <span class="data-row__label">MiMo API Key</span>
           <span class="data-row__hint">
-            {{
-              settings.voiceHasApiKey ? '已配置（加密存储）' : '未配置——语音对话不可用'
-            }}
+            {{ settings.voiceHasApiKey ? '已配置（加密存储）' : '未配置——语音对话不可用' }}
           </span>
         </div>
         <NSpace align="center" :size="8">

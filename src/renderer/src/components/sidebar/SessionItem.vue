@@ -105,11 +105,7 @@ function formatTime(): string {
           class="session-item__dot session-item__dot--waiting"
           title="等待确认/回答问题"
         />
-        <span
-          v-else-if="busy"
-          class="session-item__dot session-item__dot--busy"
-          title="生成中…"
-        />
+        <span v-else-if="busy" class="session-item__dot session-item__dot--busy" title="生成中…" />
         <span
           v-else-if="failed"
           class="session-item__dot session-item__dot--error"

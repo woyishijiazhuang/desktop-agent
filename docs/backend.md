@@ -39,17 +39,17 @@
 
 ### 技术选型
 
-| 依赖 | 作用 |
-|---|---|
-| `@earendil-works/pi-agent-core` | Agent 框架：Agent 类、工具协议、事件订阅、steer/followUp/continue/abort |
-| `@earendil-works/pi-ai` | 模型/Provider 抽象：Models 集合、Provider、Model\<Api\>、streamSimple、builtinProviders 预置目录 |
-| `@modelcontextprotocol/sdk` | MCP 客户端（StdioClientTransport / StreamableHTTPClientTransport） |
-| `electron-ipc-service` | 类型安全的双向 IPC 框架，服务以 `IpcService` 子类 + `namespace` 注册 |
-| `node:sqlite`（`DatabaseSync`） | 本地 SQLite（WAL 模式），文件 `userData/data.db` |
-| Electron `safeStorage` | API Key / Tavily Key 加密存储 |
-| `electron-log` | 主进程文件日志 + 渲染进程 console 捕获 |
-| `mdize` | docx/pdf/xlsx/pptx/csv → Markdown 文档解析（惰性加载） |
-| `@napi-rs/canvas` | 图标生成脚本（scripts/generate-icons.mjs） |
+| 依赖                            | 作用                                                                                             |
+| ------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `@earendil-works/pi-agent-core` | Agent 框架：Agent 类、工具协议、事件订阅、steer/followUp/continue/abort                          |
+| `@earendil-works/pi-ai`         | 模型/Provider 抽象：Models 集合、Provider、Model\<Api\>、streamSimple、builtinProviders 预置目录 |
+| `@modelcontextprotocol/sdk`     | MCP 客户端（StdioClientTransport / StreamableHTTPClientTransport）                               |
+| `electron-ipc-service`          | 类型安全的双向 IPC 框架，服务以 `IpcService` 子类 + `namespace` 注册                             |
+| `node:sqlite`（`DatabaseSync`） | 本地 SQLite（WAL 模式），文件 `userData/data.db`                                                 |
+| Electron `safeStorage`          | API Key / Tavily Key 加密存储                                                                    |
+| `electron-log`                  | 主进程文件日志 + 渲染进程 console 捕获                                                           |
+| `mdize`                         | docx/pdf/xlsx/pptx/csv → Markdown 文档解析（惰性加载）                                           |
+| `@napi-rs/canvas`               | 图标生成脚本（scripts/generate-icons.mjs）                                                       |
 
 ---
 
@@ -88,7 +88,12 @@
 
 ```ts
 export const ipcMainServices = initializeIpcMainServices([
-  AppService, DbService, WindowService, AgentService, McpService, ModelConfigService
+  AppService,
+  DbService,
+  WindowService,
+  AgentService,
+  McpService,
+  ModelConfigService
 ])
 ```
 
@@ -99,6 +104,7 @@ export const ipcMainServices = initializeIpcMainServices([
 ### 窗口架构（window-manager.ts）
 
 `BaseWindow` + 双 WebContentsView：
+
 - **headerView**：顶部 32px 自定义标题栏独立视图，弹窗永远无法遮盖它。
 - **contentView**：应用本体（Vue 应用），弹窗被裁剪在自身边界。
 - 替代 BrowserWindow 两处静态依赖：`BrowserWindow.fromWebContents()` → `getWindowByWebContents()`（webContentsId→BaseWindow 注册表）；`createIpcMainClient` → `broadcastToAllViews()`。
@@ -175,6 +181,7 @@ src/
 **角色**：主进程入口，创建窗口并初始化应用。
 
 **关键逻辑**：
+
 - `app.setName('桌面助手')`（须在 whenReady 之前）：使菜单栏/Dock/任务栏显示品牌名，与 electron-builder productName 一致。
 - `crashReporter.start({ uploadToServer: false })`：崩溃本地落盘不上报（dump 位于 `app.getPath('crashDumps')`，设置页可查看）。
 - `whenReady` 后：`setAppUserModelId('com.desktop-agent.app')` → macOS Dock 设品牌图标 → `createMainWindow()` + `createTray()` + `createAppMenu()` → 兜底清理孤儿附件（`cleanupOrphanAttachments`）→ 连接已启用 MCP server（`mcp.connectAll()`，失败不影响启动）→ 恢复窗口置顶偏好。
@@ -206,29 +213,29 @@ src/
 
 **对话控制 IPC 方法**：
 
-| 方法 | 作用 |
-|---|---|
-| `prompt(sessionId, text, images?, files?, skills?)` | 发送用户消息：组装 user 消息块（技能 SKILL.md 全文、文件文本、图片 base64），自动压缩预检、落库、并行生成标题、后台跑 Agent（不 await） |
-| `abort(sessionId)` | 中止正在生成的 Agent |
-| `steer(sessionId, text)` | 向运行中的 Agent 注入用户消息（不落库） |
-| `followUp(sessionId, text)` | 追加用户消息（延续对话） |
-| `continue_(sessionId)` | 新一轮 run（重置轮次计数后继续） |
-| `retry(sessionId)` | 重试：删末尾失败 assistant → 驱逐 → rehydrate → continue |
-| `regenerate(sessionId)` | 重新生成末条 assistant 回复 |
-| `recallLastUserMessage(sessionId)` | 回收末尾失败的用户消息（回填输入框） |
-| `setThinkingLevel(sessionId, level)` | 实时改内存 Agent 思考级别（无需驱逐，下一轮生效） |
-| `compressSession(sessionId)` | 手动压缩会话历史（返回 `CompressResult`） |
-| `getSessionContextUsage(sessionId)` | 压缩确认弹窗用：上下文占用统计 |
-| `readClipboardImage()` | 读取剪贴板截图（PNG base64） |
-| `parseDocumentFile(buffer, filename)` | 解析文档（docx/pdf/xlsx/pptx/csv）为 Markdown |
-| `listTools()` | 全部工具及启用状态 |
-| `getWebSearchConfig()` / `setWebSearchApiKey(key)` / `clearWebSearchApiKey()` / `testWebSearch(key?)` | Tavily Key 配置（safeStorage，明文不跨进程） |
-| `getFindSkillConfig()` / `setFindSkillSource(source)` / `testFindSkill(source)` | 技能搜索数据源（字节/腾讯） |
-| `listInstalledSkills()` / `setSkillEnabled(id, enabled)` / `uninstallSkill(id)` / `openSkillsDir()` | 技能管理 |
-| `respondPermission(requestId, approved, scope)` | 回传权限确认结果（once/session/always） |
-| `listBashAllowlist()` / `removeBashAllowlist(command)` | bash 持久白名单 |
-| `evictSession(sessionId)` / `evictAllSessions()` | 驱逐单个/全部内存 Agent |
-| `getAttachmentDataUrl(fileKey)` | 渲染层读附件为 data URL |
+| 方法                                                                                                  | 作用                                                                                                                                    |
+| ----------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `prompt(sessionId, text, images?, files?, skills?)`                                                   | 发送用户消息：组装 user 消息块（技能 SKILL.md 全文、文件文本、图片 base64），自动压缩预检、落库、并行生成标题、后台跑 Agent（不 await） |
+| `abort(sessionId)`                                                                                    | 中止正在生成的 Agent                                                                                                                    |
+| `steer(sessionId, text)`                                                                              | 向运行中的 Agent 注入用户消息（不落库）                                                                                                 |
+| `followUp(sessionId, text)`                                                                           | 追加用户消息（延续对话）                                                                                                                |
+| `continue_(sessionId)`                                                                                | 新一轮 run（重置轮次计数后继续）                                                                                                        |
+| `retry(sessionId)`                                                                                    | 重试：删末尾失败 assistant → 驱逐 → rehydrate → continue                                                                                |
+| `regenerate(sessionId)`                                                                               | 重新生成末条 assistant 回复                                                                                                             |
+| `recallLastUserMessage(sessionId)`                                                                    | 回收末尾失败的用户消息（回填输入框）                                                                                                    |
+| `setThinkingLevel(sessionId, level)`                                                                  | 实时改内存 Agent 思考级别（无需驱逐，下一轮生效）                                                                                       |
+| `compressSession(sessionId)`                                                                          | 手动压缩会话历史（返回 `CompressResult`）                                                                                               |
+| `getSessionContextUsage(sessionId)`                                                                   | 压缩确认弹窗用：上下文占用统计                                                                                                          |
+| `readClipboardImage()`                                                                                | 读取剪贴板截图（PNG base64）                                                                                                            |
+| `parseDocumentFile(buffer, filename)`                                                                 | 解析文档（docx/pdf/xlsx/pptx/csv）为 Markdown                                                                                           |
+| `listTools()`                                                                                         | 全部工具及启用状态                                                                                                                      |
+| `getWebSearchConfig()` / `setWebSearchApiKey(key)` / `clearWebSearchApiKey()` / `testWebSearch(key?)` | Tavily Key 配置（safeStorage，明文不跨进程）                                                                                            |
+| `getFindSkillConfig()` / `setFindSkillSource(source)` / `testFindSkill(source)`                       | 技能搜索数据源（字节/腾讯）                                                                                                             |
+| `listInstalledSkills()` / `setSkillEnabled(id, enabled)` / `uninstallSkill(id)` / `openSkillsDir()`   | 技能管理                                                                                                                                |
+| `respondPermission(requestId, approved, scope)`                                                       | 回传权限确认结果（once/session/always）                                                                                                 |
+| `listBashAllowlist()` / `removeBashAllowlist(command)`                                                | bash 持久白名单                                                                                                                         |
+| `evictSession(sessionId)` / `evictAllSessions()`                                                      | 驱逐单个/全部内存 Agent                                                                                                                 |
+| `getAttachmentDataUrl(fileKey)`                                                                       | 渲染层读附件为 data URL                                                                                                                 |
 
 **事件推送**（经 rendererClient）：`agentEvent.onEvent`、`agentEvent.onSessionUpdate`、`agentEvent.onPermissionRequest`。
 
@@ -236,16 +243,16 @@ src/
 
 **角色**：ModelConfigService IPC 服务（namespace `modelConfig`），模型配置管理。每次变更同步注册/注销运行时 provider。
 
-| 方法 | 作用 |
-|---|---|
-| `listModelConfigs()` | 全部模型配置（脱敏，含 hasApiKey） |
-| `createModelConfig(input, apiKey?)` | 创建配置并注册运行时 provider（apiKey 加密落库） |
-| `updateModelConfig(id, patch)` | 更新配置并重新注册（apiKey: string 覆盖 / null 清除 / undefined 不动） |
-| `deleteModelConfig(id)` | 删除配置并从运行时注销 |
-| `testModelConfig(id)` | 连通性测试（8s 超时，首事件即成功） |
-| `listPresetProviders()` | 预置服务商列表 |
-| `listPresetModels(providerId)` | 某服务商的预置模型列表 |
-| `listPresetModelsOnline(providerId, apiKey)` | 在线拉取服务商 /models（apiKey 仅透传不落库） |
+| 方法                                         | 作用                                                                   |
+| -------------------------------------------- | ---------------------------------------------------------------------- |
+| `listModelConfigs()`                         | 全部模型配置（脱敏，含 hasApiKey）                                     |
+| `createModelConfig(input, apiKey?)`          | 创建配置并注册运行时 provider（apiKey 加密落库）                       |
+| `updateModelConfig(id, patch)`               | 更新配置并重新注册（apiKey: string 覆盖 / null 清除 / undefined 不动） |
+| `deleteModelConfig(id)`                      | 删除配置并从运行时注销                                                 |
+| `testModelConfig(id)`                        | 连通性测试（8s 超时，首事件即成功）                                    |
+| `listPresetProviders()`                      | 预置服务商列表                                                         |
+| `listPresetModels(providerId)`               | 某服务商的预置模型列表                                                 |
+| `listPresetModelsOnline(providerId, apiKey)` | 在线拉取服务商 /models（apiKey 仅透传不落库）                          |
 
 #### [model-config/](file:///Users/hupengfei/Documents/my-app/src/main/agent/model-config/) 目录
 
@@ -293,19 +300,19 @@ src/
 
 **注册表**（[tools/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/tools/index.ts)）：`TOOL_REGISTRY` 登记全部工具及默认启用状态；`buildTools` 按开关过滤注入 Agent（技能域工具受 `skillsEnabled` 总开关、记忆域工具受 `memoryEnabled` 总开关控制）。
 
-| 文件 | 工具名 | 用途 | 执行模式 | 默认启用 |
-|---|---|---|---|---|
-| read-file.ts | `read_file` | 读文件：纯文本（2000 行/50KB 截断，offset/limit 分段）+ 文档自动解析为 Markdown | parallel | ✅ |
-| list-files.ts | `list_files` | 列出目录（递归默认 3 层，上限 5000 条自动截断） | parallel | ✅ |
-| write-file.ts | `write_file` | 写文件（覆盖/创建，自动建父目录），危险操作需权限确认 | sequential | ✅ |
-| edit-file.ts | `edit_file` | 增量编辑：oldText→newText 精确替换（唯一匹配、逆序应用、保留 BOM/行尾），危险操作需权限确认 | sequential | ✅ |
-| bash.ts | `bash` | Shell 执行（默认 30s 超时，输出 50k 截断，abort 时 kill 进程组，SIGTERM 宽限期后升级 SIGKILL），危险操作需权限确认 | sequential | ✅ |
-| web-search.ts | `web_search` | Tavily 网页搜索（需配置 API Key） | parallel | ❌ |
-| find-skill.ts | `find_skill` | 搜索技能（字节 Find Skill / 腾讯 SkillHub，5 分钟结果缓存） | parallel | ✅ |
-| install-skill.ts | `install_skill` | 安装技能到本地技能目录（下载并解压不可信代码，需权限确认） | parallel | ✅ |
-| read-skill.ts | `read_skill` | 读取技能 SKILL.md / 包内文件；不传 skill 时返回已安装清单 | parallel | ✅ |
-| memory.ts | `list_memories` / `add_memory` / `update_memory` / `delete_memory` | 长期记忆四件套（总量上限 20 条 / 3000 字 / 单条 200 字，超限拒绝写入） | parallel | ✅（受 memoryEnabled） |
-| web-search-config.ts | —（非工具） | Tavily API Key 加密存取 | — | — |
+| 文件                 | 工具名                                                             | 用途                                                                                                               | 执行模式   | 默认启用               |
+| -------------------- | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ---------- | ---------------------- |
+| read-file.ts         | `read_file`                                                        | 读文件：纯文本（2000 行/50KB 截断，offset/limit 分段）+ 文档自动解析为 Markdown                                    | parallel   | ✅                     |
+| list-files.ts        | `list_files`                                                       | 列出目录（递归默认 3 层，上限 5000 条自动截断）                                                                    | parallel   | ✅                     |
+| write-file.ts        | `write_file`                                                       | 写文件（覆盖/创建，自动建父目录），危险操作需权限确认                                                              | sequential | ✅                     |
+| edit-file.ts         | `edit_file`                                                        | 增量编辑：oldText→newText 精确替换（唯一匹配、逆序应用、保留 BOM/行尾），危险操作需权限确认                        | sequential | ✅                     |
+| bash.ts              | `bash`                                                             | Shell 执行（默认 30s 超时，输出 50k 截断，abort 时 kill 进程组，SIGTERM 宽限期后升级 SIGKILL），危险操作需权限确认 | sequential | ✅                     |
+| web-search.ts        | `web_search`                                                       | Tavily 网页搜索（需配置 API Key）                                                                                  | parallel   | ❌                     |
+| find-skill.ts        | `find_skill`                                                       | 搜索技能（字节 Find Skill / 腾讯 SkillHub，5 分钟结果缓存）                                                        | parallel   | ✅                     |
+| install-skill.ts     | `install_skill`                                                    | 安装技能到本地技能目录（下载并解压不可信代码，需权限确认）                                                         | parallel   | ✅                     |
+| read-skill.ts        | `read_skill`                                                       | 读取技能 SKILL.md / 包内文件；不传 skill 时返回已安装清单                                                          | parallel   | ✅                     |
+| memory.ts            | `list_memories` / `add_memory` / `update_memory` / `delete_memory` | 长期记忆四件套（总量上限 20 条 / 3000 字 / 单条 200 字，超限拒绝写入）                                             | parallel   | ✅（受 memoryEnabled） |
+| web-search-config.ts | —（非工具）                                                        | Tavily API Key 加密存取                                                                                            | —          | —                      |
 
 ### 4.5 服务层（service）
 
@@ -327,7 +334,7 @@ src/
 
 #### [service/window-manager.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/window-manager.ts)
 
-**角色**：BaseWindow + 双 WebContentsView 管理（架构见 [第 2 节](#2-进程架构与双向-ipc)）。导出 `HEADER_HEIGHT=32`、`createMainWindow`、`recreateMainWindow`（标题栏模式切换，保留位置尺寸）、`getMainWindow/getHeaderView/getContentView/getWindowByWebContents/broadcastToAllViews/ensureMainWindow/markQuitting`。初始尺寸按主屏工作区等比（宽 ~66%、高 ~72%，960~1800/680~1200 约束，居中）。`win.on('close')` 拦截：`quitting` 为 false 且开启「关闭到托盘」时 preventDefault + hide。两视图都挂 `optimizer.watchWindowShortcuts`。
+**角色**：BaseWindow + 双 WebContentsView 管理（架构见 [第 2 节](#2-进程架构与双向-ipc)）。导出 `HEADER_HEIGHT=32`、`createMainWindow`、`recreateMainWindow`（标题栏模式切换，保留位置尺寸）、`getMainWindow/getHeaderView/getContentView/getWindowByWebContents/broadcastToAllViews/ensureMainWindow/markQuitting`。初始尺寸按主屏工作区等比（宽 ~~66%、高 ~~72%，960~~1800/680~~1200 约束，居中）。`win.on('close')` 拦截：`quitting` 为 false 且开启「关闭到托盘」时 preventDefault + hide。两视图都挂 `optimizer.watchWindowShortcuts`。
 
 #### [service/tray-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/tray-service.ts)
 
@@ -374,6 +381,7 @@ electron-log 文件日志。`log.initialize({ spyRendererConsole: true })`（捕
 `AgentManager` 维护每会话一个 Agent 实例（`agents: Map<string, Agent>`），辅以 `lru: string[]` 顺序数组。
 
 **获取**（`getOrCreateAgent(sessionId)`）双路径设计：
+
 - **快速路径**（cache 命中）：直接返回并 `touchLru`，**无锁**，多会话并发对话互不阻塞。
 - **慢路径**（cache miss）：经 `withCreateLock` promise-chain 串行化。双重检查（等锁期间可能已被创建）；LRU 满（`MAX_AGENTS = 8`）则 `evictOne`；`createAgent` 入缓存。
 
@@ -434,12 +442,12 @@ Agent 调工具 → beforeToolCall 钩子
 
 ### 5.7 对话控制语义
 
-| 操作 | 行为 |
-|---|---|
-| `retry` | 删末尾连续失败 assistant（含失败标记行）→ rehydrate → continue（不重复用户消息） |
-| `regenerate` | 删末条 assistant（不限 finishReason）→ rehydrate → continue |
-| `recallLastUserMessage` | 删末尾失败 assistant + 末尾 user，返回是否回收（供前端回填输入框） |
-| `steer`/`followUp` | 注入 user 消息引导运行中/已结束的 agent（暂未接 UI，预留） |
+| 操作                    | 行为                                                                             |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `retry`                 | 删末尾连续失败 assistant（含失败标记行）→ rehydrate → continue（不重复用户消息） |
+| `regenerate`            | 删末条 assistant（不限 finishReason）→ rehydrate → continue                      |
+| `recallLastUserMessage` | 删末尾失败 assistant + 末尾 user，返回是否回收（供前端回填输入框）               |
+| `steer`/`followUp`      | 注入 user 消息引导运行中/已结束的 agent（暂未接 UI，预留）                       |
 
 ### 5.8 上下文注入（长期记忆 + 压缩摘要）
 
@@ -458,50 +466,50 @@ Agent 调工具 → beforeToolCall 钩子
 
 **sessions（会话）**
 
-| 列 | 类型 | 说明 |
-|---|---|---|
-| id | TEXT PK | `crypto.randomUUID()` |
-| title | TEXT NOT NULL DEFAULT '新会话' | 标题（首条消息后自动生成） |
-| status | TEXT DEFAULT 'active' CHECK('active','ended') | |
-| model | TEXT | 会话级 ModelKey JSON |
-| thinking_level | TEXT | 会话级思考级别 |
-| system_prompt | TEXT | 会话级系统提示覆盖 |
-| resolved_system_prompt | TEXT | 最终组装后的系统提示词快照（首次创建 Agent 时固化，重建复用；自定义提示词/全局默认提示词变更时失效） |
-| parent_session_id | TEXT FK→sessions.id | 分支会话来源 |
-| compress_summary / compress_last_index / compress_version | TEXT/INTEGER/INTEGER | 压缩摘要 / 压缩指针 / 乐观锁版本 |
-| deleted_at | INTEGER | 软删除时间（回收站） |
-| pinned / archived | INTEGER DEFAULT 0 | 置顶 / 归档 |
-| created_at / updated_at / last_active_at | INTEGER | |
+| 列                                                        | 类型                                          | 说明                                                                                                 |
+| --------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| id                                                        | TEXT PK                                       | `crypto.randomUUID()`                                                                                |
+| title                                                     | TEXT NOT NULL DEFAULT '新会话'                | 标题（首条消息后自动生成）                                                                           |
+| status                                                    | TEXT DEFAULT 'active' CHECK('active','ended') |                                                                                                      |
+| model                                                     | TEXT                                          | 会话级 ModelKey JSON                                                                                 |
+| thinking_level                                            | TEXT                                          | 会话级思考级别                                                                                       |
+| system_prompt                                             | TEXT                                          | 会话级系统提示覆盖                                                                                   |
+| resolved_system_prompt                                    | TEXT                                          | 最终组装后的系统提示词快照（首次创建 Agent 时固化，重建复用；自定义提示词/全局默认提示词变更时失效） |
+| parent_session_id                                         | TEXT FK→sessions.id                           | 分支会话来源                                                                                         |
+| compress_summary / compress_last_index / compress_version | TEXT/INTEGER/INTEGER                          | 压缩摘要 / 压缩指针 / 乐观锁版本                                                                     |
+| deleted_at                                                | INTEGER                                       | 软删除时间（回收站）                                                                                 |
+| pinned / archived                                         | INTEGER DEFAULT 0                             | 置顶 / 归档                                                                                          |
+| created_at / updated_at / last_active_at                  | INTEGER                                       |                                                                                                      |
 
 **messages（消息）**
 
-| 列 | 类型 | 说明 |
-|---|---|---|
-| id | INTEGER PK AUTOINCREMENT | |
-| session_id | TEXT NOT NULL FK→sessions.id ON DELETE CASCADE | |
-| role | TEXT NOT NULL | user/assistant/toolResult/custom |
-| content | TEXT NOT NULL | JSON（Block[] 或字符串） |
-| tool_call_id / tool_name | TEXT | toolResult 冗余列 |
-| model / provider / finish_reason | TEXT | 生成模型 / 停止原因 |
-| timestamp | INTEGER NOT NULL | `Date.now()` |
-| metadata | TEXT | JSON（api/provider/usage/details/isError） |
+| 列                               | 类型                                           | 说明                                       |
+| -------------------------------- | ---------------------------------------------- | ------------------------------------------ |
+| id                               | INTEGER PK AUTOINCREMENT                       |                                            |
+| session_id                       | TEXT NOT NULL FK→sessions.id ON DELETE CASCADE |                                            |
+| role                             | TEXT NOT NULL                                  | user/assistant/toolResult/custom           |
+| content                          | TEXT NOT NULL                                  | JSON（Block[] 或字符串）                   |
+| tool_call_id / tool_name         | TEXT                                           | toolResult 冗余列                          |
+| model / provider / finish_reason | TEXT                                           | 生成模型 / 停止原因                        |
+| timestamp                        | INTEGER NOT NULL                               | `Date.now()`                               |
+| metadata                         | TEXT                                           | JSON（api/provider/usage/details/isError） |
 
 **model_configs（模型配置，取代旧 credentials 表）**
 
-| 列 | 类型 | 说明 |
-|---|---|---|
-| id | TEXT PK | 同时作 pi-ai provider id |
-| display_name | TEXT NOT NULL | UI 显示名 |
-| source | TEXT CHECK('preset','custom') | |
-| preset_provider | TEXT | preset 时记录服务商 id |
-| api_format | TEXT CHECK('openai-completions','anthropic-messages') | |
-| base_url | TEXT | 自定义端点 |
-| model_id | TEXT NOT NULL | 实际模型 id |
-| context_window / max_tokens | INTEGER NOT NULL | |
-| multimodal / reasoning | INTEGER DEFAULT 0 | |
-| pricing | TEXT | 自定义定价 JSON（含峰谷时段） |
-| api_key_encrypted | BLOB | safeStorage 加密 |
-| created_at / updated_at | INTEGER | |
+| 列                          | 类型                                                  | 说明                          |
+| --------------------------- | ----------------------------------------------------- | ----------------------------- |
+| id                          | TEXT PK                                               | 同时作 pi-ai provider id      |
+| display_name                | TEXT NOT NULL                                         | UI 显示名                     |
+| source                      | TEXT CHECK('preset','custom')                         |                               |
+| preset_provider             | TEXT                                                  | preset 时记录服务商 id        |
+| api_format                  | TEXT CHECK('openai-completions','anthropic-messages') |                               |
+| base_url                    | TEXT                                                  | 自定义端点                    |
+| model_id                    | TEXT NOT NULL                                         | 实际模型 id                   |
+| context_window / max_tokens | INTEGER NOT NULL                                      |                               |
+| multimodal / reasoning      | INTEGER DEFAULT 0                                     |                               |
+| pricing                     | TEXT                                                  | 自定义定价 JSON（含峰谷时段） |
+| api_key_encrypted           | BLOB                                                  | safeStorage 加密              |
+| created_at / updated_at     | INTEGER                                               |                               |
 
 **settings（设置项）**：`key TEXT PK`、`value TEXT NOT NULL`（JSON 值），写入经 `SETTING_VALIDATORS` 白名单校验。
 
@@ -512,6 +520,7 @@ Agent 调工具 → beforeToolCall 钩子
 **usage_logs（用量日志）**：id、session_id（FK CASCADE）、kind（chat/title/compress）、provider/model、prompt_tokens/completion_tokens、cost、timestamp。**token 统计的唯一数据源**，不挂在 messages 上（辅助调用不产生消息但同样消耗 token）。
 
 **FTS5 虚拟表**
+
 - `messages_fts(text, tokenize='unicode61')`：rowid 与 messages.id 一一对应；不用 contentless 模式（不支持 DELETE/UPDATE，索引需随消息增删改同步）。
 - `memories_fts(text, tokenize='unicode61')`：rowid 为 memories.id 的 FNV-1a 哈希（`rowidKey`）；检索时先取命中 rowid 集合，再在 JS 层按哈希还原比对（UUID 与 INTEGER rowid 无法直接 JOIN）。
 - 分词：CJK 段 2-gram 化（单字保留），非 CJK 按 `\W` 切词（fts.ts）。
@@ -534,14 +543,14 @@ Agent 调工具 → beforeToolCall 钩子
 
 ## 7. 服务层一览
 
-| 服务 | namespace | 暴露方法 |
-|---|---|---|
-| AppService | `app` | getAppVersion、openExternal、getAutoLaunch/setAutoLaunch、getDiagnosticsInfo、openDiagnosticsDir、clearLogs |
-| DbService | `db` | 会话/消息/设置/压缩/上下文/回收站/全文搜索/记忆/用量/导出完整 CRUD + forkSession |
-| WindowService | `window` | initWindow、setBackgroundColor、triggerWindowAction（12 种动作） |
-| AgentService | `agent` | 对话控制（prompt/abort/steer/followUp/continue_/retry/regenerate/recallLastUserMessage）、思考级别、压缩（compressSession/getSessionContextUsage + 自动压缩）、剪贴板截图/文档解析、工具（listTools）、Tavily 配置、技能管理、权限（respondPermission + bash 白名单）、驱逐（evictSession/evictAllSessions）、附件读取 |
-| McpService | `mcp` | listServers/createServer/updateServer/setEnabled/deleteServer/getStatus/testConnection/connectAll |
-| ModelConfigService | `modelConfig` | listModelConfigs/createModelConfig/updateModelConfig/deleteModelConfig/testModelConfig/listPresetProviders/listPresetModels/listPresetModelsOnline |
+| 服务               | namespace     | 暴露方法                                                                                                                                                                                                                                                                                                               |
+| ------------------ | ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| AppService         | `app`         | getAppVersion、openExternal、getAutoLaunch/setAutoLaunch、getDiagnosticsInfo、openDiagnosticsDir、clearLogs                                                                                                                                                                                                            |
+| DbService          | `db`          | 会话/消息/设置/压缩/上下文/回收站/全文搜索/记忆/用量/导出完整 CRUD + forkSession                                                                                                                                                                                                                                       |
+| WindowService      | `window`      | initWindow、setBackgroundColor、triggerWindowAction（12 种动作）                                                                                                                                                                                                                                                       |
+| AgentService       | `agent`       | 对话控制（prompt/abort/steer/followUp/continue_/retry/regenerate/recallLastUserMessage）、思考级别、压缩（compressSession/getSessionContextUsage + 自动压缩）、剪贴板截图/文档解析、工具（listTools）、Tavily 配置、技能管理、权限（respondPermission + bash 白名单）、驱逐（evictSession/evictAllSessions）、附件读取 |
+| McpService         | `mcp`         | listServers/createServer/updateServer/setEnabled/deleteServer/getStatus/testConnection/connectAll                                                                                                                                                                                                                      |
+| ModelConfigService | `modelConfig` | listModelConfigs/createModelConfig/updateModelConfig/deleteModelConfig/testModelConfig/listPresetProviders/listPresetModels/listPresetModelsOnline                                                                                                                                                                     |
 
 ---
 
@@ -579,18 +588,18 @@ Agent 调工具 → beforeToolCall 钩子
 
 ## 9. 关键设计速查
 
-| 设计 | 要点 |
-|---|---|
-| **每会话独立 Agent** | `agents: Map<sessionId, Agent>` + LRU（max 8），并发会话互不阻塞 |
-| **两阶段锁** | 快速路径（cache 命中）lock-free；慢路径（cache miss）promise-chain 串行化 + 双重检查 |
-| **安全驱逐** | 先同步移除 map/LRU，再 abort + `waitForIdle`，杜绝双 run 冲突 |
-| **BaseWindow 双视图** | headerView（32px 标题栏）+ contentView，弹窗不遮标题栏；render-client Proxy 广播替代 getAllWindows |
-| **双向 IPC** | renderer→main（invoke）+ main→renderer（rendererClient 广播），权限回路闭环 |
-| **模型隔离** | Models 集合不装 builtin（避免污染）；ModelKey 二元组定位；config.id 即 provider id |
-| **API Key 安全** | `safeStorage` 加密 BLOB，单独列读写，渲染进程只接触 `hasApiKey` 布尔 |
-| **会话压缩** | LLM 摘要 + 乐观锁推进版本，不删原消息，`transformContext` 注入摘要 + 自动压缩预检 |
-| **流式事件过滤** | `isEmptyErrorCarrier` 过滤纯错误载体，避免空气泡；轮次超限 / LRU 暂停自动中止并携带提示；失败未产出内容时补失败标记行（重启后恢复重试入口） |
-| **危险工具权限** | write_file/edit_file/bash/install_skill 前置确认，支持 once/session/always 三作用域 + bash 白名单；请求 60s 超时自动拒绝（防挂起）；rm 破坏性删除 deny 正则覆盖选项在文件名之后的写法 |
-| **上下文注入** | 长期记忆在会话首次创建 Agent 时全量注入 systemPrompt 快照（重建复用、命中前缀缓存）；压缩摘要经 `transformContext` 以 user 标记块注入，绝不改 systemPrompt |
-| **MCP 联动** | 配置变更 → reload 连接池 → 驱逐全部 Agent，下一轮重建时重新拉取工具集 |
-| **无兼容代码** | 旧 `credentials` 表直接 drop，token 列迁移至 usage_logs，`parseModelKey` 不支持旧版纯 ID |
+| 设计                  | 要点                                                                                                                                                                                  |
+| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **每会话独立 Agent**  | `agents: Map<sessionId, Agent>` + LRU（max 8），并发会话互不阻塞                                                                                                                      |
+| **两阶段锁**          | 快速路径（cache 命中）lock-free；慢路径（cache miss）promise-chain 串行化 + 双重检查                                                                                                  |
+| **安全驱逐**          | 先同步移除 map/LRU，再 abort + `waitForIdle`，杜绝双 run 冲突                                                                                                                         |
+| **BaseWindow 双视图** | headerView（32px 标题栏）+ contentView，弹窗不遮标题栏；render-client Proxy 广播替代 getAllWindows                                                                                    |
+| **双向 IPC**          | renderer→main（invoke）+ main→renderer（rendererClient 广播），权限回路闭环                                                                                                           |
+| **模型隔离**          | Models 集合不装 builtin（避免污染）；ModelKey 二元组定位；config.id 即 provider id                                                                                                    |
+| **API Key 安全**      | `safeStorage` 加密 BLOB，单独列读写，渲染进程只接触 `hasApiKey` 布尔                                                                                                                  |
+| **会话压缩**          | LLM 摘要 + 乐观锁推进版本，不删原消息，`transformContext` 注入摘要 + 自动压缩预检                                                                                                     |
+| **流式事件过滤**      | `isEmptyErrorCarrier` 过滤纯错误载体，避免空气泡；轮次超限 / LRU 暂停自动中止并携带提示；失败未产出内容时补失败标记行（重启后恢复重试入口）                                           |
+| **危险工具权限**      | write_file/edit_file/bash/install_skill 前置确认，支持 once/session/always 三作用域 + bash 白名单；请求 60s 超时自动拒绝（防挂起）；rm 破坏性删除 deny 正则覆盖选项在文件名之后的写法 |
+| **上下文注入**        | 长期记忆在会话首次创建 Agent 时全量注入 systemPrompt 快照（重建复用、命中前缀缓存）；压缩摘要经 `transformContext` 以 user 标记块注入，绝不改 systemPrompt                            |
+| **MCP 联动**          | 配置变更 → reload 连接池 → 驱逐全部 Agent，下一轮重建时重新拉取工具集                                                                                                                 |
+| **无兼容代码**        | 旧 `credentials` 表直接 drop，token 列迁移至 usage_logs，`parseModelKey` 不支持旧版纯 ID                                                                                              |

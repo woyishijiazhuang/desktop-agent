@@ -8,32 +8,32 @@
 
 ## 一、现有工具清单
 
-| # | 工具名 | 标签 | 类别 | 执行模式 | 默认启用 | 危险 |
-|---|--------|------|------|---------|---------|------|
-| 1 | `read_file` | 读取文件 | 文件操作 | parallel | 是 | 否 |
-| 2 | `write_file` | 写入文件 | 文件操作 | sequential | 是 | **是** |
-| 3 | `edit_file` | 编辑文件 | 文件操作 | sequential | 是 | **是** |
-| 4 | `list_files` | 列出文件 | 文件操作 | parallel | 是 | 否 |
-| 5 | `glob` | 匹配文件 | 文件操作 | parallel | 是 | 否 |
-| 6 | `grep` | 搜索内容 | 搜索 | parallel | 是 | 否 |
-| 7 | `bash` | 执行命令 | 命令执行 | sequential | 是 | **是** |
-| 8 | `bash_output` | 读取后台输出 | 命令执行 | parallel | 是 | 否 |
-| 9 | `kill_shell` | 终止后台命令 | 命令执行 | sequential | 是 | 否 |
-| 10 | `enter_plan_mode` | 进入计划模式 | 规划 | sequential | 是 | 否 |
-| 11 | `exit_plan_mode` | 提交计划 | 规划 | sequential | 是 | 否 |
-| 12 | `web_search` | 网页搜索 | 搜索 | parallel | 否 | 否 |
-| 13 | `web_fetch` | 抓取网页 | 搜索 | parallel | 是 | 否 |
-| 14 | `search_knowledge` | 检索知识库 | 搜索 | parallel | 是 | 否 |
-| 15 | `find_skill` | 技能搜索 | 技能管理 | parallel | 是 | 否 |
-| 16 | `install_skill` | 技能安装 | 技能管理 | parallel | 是 | **是** |
-| 17 | `read_skill` | 技能读取 | 技能管理 | parallel | 是 | 否 |
-| 18 | `list_memories` | 查看记忆 | 记忆管理 | parallel | 是 | 否 |
-| 19 | `add_memory` | 添加记忆 | 记忆管理 | parallel | 是 | 否 |
-| 20 | `update_memory` | 更新记忆 | 记忆管理 | parallel | 是 | 否 |
-| 21 | `delete_memory` | 删除记忆 | 记忆管理 | parallel | 是 | 否 |
-| 22 | `notify` | 桌面通知 | 工具 | sequential | 是 | 否 |
-| 23 | `ask_user` | 询问用户 | 澄清 | sequential | 是 | 否 |
-| 24 | `task` | 委派子任务 | 子代理 | sequential | 是 | 否 |
+| #   | 工具名             | 标签         | 类别     | 执行模式   | 默认启用 | 危险   |
+| --- | ------------------ | ------------ | -------- | ---------- | -------- | ------ |
+| 1   | `read_file`        | 读取文件     | 文件操作 | parallel   | 是       | 否     |
+| 2   | `write_file`       | 写入文件     | 文件操作 | sequential | 是       | **是** |
+| 3   | `edit_file`        | 编辑文件     | 文件操作 | sequential | 是       | **是** |
+| 4   | `list_files`       | 列出文件     | 文件操作 | parallel   | 是       | 否     |
+| 5   | `glob`             | 匹配文件     | 文件操作 | parallel   | 是       | 否     |
+| 6   | `grep`             | 搜索内容     | 搜索     | parallel   | 是       | 否     |
+| 7   | `bash`             | 执行命令     | 命令执行 | sequential | 是       | **是** |
+| 8   | `bash_output`      | 读取后台输出 | 命令执行 | parallel   | 是       | 否     |
+| 9   | `kill_shell`       | 终止后台命令 | 命令执行 | sequential | 是       | 否     |
+| 10  | `enter_plan_mode`  | 进入计划模式 | 规划     | sequential | 是       | 否     |
+| 11  | `exit_plan_mode`   | 提交计划     | 规划     | sequential | 是       | 否     |
+| 12  | `web_search`       | 网页搜索     | 搜索     | parallel   | 否       | 否     |
+| 13  | `web_fetch`        | 抓取网页     | 搜索     | parallel   | 是       | 否     |
+| 14  | `search_knowledge` | 检索知识库   | 搜索     | parallel   | 是       | 否     |
+| 15  | `find_skill`       | 技能搜索     | 技能管理 | parallel   | 是       | 否     |
+| 16  | `install_skill`    | 技能安装     | 技能管理 | parallel   | 是       | **是** |
+| 17  | `read_skill`       | 技能读取     | 技能管理 | parallel   | 是       | 否     |
+| 18  | `list_memories`    | 查看记忆     | 记忆管理 | parallel   | 是       | 否     |
+| 19  | `add_memory`       | 添加记忆     | 记忆管理 | parallel   | 是       | 否     |
+| 20  | `update_memory`    | 更新记忆     | 记忆管理 | parallel   | 是       | 否     |
+| 21  | `delete_memory`    | 删除记忆     | 记忆管理 | parallel   | 是       | 否     |
+| 22  | `notify`           | 桌面通知     | 工具     | sequential | 是       | 否     |
+| 23  | `ask_user`         | 询问用户     | 澄清     | sequential | 是       | 否     |
+| 24  | `task`             | 委派子任务   | 子代理   | sequential | 是       | 否     |
 
 另支持 MCP 协议动态接入外部工具（stdio / streamable HTTP）。
 
@@ -41,18 +41,18 @@
 
 ## 二、能力矩阵对比
 
-| 能力 | 本项目 | Claude Code | Cursor | Windsurf |
-|------|--------|-------------|--------|----------|
-| 读文件 | `read_file` | `Read` | IDE 原生 | IDE 原生 |
-| 写文件 | `write_file` | `Write` | IDE 原生 | IDE 原生 |
-| 编辑文件 | `edit_file` | `Edit` | IDE 原生 | IDE 原生 |
-| 列出文件 | `list_files` | `Bash(ls)` | IDE 原生 | IDE 原生 |
-| 文件模式匹配 | `glob` | `Glob` | IDE 原生 | IDE 原生 |
-| 内容搜索（正则） | `grep` | `Grep` | IDE 原生 | IDE 原生 |
-| 执行命令 | `bash` | `Bash` | Terminal | Terminal |
-| 网页搜索 | `web_search` | `WebSearch` | `WebSearch` | Cascade 内置 |
-| URL 内容抓取 | `web_fetch` | `WebFetch` | 有 | Cascade 内置 |
-| 任务/子 Agent | `task`（plan / general 子代理，见第十批实现记录） | `Task`（多种子 agent） | Multi-Agent | Cascade |
+| 能力             | 本项目                                            | Claude Code            | Cursor      | Windsurf     |
+| ---------------- | ------------------------------------------------- | ---------------------- | ----------- | ------------ |
+| 读文件           | `read_file`                                       | `Read`                 | IDE 原生    | IDE 原生     |
+| 写文件           | `write_file`                                      | `Write`                | IDE 原生    | IDE 原生     |
+| 编辑文件         | `edit_file`                                       | `Edit`                 | IDE 原生    | IDE 原生     |
+| 列出文件         | `list_files`                                      | `Bash(ls)`             | IDE 原生    | IDE 原生     |
+| 文件模式匹配     | `glob`                                            | `Glob`                 | IDE 原生    | IDE 原生     |
+| 内容搜索（正则） | `grep`                                            | `Grep`                 | IDE 原生    | IDE 原生     |
+| 执行命令         | `bash`                                            | `Bash`                 | Terminal    | Terminal     |
+| 网页搜索         | `web_search`                                      | `WebSearch`            | `WebSearch` | Cascade 内置 |
+| URL 内容抓取     | `web_fetch`                                       | `WebFetch`             | 有          | Cascade 内置 |
+| 任务/子 Agent    | `task`（plan / general 子代理，见第十批实现记录） | `Task`（多种子 agent） | Multi-Agent | Cascade      |
 
 ---
 
@@ -137,35 +137,35 @@
 
 ### `read_file`（✅ 2026-08-15 已优化）
 
-| 问题 | 现状 | 建议 |
-|------|------|------|
-| 行号显示 | ✅ 已支持 | `cat -n` 风格（右对齐 + tab），offset 续读保持原文件行号；尾部换行不计行 |
-| 图片支持 | ✅ 已支持（多模态门控） | png/jpg/gif/webp 魔数校验后返回 image block；模型不支持时返回文本提示而非 image block（避免提供方 400 导致整回合中断）；5MB 上限；BMP 不支持 |
-| 二进制检测 | ✅ 已支持 | 前 8KB 含 NUL 字节即报错提示，不再输出乱码 |
+| 问题       | 现状                    | 建议                                                                                                                                         |
+| ---------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| 行号显示   | ✅ 已支持               | `cat -n` 风格（右对齐 + tab），offset 续读保持原文件行号；尾部换行不计行                                                                     |
+| 图片支持   | ✅ 已支持（多模态门控） | png/jpg/gif/webp 魔数校验后返回 image block；模型不支持时返回文本提示而非 image block（避免提供方 400 导致整回合中断）；5MB 上限；BMP 不支持 |
+| 二进制检测 | ✅ 已支持               | 前 8KB 含 NUL 字节即报错提示，不再输出乱码                                                                                                   |
 
 ### `write_file`
 
-| 问题 | 现状 | 建议 |
-|------|------|------|
+| 问题         | 现状                    | 建议                                                                                  |
+| ------------ | ----------------------- | ------------------------------------------------------------------------------------- |
 | 读取前置检查 | ✅ 已支持（2026-08-15） | 目标文件已存在时拒绝写入并提示先 read_file，防盲写覆盖（对齐 Claude Code Write 语义） |
-| 大文件处理 | ✅ 已支持（2026-08-15） | 单次写入内容超 1MB 直接拒绝，提示改用 edit_file 分段编辑 |
+| 大文件处理   | ✅ 已支持（2026-08-15） | 单次写入内容超 1MB 直接拒绝，提示改用 edit_file 分段编辑                              |
 
 ### `bash`
 
-| 问题 | 现状 | 建议 |
-|------|------|------|
-| 流式输出 | ✅ 已支持（2026-08-15） | 见文末第四批实现记录：执行中实时推送输出，卡片「实时输出」区滚动展示 |
-| 持久化会话 | ✅ 已支持（2026-08-15） | 见文末第五批实现记录：同一 shell 内 cd/export 保留 |
-| 后台执行 | ✅ 已支持（2026-08-15） | `background=true` + `bash_output` / `kill_shell`，见文末第五批实现记录 |
-| 输出截断方向 | ✅ 已支持（2026-08-15） | 改为保留**尾部** 50K（错误信息通常在末尾），见文末第七批实现记录 |
-| 交互式命令 | ✅ 已支持（2026-08-15） | 检测并拒绝交互式/读 stdin 命令（vim/less/ssh/裸 cat/git commit 无 -m 等），提示改用非交互写法 |
+| 问题         | 现状                    | 建议                                                                                          |
+| ------------ | ----------------------- | --------------------------------------------------------------------------------------------- |
+| 流式输出     | ✅ 已支持（2026-08-15） | 见文末第四批实现记录：执行中实时推送输出，卡片「实时输出」区滚动展示                          |
+| 持久化会话   | ✅ 已支持（2026-08-15） | 见文末第五批实现记录：同一 shell 内 cd/export 保留                                            |
+| 后台执行     | ✅ 已支持（2026-08-15） | `background=true` + `bash_output` / `kill_shell`，见文末第五批实现记录                        |
+| 输出截断方向 | ✅ 已支持（2026-08-15） | 改为保留**尾部** 50K（错误信息通常在末尾），见文末第七批实现记录                              |
+| 交互式命令   | ✅ 已支持（2026-08-15） | 检测并拒绝交互式/读 stdin 命令（vim/less/ssh/裸 cat/git commit 无 -m 等），提示改用非交互写法 |
 
 ### `edit_file`（✅ 2026-08-15 已优化）
 
-| 问题 | 现状 | 建议 |
-|------|------|------|
-| 模糊匹配 | ✅ 匹配失败时给出近似候选诊断 | 空白差异/大小写差异可唯一定位时，错误信息直接附上文件原文片段与行号，模型下一轮即可复制修正；检测行号前缀误粘贴并提示 |
-| diff 输出 | ✅ 标准 unified diff | 见文末第三批实现记录：hunk 上下文 + LCS 行对比 + git apply 兼容，前端 Monaco DiffEditor 渲染 |
+| 问题      | 现状                          | 建议                                                                                                                  |
+| --------- | ----------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| 模糊匹配  | ✅ 匹配失败时给出近似候选诊断 | 空白差异/大小写差异可唯一定位时，错误信息直接附上文件原文片段与行号，模型下一轮即可复制修正；检测行号前缀误粘贴并提示 |
+| diff 输出 | ✅ 标准 unified diff          | 见文末第三批实现记录：hunk 上下文 + LCS 行对比 + git apply 兼容，前端 Monaco DiffEditor 渲染                          |
 
 ---
 
@@ -204,12 +204,12 @@
 
 ### 2026-08-15：补齐 P0 三件套
 
-| 工具 | 文件 | 要点 |
-|------|------|------|
-| `glob` | `src/main/agent/tools/glob.ts` | glob 模式匹配，结果按 mtime 排序，上限 500 条 |
-| `grep` | `src/main/agent/tools/grep.ts` | 正则内容搜索，3 种输出模式 + 上下文行 + glob 过滤 |
-| `web_fetch` | `src/main/agent/tools/web-fetch.ts` | URL 抓取，HTML→Markdown / JSON / PDF |
-| 共享辅助 | `src/main/agent/tools/fs-walk.ts` | 忽略目录表、glob→正则、带上限目录遍历（glob/grep 共用） |
+| 工具        | 文件                                | 要点                                                    |
+| ----------- | ----------------------------------- | ------------------------------------------------------- |
+| `glob`      | `src/main/agent/tools/glob.ts`      | glob 模式匹配，结果按 mtime 排序，上限 500 条           |
+| `grep`      | `src/main/agent/tools/grep.ts`      | 正则内容搜索，3 种输出模式 + 上下文行 + glob 过滤       |
+| `web_fetch` | `src/main/agent/tools/web-fetch.ts` | URL 抓取，HTML→Markdown / JSON / PDF                    |
+| 共享辅助    | `src/main/agent/tools/fs-walk.ts`   | 忽略目录表、glob→正则、带上限目录遍历（glob/grep 共用） |
 
 配套改动：
 

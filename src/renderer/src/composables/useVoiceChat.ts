@@ -8,13 +8,7 @@ import { mainClient } from '@renderer/utils/main-client'
 
 /** 语音会话阶段：off=未开启 / listening=等待说话 / recording=正在录音 /
  *  transcribing=转写中 / waiting=等待 AI 回复 / speaking=朗读回复（可打断）。 */
-export type VoicePhase =
-  | 'off'
-  | 'listening'
-  | 'recording'
-  | 'transcribing'
-  | 'waiting'
-  | 'speaking'
+export type VoicePhase = 'off' | 'listening' | 'recording' | 'transcribing' | 'waiting' | 'speaking'
 
 /** Silero VAD 模型与 ort wasm 的虚拟资源路径（main 进程 appasset:// 协议提供）。 */
 const ASSET_BASE = 'appasset://voice/'
@@ -68,9 +62,7 @@ export function useVoiceChat(): {
   const message = useMessage()
 
   const phase = ref<VoicePhase>('off')
-  const supported = ref(
-    typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia
-  )
+  const supported = ref(typeof navigator !== 'undefined' && !!navigator.mediaDevices?.getUserMedia)
 
   let voiceActive = false
   let mic: MicVAD | null = null
@@ -392,10 +384,13 @@ export function useVoiceChat(): {
       unreadyRun(idx).length >= 2 &&
       remaining * 1000 > BATCH_SYNTH_WINDOW_MS
     ) {
-      prefetchTimer = setTimeout(() => {
-        prefetchTimer = null
-        startPrefetch()
-      }, remaining * 1000 - BATCH_SYNTH_WINDOW_MS)
+      prefetchTimer = setTimeout(
+        () => {
+          prefetchTimer = null
+          startPrefetch()
+        },
+        remaining * 1000 - BATCH_SYNTH_WINDOW_MS
+      )
       return
     }
     startPrefetch()
@@ -817,8 +812,11 @@ function stripMarkdownForTts(text: string): string {
   let s = text.trim()
   if (!s) return ''
   // emoji 及其修饰符（象形/符号区、变体选择符、零宽连接符、键帽）
-  // eslint-disable-next-line no-misleading-character-class -- ZWJ/变体选择符是 emoji 组合的必要部分
-  const emojiRe = /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/gu
+  // 用 block 而非 next-line 抑制：oxfmt 会把超长正则换行，导致 next-line 指令与目标行错位
+  /* eslint-disable no-misleading-character-class -- ZWJ/变体选择符是 emoji 组合的必要部分 */
+  const emojiRe =
+    /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE00}-\u{FE0F}\u{200D}\u{20E3}]/gu
+  /* eslint-enable no-misleading-character-class */
   s = s.replace(emojiRe, ' ')
   // 代码围栏整体移除（``` 或 ```lang ... ```）
   s = s.replace(/```[\s\S]*?```/g, ' ')
@@ -831,7 +829,10 @@ function stripMarkdownForTts(text: string): string {
     .replace(/`([^`]+)`/g, '$1')
     .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
   // 合并多余空行与空白
-  return s.replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ').trim()
+  return s
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/[ \t]{2,}/g, ' ')
+    .trim()
 }
 
 function concatChunks(chunks: Float32Array[]): Float32Array {

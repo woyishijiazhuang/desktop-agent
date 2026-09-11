@@ -111,7 +111,8 @@ export function createKnowledgeApi(db: DatabaseSync): KnowledgeApi {
 
     getDocument(id: string): KbDocument | undefined {
       const row = db.prepare('SELECT * FROM kb_documents WHERE id = ?').get(id) as unknown as
-        KbDocumentRow | undefined
+        | KbDocumentRow
+        | undefined
       return row ? toKbDocument(row) : undefined
     },
 

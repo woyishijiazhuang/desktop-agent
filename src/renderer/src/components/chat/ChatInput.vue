@@ -192,13 +192,10 @@ watch(
 )
 
 /** 某个技能被停用（或列表刷新后不再启用）时，将其从已选中剔除。 */
-watch(
-  enabledSkills,
-  (skills) => {
-    const ids = new Set(skills.map((s) => s.id))
-    selectedSkills.value = selectedSkills.value.filter((s) => ids.has(s.id))
-  }
-)
+watch(enabledSkills, (skills) => {
+  const ids = new Set(skills.map((s) => s.id))
+  selectedSkills.value = selectedSkills.value.filter((s) => ids.has(s.id))
+})
 
 onMounted(() => {
   void mainClient.agent.listInstalledSkills().then((list) => {

@@ -22,7 +22,13 @@ const log = createLogger('updater')
 
 /** 更新状态机阶段。 */
 export type UpdatePhase =
-  'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'upToDate' | 'error'
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'downloading'
+  | 'downloaded'
+  | 'upToDate'
+  | 'error'
 
 /** 更新状态快照（主进程 → 渲染层推送 / 渲染层拉取共用结构）。 */
 export interface UpdateState {

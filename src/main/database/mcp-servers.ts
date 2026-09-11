@@ -23,7 +23,8 @@ export function createMcpServersApi(db: DatabaseSync): McpServersApi {
 
     getMcpServer(id: string): McpServerRow | undefined {
       const row = db.prepare('SELECT * FROM mcp_servers WHERE id = ?').get(id) as unknown as
-        McpServerRow | undefined
+        | McpServerRow
+        | undefined
       return row ? toMcpServer(row) : undefined
     },
 

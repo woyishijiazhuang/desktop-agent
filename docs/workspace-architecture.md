@@ -6,6 +6,7 @@
 > 实现进度：P0 数据层 ✅ / P1 窗口泛化 ✅ / P2 IPC 作用域 ✅ / P3 workdir 链路 ✅ /
 > P4 记忆系统 ✅ / P5 设置独立窗口 ✅ / P6 渲染层 ✅ / P7 类型检查 + 构建验证 ✅
 > 与设计的差异说明：
+>
 > - IPC 作用域改为「作用域方法内部经 useIpcMainContext 解析 sender → workdir」（ipc-scope.ts），未改库的分发层；
 > - 设置项变更驱逐策略由「当前会话」改为「全部会话」（设置独立窗口无当前会话概念）；
 > - 回收站（countTrashSessions/purgeTrash）保持全局（设置窗口内管理，跨工作区汇总）。
@@ -25,13 +26,13 @@
 
 已确认的设计决策：
 
-| 决策点 | 结论 |
-|---|---|
-| 设置作用域 | 全局共享（模型/密钥/技能/MCP/权限等），工作区只隔离会话与 workdir |
-| 工作区管理入口 | 设置窗口集中管理（新建/打开/删除/编辑 agent.md） |
-| 关闭窗口语义 | 仅关闭窗口，保留工作区与会话；删除工作区需在设置中显式操作 |
-| 项目记忆 | `{workdir}/agent.md` 文件，随项目存储、可 git 版本化 |
-| 全局记忆 | memories 表保留为个人记忆，跨工作区共享注入 |
+| 决策点         | 结论                                                              |
+| -------------- | ----------------------------------------------------------------- |
+| 设置作用域     | 全局共享（模型/密钥/技能/MCP/权限等），工作区只隔离会话与 workdir |
+| 工作区管理入口 | 设置窗口集中管理（新建/打开/删除/编辑 agent.md）                  |
+| 关闭窗口语义   | 仅关闭窗口，保留工作区与会话；删除工作区需在设置中显式操作        |
+| 项目记忆       | `{workdir}/agent.md` 文件，随项目存储、可 git 版本化              |
+| 全局记忆       | memories 表保留为个人记忆，跨工作区共享注入                       |
 
 ---
 
@@ -45,10 +46,10 @@
 
 ### 2.2 窗口类型
 
-| 类型 | 数量 | 说明 |
-|---|---|---|
-| 工作区窗口 | 0..N | 每个绑定一个 workdir，展示 ChatView |
-| 设置窗口 | 0..1 | 全局设置 + 工作区管理，展示 SettingsView |
+| 类型       | 数量 | 说明                                     |
+| ---------- | ---- | ---------------------------------------- |
+| 工作区窗口 | 0..N | 每个绑定一个 workdir，展示 ChatView      |
+| 设置窗口   | 0..1 | 全局设置 + 工作区管理，展示 SettingsView |
 
 同一 workdir 只允许一个窗口；打开已存在的工作区时聚焦其窗口。
 
@@ -122,17 +123,17 @@ settingsWindow: { win: BaseWindow; headerView; contentView } | null
 
 新增/改造函数：
 
-| 函数 | 说明 |
-|---|---|
-| `createAppWindow(kind: 'workspace' \| 'settings', opts)` | 参数化现有 BaseWindow + 双视图构建逻辑，两种窗口共用 |
-| `openWorkspaceWindow(workdir, bounds?)` | 已存在则聚焦；否则创建并 `touchWorkspace` |
-| `ensureWorkspaceWindow(workdir): Promise<WorkspaceWindow>` | 等价原 `ensureMainWindow`，渲染层就绪后 resolve |
-| `closeWorkspaceWindow(workdir)` | 关闭窗口但保留工作区行 |
-| `restoreStartupWindows()` | 启动时按 `last_opened_at` 倒序打开所有工作区窗口；无工作区则创建默认工作区（`{userData}/work`）并打开 |
-| `getWorkspaceByWebContents(wc)` | 由 sender 反查 `{ workdir }`（扩展现有 `windowByWebContents` 反查表） |
-| `getActiveWorkspace()` | 最近聚焦的工作区（托盘"新建对话"目标） |
-| `sendToWorkspace(workdir, channel, msg)` / `broadcastToWorkspaces(...)` | 替代原 `sendToViews` 的定向/广播 |
-| `recreateAllWindows()` | 标题栏模式切换时重建全部窗口，保留 bounds |
+| 函数                                                                    | 说明                                                                                                  |
+| ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `createAppWindow(kind: 'workspace' \| 'settings', opts)`                | 参数化现有 BaseWindow + 双视图构建逻辑，两种窗口共用                                                  |
+| `openWorkspaceWindow(workdir, bounds?)`                                 | 已存在则聚焦；否则创建并 `touchWorkspace`                                                             |
+| `ensureWorkspaceWindow(workdir): Promise<WorkspaceWindow>`              | 等价原 `ensureMainWindow`，渲染层就绪后 resolve                                                       |
+| `closeWorkspaceWindow(workdir)`                                         | 关闭窗口但保留工作区行                                                                                |
+| `restoreStartupWindows()`                                               | 启动时按 `last_opened_at` 倒序打开所有工作区窗口；无工作区则创建默认工作区（`{userData}/work`）并打开 |
+| `getWorkspaceByWebContents(wc)`                                         | 由 sender 反查 `{ workdir }`（扩展现有 `windowByWebContents` 反查表）                                 |
+| `getActiveWorkspace()`                                                  | 最近聚焦的工作区（托盘"新建对话"目标）                                                                |
+| `sendToWorkspace(workdir, channel, msg)` / `broadcastToWorkspaces(...)` | 替代原 `sendToViews` 的定向/广播                                                                      |
+| `recreateAllWindows()`                                                  | 标题栏模式切换时重建全部窗口，保留 bounds                                                             |
 
 行为要点：
 
@@ -168,16 +169,16 @@ settingsWindow: { win: BaseWindow; headerView; contentView } | null
 
 在 `src/main/service/workspace-service.ts` 新增，注册进 `src/main/service/index.ts`：
 
-| 方法 | 说明 |
-|---|---|
-| `list()` | 全部工作区 + 会话数 |
-| `create(dir, name?)` | 校验目录 → upsert 行 → `openWorkspaceWindow` |
-| `rename(workdir, name)` | |
-| `open(workdir)` | 打开/聚焦窗口 |
-| `close(workdir)` | 仅关窗 |
-| `remove(workdir)` | 关窗 → 删除该 workdir 全部会话（messages CASCADE）→ 删行（二次确认由前端弹） |
-| `pickAndCreate()` | 目录选择框（迁自 `agent-service.pickWorkdir`）→ `create` |
-| `getAgentMd(workdir)` / `saveAgentMd(workdir, content)` | 读/写 `{workdir}/agent.md` |
+| 方法                                                    | 说明                                                                         |
+| ------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| `list()`                                                | 全部工作区 + 会话数                                                          |
+| `create(dir, name?)`                                    | 校验目录 → upsert 行 → `openWorkspaceWindow`                                 |
+| `rename(workdir, name)`                                 |                                                                              |
+| `open(workdir)`                                         | 打开/聚焦窗口                                                                |
+| `close(workdir)`                                        | 仅关窗                                                                       |
+| `remove(workdir)`                                       | 关窗 → 删除该 workdir 全部会话（messages CASCADE）→ 删行（二次确认由前端弹） |
+| `pickAndCreate()`                                       | 目录选择框（迁自 `agent-service.pickWorkdir`）→ `create`                     |
+| `getAgentMd(workdir)` / `saveAgentMd(workdir, content)` | 读/写 `{workdir}/agent.md`                                                   |
 
 > 渲染层 `initWindow()`（`window-service`）返回值扩展为 `{ type: 'workspace'|'settings', workdir?, name?, ...WindowState }`，供前端识别窗口身份。
 
@@ -194,10 +195,10 @@ settingsWindow: { win: BaseWindow; headerView; contentView } | null
 
 ### 5.1 两层记忆模型
 
-| 层级 | 载体 | 作用域 | 内容 |
-|---|---|---|---|
-| 个人记忆（现有） | `memories` 表 + FTS | 全局，跨工作区共享 | 个人偏好、跨项目事实 |
-| 项目记忆（新增） | `{workdir}/agent.md` 文件 | 单个工作区 | 项目专属上下文、约定、进展 |
+| 层级             | 载体                      | 作用域             | 内容                       |
+| ---------------- | ------------------------- | ------------------ | -------------------------- |
+| 个人记忆（现有） | `memories` 表 + FTS       | 全局，跨工作区共享 | 个人偏好、跨项目事实       |
+| 项目记忆（新增） | `{workdir}/agent.md` 文件 | 单个工作区         | 项目专属上下文、约定、进展 |
 
 两者职责清晰：**个人记忆**是"我是谁、我怎么做事"，**项目记忆**是"这个项目长什么样、有什么约定"。
 
@@ -214,12 +215,12 @@ settingsWindow: { win: BaseWindow; headerView; contentView } | null
 
 ### 5.3 对现有记忆代码的改动
 
-| 位置 | 改动 |
-|---|---|
-| `agent-manager.ts` `buildMemorySection` | 增加 workdir 参数，追加 agent.md 段（按注入上限截断） |
-| `database/settings.ts` | 注册新设置 `agent.agentMdInjectionChars`（档位校验） |
-| `tools/memory.ts`、`MemoryPanel.vue`、`db-service.ts` | **不改**（个人记忆维持全局） |
-| `agent-service.ts` `generateWelcomeSuggestions` | 计数仍用个人记忆；可叠加"是否已建立 agent.md"提示 |
+| 位置                                                  | 改动                                                  |
+| ----------------------------------------------------- | ----------------------------------------------------- |
+| `agent-manager.ts` `buildMemorySection`               | 增加 workdir 参数，追加 agent.md 段（按注入上限截断） |
+| `database/settings.ts`                                | 注册新设置 `agent.agentMdInjectionChars`（档位校验）  |
+| `tools/memory.ts`、`MemoryPanel.vue`、`db-service.ts` | **不改**（个人记忆维持全局）                          |
+| `agent-service.ts` `generateWelcomeSuggestions`       | 计数仍用个人记忆；可叠加"是否已建立 agent.md"提示     |
 
 ---
 
@@ -263,32 +264,32 @@ agent.md 不迁移（按需创建）。
 
 ## 8. 边界情况
 
-| 场景 | 处理 |
-|---|---|
-| 首次启动、无工作区 | 自动创建默认工作区（`{userData}/work`）并打开窗口 |
-| workdir 被删除/不可访问 | 窗口照常打开，`mkdirSync` 重建目录，界面提示 |
-| 打开已存在工作区 | 聚焦已有窗口，不重复创建 |
-| 关闭到托盘 + 多窗口 | 每窗口 close → hide；退出时销毁全部；macOS `activate` 恢复上次打开的工作区 |
-| 托盘"新建对话" | 定位 `getActiveWorkspace()` 对应窗口 |
-| 通知点击 | session → workdir → 聚焦对应窗口 |
-| 工作区删除 | 关窗 → 级联删会话 → 删行，前端二次确认 |
-| 同一 workdir 被设置窗口与聊天窗口同时操作 | agent.md 读写以"最后一次保存"为准（简单约定，不引入锁） |
-| 标题栏模式切换 | `recreateAllWindows()` 重建全部窗口，设置窗口一并重建 |
+| 场景                                      | 处理                                                                       |
+| ----------------------------------------- | -------------------------------------------------------------------------- |
+| 首次启动、无工作区                        | 自动创建默认工作区（`{userData}/work`）并打开窗口                          |
+| workdir 被删除/不可访问                   | 窗口照常打开，`mkdirSync` 重建目录，界面提示                               |
+| 打开已存在工作区                          | 聚焦已有窗口，不重复创建                                                   |
+| 关闭到托盘 + 多窗口                       | 每窗口 close → hide；退出时销毁全部；macOS `activate` 恢复上次打开的工作区 |
+| 托盘"新建对话"                            | 定位 `getActiveWorkspace()` 对应窗口                                       |
+| 通知点击                                  | session → workdir → 聚焦对应窗口                                           |
+| 工作区删除                                | 关窗 → 级联删会话 → 删行，前端二次确认                                     |
+| 同一 workdir 被设置窗口与聊天窗口同时操作 | agent.md 读写以"最后一次保存"为准（简单约定，不引入锁）                    |
+| 标题栏模式切换                            | `recreateAllWindows()` 重建全部窗口，设置窗口一并重建                      |
 
 ---
 
 ## 9. 工作量评估
 
-| 阶段 | 内容 | 复杂度 | 涉及主要文件 |
-|---|---|---|---|
-| P0 数据层 | workspaces 表 + sessions.workdir + API 过滤 + 迁移 | 小 | `database/schema.ts`、`database/sessions.ts`、`database/workspaces.ts`（新）、`database/types/*`、`database/settings.ts` |
-| P1 窗口泛化 | 单窗口 → 多窗口 Map、启动恢复、bounds 持久化、多窗口重建 | 大 | `service/window-manager.ts`、`main/index.ts`、`service/window-service.ts` |
-| P2 IPC 作用域 | sender → workdir 注入、事件按工作区路由、settingChanged 广播 | 大 | `service/index.ts`、`service/render-client.ts`、`service/db-service.ts`、`service/workspace-service.ts`（新） |
-| P3 workdir 链路 | resolveSessionWorkdir、Agent 持 workdir、工具/提示词改造 | 中 | `agent/workdir.ts`、`agent/agent-manager.ts`、`agent/tools/*` |
-| P4 记忆系统 | buildMemorySection 注入 agent.md、大小上限、agent.md 编辑器 | 中 | `agent/agent-manager.ts`、`service/workspace-service.ts`、`components/settings/WorkspacePanel.vue`（新） |
-| P5 设置独立窗口 | createAppWindow 参数化、托盘/菜单入口、窗口类型识别、工作区管理 tab | 中 | `service/window-manager.ts`、`service/tray-service.ts`、`service/app-menu-service.ts`、`SettingsView.vue` |
-| P6 渲染层 | 窗口身份、会话作用域、空态、设置窗口路由 | 中 | `store/useWindowStore.ts`、`store/useSessionStore.ts`、`ChatView.vue`、`router/index.ts` |
-| P7 回归验证 | 老数据迁移验证、多窗口交互、Windows/Linux 回归 | 中 | — |
+| 阶段            | 内容                                                                | 复杂度 | 涉及主要文件                                                                                                             |
+| --------------- | ------------------------------------------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------ |
+| P0 数据层       | workspaces 表 + sessions.workdir + API 过滤 + 迁移                  | 小     | `database/schema.ts`、`database/sessions.ts`、`database/workspaces.ts`（新）、`database/types/*`、`database/settings.ts` |
+| P1 窗口泛化     | 单窗口 → 多窗口 Map、启动恢复、bounds 持久化、多窗口重建            | 大     | `service/window-manager.ts`、`main/index.ts`、`service/window-service.ts`                                                |
+| P2 IPC 作用域   | sender → workdir 注入、事件按工作区路由、settingChanged 广播        | 大     | `service/index.ts`、`service/render-client.ts`、`service/db-service.ts`、`service/workspace-service.ts`（新）            |
+| P3 workdir 链路 | resolveSessionWorkdir、Agent 持 workdir、工具/提示词改造            | 中     | `agent/workdir.ts`、`agent/agent-manager.ts`、`agent/tools/*`                                                            |
+| P4 记忆系统     | buildMemorySection 注入 agent.md、大小上限、agent.md 编辑器         | 中     | `agent/agent-manager.ts`、`service/workspace-service.ts`、`components/settings/WorkspacePanel.vue`（新）                 |
+| P5 设置独立窗口 | createAppWindow 参数化、托盘/菜单入口、窗口类型识别、工作区管理 tab | 中     | `service/window-manager.ts`、`service/tray-service.ts`、`service/app-menu-service.ts`、`SettingsView.vue`                |
+| P6 渲染层       | 窗口身份、会话作用域、空态、设置窗口路由                            | 中     | `store/useWindowStore.ts`、`store/useSessionStore.ts`、`ChatView.vue`、`router/index.ts`                                 |
+| P7 回归验证     | 老数据迁移验证、多窗口交互、Windows/Linux 回归                      | 中     | —                                                                                                                        |
 
 **总工作量：单人约 3~4 周**（P0→P3 约占 60%，为架构地基；P4/P5/P6 相对独立，可在 P1/P2 完成后并行推进）。
 

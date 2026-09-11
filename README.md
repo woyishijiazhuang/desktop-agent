@@ -7,6 +7,7 @@
 ## 功能特性
 
 **对话**
+
 - 流式 Markdown 渲染（代码高亮、代码块复制、ECharts 图表块）
 - 思考过程展示、工具调用卡片（参数 / 结果 / 状态实时更新）
 - 中止 / 重试 / 重新生成 / 编辑回填、临时空对话（首条消息才落库）
@@ -15,12 +16,14 @@
 - 会话压缩（LLM 摘要 + 乐观锁，压缩点可视化分界）、自动压缩、每会话独立模型与思考级别
 
 **模型**
+
 - 预置 11 家服务商目录（DeepSeek / OpenAI / Anthropic / Groq 等）+ 自定义兼容端点
 - 上下文窗口 / 输出上限 / 多模态 / 推理能力字段、在线拉取服务商模型列表、连通性测试
 - API Key 经系统安全存储（safeStorage）加密，明文永不进入渲染进程
 - 用量统计（token / 成本，7 天 / 30 天 / 全部，按天趋势与模型分布）
 
 **工具与扩展**
+
 - 内置工具：read_file / list_files / write_file / edit_file / bash / web_search（Tavily）
 - 危险工具（write_file / edit_file / bash）执行前权限确认，支持「本次会话 / 总是允许」白名单
 - MCP（Model Context Protocol）：stdio + streamable HTTP 双传输，配置变更自动重连
@@ -29,23 +32,24 @@
 - bash 持久白名单、工具级启用开关
 
 **桌面**
+
 - 自定义标题栏（BaseWindow + 双 WebContentsView，弹窗不遮挡标题栏）、托盘、应用菜单
 - 深浅色 + 跟随系统主题、窗口置顶、开机自启、关闭到托盘
 - 本地文件日志（electron-log）+ 崩溃收集（crashReporter），设置页可查看 / 清空
 
 ## 技术栈
 
-| 依赖 | 作用 |
-|---|---|
-| Electron 43 + electron-vite | 跨平台桌面壳与构建 |
-| Vue 3 + Pinia + Vue Router | 渲染进程框架 |
-| Naive UI | 组件库（深浅双主题） |
-| `@earendil-works/pi-ai` / `pi-agent-core` | 模型抽象与 Agent 编排 |
-| `node:sqlite`（Node 内置） | 本地 SQLite 数据库（WAL 模式） |
-| `electron-ipc-service` | 类型安全双向 IPC |
-| `@modelcontextprotocol/sdk` | MCP 客户端（stdio / HTTP） |
-| `markstream-vue` | 流式 Markdown 渲染与代码高亮 |
-| `echarts` | 用量统计图表 |
+| 依赖                                      | 作用                           |
+| ----------------------------------------- | ------------------------------ |
+| Electron 43 + electron-vite               | 跨平台桌面壳与构建             |
+| Vue 3 + Pinia + Vue Router                | 渲染进程框架                   |
+| Naive UI                                  | 组件库（深浅双主题）           |
+| `@earendil-works/pi-ai` / `pi-agent-core` | 模型抽象与 Agent 编排          |
+| `node:sqlite`（Node 内置）                | 本地 SQLite 数据库（WAL 模式） |
+| `electron-ipc-service`                    | 类型安全双向 IPC               |
+| `@modelcontextprotocol/sdk`               | MCP 客户端（stdio / HTTP）     |
+| `markstream-vue`                          | 流式 Markdown 渲染与代码高亮   |
+| `echarts`                                 | 用量统计图表                   |
 
 ## 项目结构
 
@@ -85,14 +89,14 @@ pnpm dev
 
 ### 常用脚本
 
-| 脚本 | 说明 |
-|---|---|
-| `pnpm dev` | 开发模式 |
-| `pnpm typecheck` | TypeScript 类型检查（主进程 + 渲染进程） |
-| `pnpm lint` | ESLint 检查 |
-| `pnpm format` | Prettier 格式化 |
-| `pnpm build` | 类型检查 + 构建产物到 `out/` |
-| `pnpm build:win` / `build:mac` / `build:linux` | 打包对应平台安装包 |
+| 脚本                                           | 说明                                     |
+| ---------------------------------------------- | ---------------------------------------- |
+| `pnpm dev`                                     | 开发模式                                 |
+| `pnpm typecheck`                               | TypeScript 类型检查（主进程 + 渲染进程） |
+| `pnpm lint`                                    | ESLint 检查                              |
+| `pnpm format`                                  | Prettier 格式化                          |
+| `pnpm build`                                   | 类型检查 + 构建产物到 `out/`             |
+| `pnpm build:win` / `build:mac` / `build:linux` | 打包对应平台安装包                       |
 
 ### 构建
 

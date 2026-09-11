@@ -129,7 +129,8 @@ export function createSettingsApi(db: DatabaseSync): SettingsApi {
   return {
     getSetting<T = unknown>(key: string): T | undefined {
       const row = db.prepare('SELECT * FROM settings WHERE key = ?').get(key) as unknown as
-        SettingRow | undefined
+        | SettingRow
+        | undefined
       if (!row) return undefined
       return JSON.parse(row.value) as T
     },

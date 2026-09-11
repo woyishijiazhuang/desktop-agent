@@ -92,7 +92,9 @@ export function isPathWithinAny(target: string, roots: string[]): boolean {
 
 /** 沙箱语义下路径是否允许写入：命中可写根且不在禁读根内。false 即执行层（及 OS 沙箱）会拒绝。 */
 export function isSandboxWriteAllowed(policy: SandboxFsPolicy, path: string): boolean {
-  return isPathWithinAny(path, policy.allowWriteRoots) && !isPathWithinAny(path, policy.denyReadRoots)
+  return (
+    isPathWithinAny(path, policy.allowWriteRoots) && !isPathWithinAny(path, policy.denyReadRoots)
+  )
 }
 
 /** 沙箱拒绝写入时给 Agent/用户的统一引导文案（审批预检与执行层共用同一口径）。 */

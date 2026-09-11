@@ -65,26 +65,26 @@
 
 ### 2.2 `sessionStore.sessions` 的所有使用点
 
-| 文件 | 行号 | 操作 | 说明 |
-|------|------|------|------|
-| `useSessionStore.ts` | L25 | `sessions.value = await mainClient.db.listSessions()` | 全量加载 |
-| `useSessionStore.ts` | L31 | `sessions.value.unshift(session)` | 创建会话插入头部 |
-| `useSessionStore.ts` | L66-67 | `sessions.value[idx] = updated` | 重命名替换 |
-| `useSessionStore.ts` | L73-74 | `sessions.value[idx] = updated` | 置顶替换 |
-| `useSessionStore.ts` | L80-81 | `sessions.value[idx] = updated` | 归档替换 |
-| `useSessionStore.ts` | L87 | `sessions.value = sessions.value.filter(...)` | 删除过滤 |
-| `useSessionStore.ts` | L92 | `const next = sessions.value[0]` | 删除后选下一个 |
-| `useSessionStore.ts` | L105-106 | `sessions.value[idx] = updated` | refreshSession |
-| `useSessionStore.ts` | L114-118 | `findIndex` or `unshift` | upsert 推送更新 |
-| `SessionSidebar.vue` | L54 | `[...sessionStore.sessions].sort(...)` | 排序复制 |
-| `SessionSidebar.vue` | L172 | `sessionStore.sessions.find(...)` | 消息搜索跳转定位会话 |
-| `ChatView.vue` | L78 | `sessionStore.sessions[0]` | 启动自动选择最近会话 |
-| `useChatStore.ts` | L593 | `sessionStore.sessions.unshift(session)` | 分叉创建会话 |
+| 文件                 | 行号     | 操作                                                  | 说明                 |
+| -------------------- | -------- | ----------------------------------------------------- | -------------------- |
+| `useSessionStore.ts` | L25      | `sessions.value = await mainClient.db.listSessions()` | 全量加载             |
+| `useSessionStore.ts` | L31      | `sessions.value.unshift(session)`                     | 创建会话插入头部     |
+| `useSessionStore.ts` | L66-67   | `sessions.value[idx] = updated`                       | 重命名替换           |
+| `useSessionStore.ts` | L73-74   | `sessions.value[idx] = updated`                       | 置顶替换             |
+| `useSessionStore.ts` | L80-81   | `sessions.value[idx] = updated`                       | 归档替换             |
+| `useSessionStore.ts` | L87      | `sessions.value = sessions.value.filter(...)`         | 删除过滤             |
+| `useSessionStore.ts` | L92      | `const next = sessions.value[0]`                      | 删除后选下一个       |
+| `useSessionStore.ts` | L105-106 | `sessions.value[idx] = updated`                       | refreshSession       |
+| `useSessionStore.ts` | L114-118 | `findIndex` or `unshift`                              | upsert 推送更新      |
+| `SessionSidebar.vue` | L54      | `[...sessionStore.sessions].sort(...)`                | 排序复制             |
+| `SessionSidebar.vue` | L172     | `sessionStore.sessions.find(...)`                     | 消息搜索跳转定位会话 |
+| `ChatView.vue`       | L78      | `sessionStore.sessions[0]`                            | 启动自动选择最近会话 |
+| `useChatStore.ts`    | L593     | `sessionStore.sessions.unshift(session)`              | 分叉创建会话         |
 
 ### 2.3 其他使用 `listSessions()` 的主进程代码
 
-| 文件 | 行号 | 说明 |
-|------|------|------|
+| 文件            | 行号 | 说明                                                                |
+| --------------- | ---- | ------------------------------------------------------------------- |
 | `attachment.ts` | L154 | `for (const s of db.listSessions()) known.add(s.id)` — 孤儿附件清理 |
 
 ---
@@ -93,12 +93,12 @@
 
 ### 选定方案：游标分页 + IntersectionObserver 无限滚动
 
-| 对比项 | Offset 分页 | 游标分页 (选定) |
-|--------|------------|----------------|
-| 性能 | 深偏移时退化为全表扫描 | 始终走索引，O(log n) |
-| 数据变动 | 新增/删除会导致偏移错位 | 不受数据变动影响 |
-| 实现复杂度 | 简单 | 略复杂（需复合游标） |
-| 跳页 | 支持 | 不支持（无限滚动无需跳页） |
+| 对比项     | Offset 分页             | 游标分页 (选定)            |
+| ---------- | ----------------------- | -------------------------- |
+| 性能       | 深偏移时退化为全表扫描  | 始终走索引，O(log n)       |
+| 数据变动   | 新增/删除会导致偏移错位 | 不受数据变动影响           |
+| 实现复杂度 | 简单                    | 略复杂（需复合游标）       |
+| 跳页       | 支持                    | 不支持（无限滚动无需跳页） |
 
 **选择理由**：会话列表按 `last_active_at DESC` 排序，且会频繁 touch（发消息/重命名/换模型），游标分页不会因中间数据变动导致重复或遗漏。项目消息列表已有类似的分页模式（`beforeId` + `limit`），设计一致。
 
@@ -143,9 +143,9 @@ export interface ListSessionsResult {
 ```typescript
 export interface SessionApi {
   // ... 保留现有方法不变 ...
-  listSessions(): Session[]                          // 保留：全量查询（附件清理等内部用）
-  listSessionsPaged(options?: ListSessionsOptions): ListSessionsResult  // 新增：分页查询
-  searchSessions(query: string, limit?: number): Session[]             // 新增：标题搜索
+  listSessions(): Session[] // 保留：全量查询（附件清理等内部用）
+  listSessionsPaged(options?: ListSessionsOptions): ListSessionsResult // 新增：分页查询
+  searchSessions(query: string, limit?: number): Session[] // 新增：标题搜索
   // ... 其余不变 ...
 }
 ```
@@ -317,13 +317,11 @@ async function searchSessions(query: string): Promise<void> {
 ```typescript
 function updateOldestCursor(): void {
   // 取非置顶会话中最后一条（排序最旧的）作为下一页游标
-  const nonPinned = sessions.value.filter(s => !s.pinned).sort(
-    (a, b) => a.lastActiveAt - b.lastActiveAt || (a.id > b.id ? 1 : -1)
-  )
+  const nonPinned = sessions.value
+    .filter((s) => !s.pinned)
+    .sort((a, b) => a.lastActiveAt - b.lastActiveAt || (a.id > b.id ? 1 : -1))
   const last = nonPinned[nonPinned.length - 1]
-  oldestCursor.value = last
-    ? { lastActiveAt: last.lastActiveAt, id: last.id }
-    : null
+  oldestCursor.value = last ? { lastActiveAt: last.lastActiveAt, id: last.id } : null
 }
 ```
 
@@ -355,7 +353,7 @@ async function createSession(params?: CreateSessionParams): Promise<Session> {
 async function deleteSession(id: string): Promise<void> {
   await mainClient.db.deleteSession(id)
   sessions.value = sessions.value.filter((s) => s.id !== id)
-  updateOldestCursor()  // 新增：删除后更新游标
+  updateOldestCursor() // 新增：删除后更新游标
   useChatStore().removeSessionState(id)
   if (currentSessionId.value === id) {
     currentSessionId.value = null
@@ -403,12 +401,12 @@ return {
   sessions,
   currentSessionId,
   hasInitialized,
-  hasMore,         // 新增
-  loadingMore,     // 新增
-  searchQuery,     // 新增
-  searchResults,   // 新增
+  hasMore, // 新增
+  loadingMore, // 新增
+  searchQuery, // 新增
+  searchResults, // 新增
   load,
-  loadMore,        // 新增
+  loadMore, // 新增
   createSession,
   startNewChat,
   select,
@@ -418,7 +416,7 @@ return {
   deleteSession,
   refreshSession,
   upsertSession,
-  searchSessions   // 新增
+  searchSessions // 新增
 }
 ```
 
@@ -495,7 +493,7 @@ onMounted(() => {
   if (!scrollEl) return
   sentinelObserver = new IntersectionObserver(
     (entries) => {
-      if (entries.some(e => e.isIntersecting)) {
+      if (entries.some((e) => e.isIntersecting)) {
         void sessionStore.loadMore()
       }
     },
@@ -638,6 +636,7 @@ async function onSelectHit(hit: MessageSearchHit): Promise<void> {
 **现状**：更新 `pinned` 字段
 
 **影响**：置顶会话从非置顶区移到置顶区。需要：
+
 1. 在内存列表中替换对应项
 2. 更新游标（原置顶项可能影响游标位置）
 
@@ -681,17 +680,17 @@ CREATE INDEX IF NOT EXISTS idx_sessions_title ON sessions(title);
 
 ## 10. 修改文件清单
 
-| 文件 | 修改类型 | 说明 |
-|------|---------|------|
-| `src/main/database/types/session.ts` | 新增类型 | `ListSessionsOptions`、`ListSessionsResult` |
-| `src/main/database/sessions.ts` | 新增方法 | `listSessionsPaged()`、`searchSessions()` |
-| `src/main/database/index.ts` | 无需修改 | `db` 门面自动包含新方法 |
-| `src/main/service/db-service.ts` | 新增方法 | `listSessionsPaged()`、`searchSessions()` + 类型导出 |
-| `src/renderer/src/store/useSessionStore.ts` | 重构 | 分页状态管理 + `loadMore()` + `searchSessions()` + `updateOldestCursor()` |
-| `src/renderer/src/components/sidebar/SessionSidebar.vue` | 重构 | IntersectionObserver 哨兵 + 搜索后端化 + 移除前端排序 |
-| `src/renderer/src/views/ChatView.vue` | 无需修改 | `sessions[0]` 仍可用 |
-| `src/renderer/src/store/useChatStore.ts` | 无需修改 | `forkFromMessage` 的 `unshift` 仍可用 |
-| `src/main/agent/attachment.ts` | 无需修改 | 使用 `listSessions()` 全量接口 |
+| 文件                                                     | 修改类型 | 说明                                                                      |
+| -------------------------------------------------------- | -------- | ------------------------------------------------------------------------- |
+| `src/main/database/types/session.ts`                     | 新增类型 | `ListSessionsOptions`、`ListSessionsResult`                               |
+| `src/main/database/sessions.ts`                          | 新增方法 | `listSessionsPaged()`、`searchSessions()`                                 |
+| `src/main/database/index.ts`                             | 无需修改 | `db` 门面自动包含新方法                                                   |
+| `src/main/service/db-service.ts`                         | 新增方法 | `listSessionsPaged()`、`searchSessions()` + 类型导出                      |
+| `src/renderer/src/store/useSessionStore.ts`              | 重构     | 分页状态管理 + `loadMore()` + `searchSessions()` + `updateOldestCursor()` |
+| `src/renderer/src/components/sidebar/SessionSidebar.vue` | 重构     | IntersectionObserver 哨兵 + 搜索后端化 + 移除前端排序                     |
+| `src/renderer/src/views/ChatView.vue`                    | 无需修改 | `sessions[0]` 仍可用                                                      |
+| `src/renderer/src/store/useChatStore.ts`                 | 无需修改 | `forkFromMessage` 的 `unshift` 仍可用                                     |
+| `src/main/agent/attachment.ts`                           | 无需修改 | 使用 `listSessions()` 全量接口                                            |
 
 ---
 
@@ -699,37 +698,37 @@ CREATE INDEX IF NOT EXISTS idx_sessions_title ON sessions(title);
 
 ### 11.1 单元测试
 
-| 用例 | 预期 |
-|------|------|
-| `listSessionsPaged()` 无参数 | 返回前 30 条 + hasMore 判断正确 |
-| `listSessionsPaged({ limit: 5 })` | 返回 5 条（含置顶） |
-| `listSessionsPaged({ cursor, cursorId })` | 返回下一页数据 |
-| `listSessionsPaged()` 最后一页 | `hasMore = false` |
-| 置顶会话始终返回 | 滚动多页后置顶会话仍在第一页 |
-| `searchSessions('关键词')` | 返回标题匹配的会话 |
-| `searchSessions('')` | 返回空数组 |
+| 用例                                      | 预期                            |
+| ----------------------------------------- | ------------------------------- |
+| `listSessionsPaged()` 无参数              | 返回前 30 条 + hasMore 判断正确 |
+| `listSessionsPaged({ limit: 5 })`         | 返回 5 条（含置顶）             |
+| `listSessionsPaged({ cursor, cursorId })` | 返回下一页数据                  |
+| `listSessionsPaged()` 最后一页            | `hasMore = false`               |
+| 置顶会话始终返回                          | 滚动多页后置顶会话仍在第一页    |
+| `searchSessions('关键词')`                | 返回标题匹配的会话              |
+| `searchSessions('')`                      | 返回空数组                      |
 
 ### 11.2 集成测试
 
-| 场景 | 预期 |
-|------|------|
-| 创建新会话 | 侧边栏立即显示在顶部 |
-| 删除当前会话 | 自动切换下一个，侧边栏正确移除 |
-| 重命名会话 | 侧边栏立即反映标题变更 |
-| 置顶/取消置顶 | 会话在置顶组/日期组间正确移动 |
-| 发送消息后 touch | 会话移到列表最前（第一页） |
-| 主进程推送标题更新 | 侧边栏立即更新标题 |
-| 搜索关键词 | 侧边栏显示后端搜索结果 |
-| 消息搜索跳转到未加载的会话 | 正确切换并加载消息窗口 |
-| 滚动到底部 | 自动加载更多会话 |
-| 快速连续滚动 | 不重复加载（loadingMore 锁） |
+| 场景                       | 预期                           |
+| -------------------------- | ------------------------------ |
+| 创建新会话                 | 侧边栏立即显示在顶部           |
+| 删除当前会话               | 自动切换下一个，侧边栏正确移除 |
+| 重命名会话                 | 侧边栏立即反映标题变更         |
+| 置顶/取消置顶              | 会话在置顶组/日期组间正确移动  |
+| 发送消息后 touch           | 会话移到列表最前（第一页）     |
+| 主进程推送标题更新         | 侧边栏立即更新标题             |
+| 搜索关键词                 | 侧边栏显示后端搜索结果         |
+| 消息搜索跳转到未加载的会话 | 正确切换并加载消息窗口         |
+| 滚动到底部                 | 自动加载更多会话               |
+| 快速连续滚动               | 不重复加载（loadingMore 锁）   |
 
 ### 11.3 边界测试
 
-| 场景 | 预期 |
-|------|------|
-| 0 个会话 | 显示"无会话"空状态 |
-| 1-29 个会话 | 不显示"加载更多"哨兵 |
-| 恰好 30 个会话 | 显示哨兵，滚动后加载 |
-| 搜索模式下不触发无限滚动 | 搜索结果不分页 |
-| 加载期间切换会话 | 无异常，游标正确更新 |
+| 场景                     | 预期                 |
+| ------------------------ | -------------------- |
+| 0 个会话                 | 显示"无会话"空状态   |
+| 1-29 个会话              | 不显示"加载更多"哨兵 |
+| 恰好 30 个会话           | 显示哨兵，滚动后加载 |
+| 搜索模式下不触发无限滚动 | 搜索结果不分页       |
+| 加载期间切换会话         | 无异常，游标正确更新 |

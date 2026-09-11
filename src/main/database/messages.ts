@@ -74,7 +74,8 @@ export function createMessagesApi(db: DatabaseSync): MessageApi {
 
     getMessage(id: number): Message | undefined {
       const row = db.prepare('SELECT * FROM messages WHERE id = ?').get(id) as unknown as
-        MessageRow | undefined
+        | MessageRow
+        | undefined
       return row ? toMessage(row) : undefined
     },
 
@@ -122,7 +123,8 @@ export function createMessagesApi(db: DatabaseSync): MessageApi {
         // 内容更新时同步重写全文搜索索引
         if (params.content !== undefined) {
           const row = db.prepare('SELECT tool_name FROM messages WHERE id = ?').get(id) as
-            { tool_name: string | null } | undefined
+            | { tool_name: string | null }
+            | undefined
           const ftsText = toFtsIndexText(
             [extractSearchableText(params.content), row?.tool_name ?? ''].join('\n')
           )

@@ -16,12 +16,12 @@
 
 ## 2. 业界现状
 
-| 产品 | MCP 沙箱策略 |
-|------|-------------|
+| 产品        | MCP 沙箱策略                                    |
+| ----------- | ----------------------------------------------- |
 | Claude Code | 无 OS 级沙箱，靠 `allowedTools` 配置 + 用户确认 |
-| Cursor | 工作区信任分级 + MCP 工具确认，无 OS 沙箱 |
-| Windsurf | MCP 工具需审批，无文件系统沙箱 |
-| Zed | MCP 支持较轻量，工具调用需确认 |
+| Cursor      | 工作区信任分级 + MCP 工具确认，无 OS 沙箱       |
+| Windsurf    | MCP 工具需审批，无文件系统沙箱                  |
+| Zed         | MCP 支持较轻量，工具调用需确认                  |
 
 **结论**：目前没有产品对 MCP server 做 OS 级进程沙箱隔离。
 
@@ -44,22 +44,22 @@
 
 **涉及文件**：
 
-| 文件 | 改动 |
-|------|------|
+| 文件                           | 改动                                          |
+| ------------------------------ | --------------------------------------------- |
 | `src/main/agent/mcp/client.ts` | `buildTransport` 改为创建沙箱包装的 Transport |
-| `src/main/agent/mcp/types.ts` | `McpServerRow` 可能需扩展 `cwd` 字段 |
-| `src/main/agent/sandbox.ts` | 可能需新增 `wrapMcpTransport` 辅助函数 |
-| `src/main/database/schema.ts` | `mcp_servers` 表可能需加 `cwd` 列 |
+| `src/main/agent/mcp/types.ts`  | `McpServerRow` 可能需扩展 `cwd` 字段          |
+| `src/main/agent/sandbox.ts`    | 可能需新增 `wrapMcpTransport` 辅助函数        |
+| `src/main/database/schema.ts`  | `mcp_servers` 表可能需加 `cwd` 列             |
 
 ### 3.2 未解决的问题
 
-| 问题 | 说明 |
-|------|------|
-| cwd 来源 | DB 的 `McpServerRow` 无 `cwd` 字段，MCP server 工作目录应如何确定？ |
-| HTTP 远程 MCP | 远程 MCP 的计算在服务端，本地沙箱无意义，需区分处理 |
-| 网络白名单 | MCP server 可能需访问外部 API（npm registry、GitHub 等），是否复用 bash 沙箱的同一套白名单？ |
-| 连接超时 | `SandboxManager.wrapWithSandboxArgv` 是异步操作，首次调用还需初始化，可能影响 MCP 8 秒连接超时 |
-| fail-closed | 沙箱包装失败时 MCP server 不启动（与 bash 行为一致），但影响范围更大（整个 MCP server 不可用） |
+| 问题          | 说明                                                                                           |
+| ------------- | ---------------------------------------------------------------------------------------------- |
+| cwd 来源      | DB 的 `McpServerRow` 无 `cwd` 字段，MCP server 工作目录应如何确定？                            |
+| HTTP 远程 MCP | 远程 MCP 的计算在服务端，本地沙箱无意义，需区分处理                                            |
+| 网络白名单    | MCP server 可能需访问外部 API（npm registry、GitHub 等），是否复用 bash 沙箱的同一套白名单？   |
+| 连接超时      | `SandboxManager.wrapWithSandboxArgv` 是异步操作，首次调用还需初始化，可能影响 MCP 8 秒连接超时 |
+| fail-closed   | 沙箱包装失败时 MCP server 不启动（与 bash 行为一致），但影响范围更大（整个 MCP server 不可用） |
 
 ---
 

@@ -60,9 +60,7 @@ export const readSkillTool: AgentTool<
       }
       const text = [
         `可用技能（${skills.length} 个，读某个技能时再次调用本工具并传入其名称）：`,
-        ...skills.map(
-          (s, i) => `${i + 1}. ${s.id}：${s.description || '（无描述）'}`
-        )
+        ...skills.map((s, i) => `${i + 1}. ${s.id}：${s.description || '（无描述）'}`)
       ].join('\n')
       return { content: [{ type: 'text', text }], details: { file: '', fileCount: skills.length } }
     }
@@ -93,9 +91,7 @@ export const readSkillTool: AgentTool<
         // 未安装：附上已安装技能 id 清单，帮助 Agent 用正确的 id 重试
         const installed = listInstalledSkills().map((s) => s.id)
         const hint =
-          installed.length > 0
-            ? `已安装技能 id：${installed.join('、')}`
-            : '当前未安装任何技能'
+          installed.length > 0 ? `已安装技能 id：${installed.join('、')}` : '当前未安装任何技能'
         return {
           content: [
             {

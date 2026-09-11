@@ -43,13 +43,13 @@
 
 工具调用从外到内依次经过以下检查层，任一层拦截即终止，不再进入下一层：
 
-| 层级 | 名称 | 位置 | 职责 | 拦截方式 |
-|------|------|------|------|----------|
-| 1 | 工具启停门控 | `tools/index.ts` `wrapGate` | 工具是否可用（用户手动关闭 / 域总开关） | 返回「已停用」提示 |
-| 2 | 沙箱文件策略 | `tools/index.ts` `wrapSandboxFsPolicy` + `sandbox.ts` | OS 级读写边界强制约束 | 抛错硬拒 |
-| 3 | 计划模式拦截 | `permission.ts` | 规划阶段阻止一切危险操作 | 返回 block |
-| 4 | 危险工具权限决策引擎 | `permission.ts` `createBeforeToolCallHook` | 细粒度 allow / ask / hardAsk 决策 | 返回 block 或弹确认 UI |
-| 5 | bash OS 沙箱 | `sandbox.ts` `SandboxManager` | 进程级 OS 沙箱（seatbelt / bubblewrap / appcontainer） | spawn 时施加，进程级隔离 |
+| 层级 | 名称                 | 位置                                                  | 职责                                                   | 拦截方式                 |
+| ---- | -------------------- | ----------------------------------------------------- | ------------------------------------------------------ | ------------------------ |
+| 1    | 工具启停门控         | `tools/index.ts` `wrapGate`                           | 工具是否可用（用户手动关闭 / 域总开关）                | 返回「已停用」提示       |
+| 2    | 沙箱文件策略         | `tools/index.ts` `wrapSandboxFsPolicy` + `sandbox.ts` | OS 级读写边界强制约束                                  | 抛错硬拒                 |
+| 3    | 计划模式拦截         | `permission.ts`                                       | 规划阶段阻止一切危险操作                               | 返回 block               |
+| 4    | 危险工具权限决策引擎 | `permission.ts` `createBeforeToolCallHook`            | 细粒度 allow / ask / hardAsk 决策                      | 返回 block 或弹确认 UI   |
+| 5    | bash OS 沙箱         | `sandbox.ts` `SandboxManager`                         | 进程级 OS 沙箱（seatbelt / bubblewrap / appcontainer） | spawn 时施加，进程级隔离 |
 
 ---
 
@@ -59,13 +59,13 @@
 
 每个工具在 `buildTools` 时被 `wrapGate` 包裹。执行前调用 `isToolCurrentlyEnabled(name)`（第 239–251 行），判断条件：
 
-| 条件 | 结果 |
-|------|------|
-| 用户显式关闭（`overrides[name] === false`） | 停用 |
-| 技能域开关关闭（`SETTING_SKILLS_ENABLED = false`） | `find_skill` / `install_skill` / `read_skill` 停用 |
+| 条件                                               | 结果                                                                    |
+| -------------------------------------------------- | ----------------------------------------------------------------------- |
+| 用户显式关闭（`overrides[name] === false`）        | 停用                                                                    |
+| 技能域开关关闭（`SETTING_SKILLS_ENABLED = false`） | `find_skill` / `install_skill` / `read_skill` 停用                      |
 | 记忆域开关关闭（`SETTING_MEMORY_ENABLED = false`） | `list_memories` / `add_memory` / `update_memory` / `delete_memory` 停用 |
-| 知识库域开关关闭（`SETTING_KB_ENABLED = false`） | `search_knowledge` 停用 |
-| bash 停用（`overrides['bash'] === false`） | `bash` / `bash_output` / `kill_shell` / `bash_input` 全部停用 |
+| 知识库域开关关闭（`SETTING_KB_ENABLED = false`）   | `search_knowledge` 停用                                                 |
+| bash 停用（`overrides['bash'] === false`）         | `bash` / `bash_output` / `kill_shell` / `bash_input` 全部停用           |
 
 被停用的工具返回固定文案提示，不执行任何内部逻辑。
 
@@ -79,10 +79,10 @@
 
 ### 4.1 作用工具
 
-| 分类 | 工具集 | 常量名 |
-|------|--------|--------|
+| 分类   | 工具集                                | 常量名                        |
+| ------ | ------------------------------------- | ----------------------------- |
 | 写工具 | `write_file`、`edit_file`、`download` | `FS_WRITE_TOOLS`（第 194 行） |
-| 读工具 | `read_file` | `FS_READ_TOOLS`（第 196 行） |
+| 读工具 | `read_file`                           | `FS_READ_TOOLS`（第 196 行）  |
 
 ### 4.2 拦截逻辑
 
@@ -138,51 +138,52 @@ const DANGEROUS_TOOLS = new Set(['write_file', 'edit_file', 'bash', 'install_ski
 
 决策顺序（deny 优先于一切 allow）：
 
-| 优先级 | 条件 | 决策 | 说明 |
-|--------|------|------|------|
-| 1 | 命中 `DENY_PATTERNS`（破坏性命令） | `ask(hardAsk=true)` | 不可被任何自动放行覆盖 |
-| 2 | `isSimpleCommand` + 命中 `READONLY_COMMANDS` | `allow` | 只读安全命令免确认 |
-| 3 | 命中持久白名单（`bashAllowlist`） | `allow` | 用户点过「总是允许」 |
-| 4 | 命中本会话放行（`sessionBashAllow`） | `allow` | 用户点过「本会话允许」 |
-| 5 | `isRunAutoAllowed` | `allow` | 计划已批准 / 语音 run / 跳过确认 |
-| 6 | 其余 | `ask(soft)` | 弹确认 UI |
+| 优先级 | 条件                                         | 决策                | 说明                             |
+| ------ | -------------------------------------------- | ------------------- | -------------------------------- |
+| 1      | 命中 `DENY_PATTERNS`（破坏性命令）           | `ask(hardAsk=true)` | 不可被任何自动放行覆盖           |
+| 2      | `isSimpleCommand` + 命中 `READONLY_COMMANDS` | `allow`             | 只读安全命令免确认               |
+| 3      | 命中持久白名单（`bashAllowlist`）            | `allow`             | 用户点过「总是允许」             |
+| 4      | 命中本会话放行（`sessionBashAllow`）         | `allow`             | 用户点过「本会话允许」           |
+| 5      | `isRunAutoAllowed`                           | `allow`             | 计划已批准 / 语音 run / 跳过确认 |
+| 6      | 其余                                         | `ask(soft)`         | 弹确认 UI                        |
 
 #### READONLY_COMMANDS（第 58–99 行）
 
 内置约 40 条只读命令，包括：`ls`、`pwd`、`cat`、`head`、`tail`、`grep`、`find`、`git status`、`git diff`、`git log`、`git branch`、`npm --version` 等。
 
 匹配规则：
+
 - 必须是简单命令（不含 `;&|<>` 和 `$(` `${`）。
 - 词级前缀匹配（`git status` 命中 `git status --short`，但 `lsblk` 不命中 `ls`）。
 
 #### DENY_PATTERNS（第 106–123 行）
 
-| 模式 | 说明 |
-|------|------|
-| `\brm\b.*--?[rRf]` | rm 带递归/强制选项 |
-| `\brmdir\s+\/s` | Windows 递归删除目录 |
-| `\bgit\s+push\b.*--force` | 强制推送 |
-| `\bgit\s+reset\s+--hard` | 硬重置 |
-| `\bgit\s+clean\s+-[df]*` | 清理未跟踪文件 |
-| `\bgit\s+checkout\s+-f` | 强制检出 |
-| `\bmkfs` | 格式化文件系统 |
-| `\bsudo` | 提权操作 |
-| `\bdd\b.*of=\/dev\/` | 裸盘写入 |
-| `\b(reboot\|shutdown\|poweroff\|halt)\b` | 关机/重启 |
-| `\bchmod\s+-R\s+777` | 递归全开权限 |
-| `\bchown\s+-R` | 递归改属主 |
-| `\bkill\s+-9` | 强杀进程 |
-| `curl.*\|\s*(ba\|z)?sh` | 管道到 shell |
+| 模式                                     | 说明                 |
+| ---------------------------------------- | -------------------- |
+| `\brm\b.*--?[rRf]`                       | rm 带递归/强制选项   |
+| `\brmdir\s+\/s`                          | Windows 递归删除目录 |
+| `\bgit\s+push\b.*--force`                | 强制推送             |
+| `\bgit\s+reset\s+--hard`                 | 硬重置               |
+| `\bgit\s+clean\s+-[df]*`                 | 清理未跟踪文件       |
+| `\bgit\s+checkout\s+-f`                  | 强制检出             |
+| `\bmkfs`                                 | 格式化文件系统       |
+| `\bsudo`                                 | 提权操作             |
+| `\bdd\b.*of=\/dev\/`                     | 裸盘写入             |
+| `\b(reboot\|shutdown\|poweroff\|halt)\b` | 关机/重启            |
+| `\bchmod\s+-R\s+777`                     | 递归全开权限         |
+| `\bchown\s+-R`                           | 递归改属主           |
+| `\bkill\s+-9`                            | 强杀进程             |
+| `curl.*\|\s*(ba\|z)?sh`                  | 管道到 shell         |
 
 ### 6.3 文件操作决策（decideFile）
 
 **源码**：permission.ts 第 172–185 行
 
-| 优先级 | 条件 | 决策 | 说明 |
-|--------|------|------|------|
-| 1 | 路径在「会话可写边界」内 | `allow` | 工作区 + 可写目录 + 系统临时目录 |
-| 2 | 本会话同路径放行（`sessionFileAllow`） | `allow` | 用户点过「本会话允许」 |
-| 3 | 其余 | `ask(soft)` | 弹确认 UI |
+| 优先级 | 条件                                   | 决策        | 说明                             |
+| ------ | -------------------------------------- | ----------- | -------------------------------- |
+| 1      | 路径在「会话可写边界」内               | `allow`     | 工作区 + 可写目录 + 系统临时目录 |
+| 2      | 本会话同路径放行（`sessionFileAllow`） | `allow`     | 用户点过「本会话允许」           |
+| 3      | 其余                                   | `ask(soft)` | 弹确认 UI                        |
 
 **与 bash 的差异**：文件操作**无持久白名单**（路径型 always 意义有限），仅支持会话放行。
 
@@ -208,11 +209,11 @@ const DANGEROUS_TOOLS = new Set(['write_file', 'edit_file', 'bash', 'install_ski
 
 三个条件**任一生效**即免确认：
 
-| 条件 | 说明 |
-|------|------|
-| `isPlanRunAutoAllow(sessionId)` | 用户批准了 exit_plan_mode 提交的计划 |
-| `isVoiceAutoApprove?.()` | 语音模式无确认 UI 入口，自动放行 |
-| `SETTING_PERMISSION_AUTO_APPROVE` | 全局设置「跳过工具确认」开启 |
+| 条件                              | 说明                                 |
+| --------------------------------- | ------------------------------------ |
+| `isPlanRunAutoAllow(sessionId)`   | 用户批准了 exit_plan_mode 提交的计划 |
+| `isVoiceAutoApprove?.()`          | 语音模式无确认 UI 入口，自动放行     |
+| `SETTING_PERMISSION_AUTO_APPROVE` | 全局设置「跳过工具确认」开启         |
 
 **硬约束**：`hardAsk=true`（破坏性命令）**不受任何自动放行覆盖**（第 278–279 行，检查在 `isRunAutoAllowed` 之前）。
 
@@ -225,6 +226,7 @@ if (!decision.hardAsk && isRunAutoAllowed(sessionId, isVoiceAutoApprove)) return
 ```
 
 即：`hardAsk` 为 true 时跳过自动放行检查，**始终强制人工确认**。这意味着：
+
 - 即使开启了「跳过工具确认」
 - 即使计划已批准
 - 即使语音 run
@@ -253,21 +255,21 @@ if (!decision.hardAsk && isRunAutoAllowed(sessionId, isVoiceAutoApprove)) return
 
 ### 7.1 平台后端
 
-| 平台 | 后端 | 实现 |
-|------|------|------|
-| macOS | seatbelt | 系统内置 |
-| Linux | bubblewrap（bwrap） | 需安装 bwrap |
-| Windows | appcontainer | srt-win.exe + WFP 规则，需 UAC 供给 |
+| 平台    | 后端                | 实现                                |
+| ------- | ------------------- | ----------------------------------- |
+| macOS   | seatbelt            | 系统内置                            |
+| Linux   | bubblewrap（bwrap） | 需安装 bwrap                        |
+| Windows | appcontainer        | srt-win.exe + WFP 规则，需 UAC 供给 |
 
 ### 7.2 沙箱行为
 
-| 维度 | 策略 |
-|------|------|
-| 文件系统（读） | 默认全局可读；denyRead 做减法 |
-| 文件系统（写） | 仅限 allowWrite（临时目录 + 工作区 + 用户追加目录） |
-| 网络 | 走 srt 域名白名单代理（默认内置 npmjs/github/pypi 等常用站点） |
-| 本地回环 | 放行（开发服务器可被浏览器访问） |
-| fail-closed | 沙箱开启但初始化/包装失败 → 抛错拒绝执行，绝不静默裸跑 |
+| 维度           | 策略                                                           |
+| -------------- | -------------------------------------------------------------- |
+| 文件系统（读） | 默认全局可读；denyRead 做减法                                  |
+| 文件系统（写） | 仅限 allowWrite（临时目录 + 工作区 + 用户追加目录）            |
+| 网络           | 走 srt 域名白名单代理（默认内置 npmjs/github/pypi 等常用站点） |
+| 本地回环       | 放行（开发服务器可被浏览器访问）                               |
+| fail-closed    | 沙箱开启但初始化/包装失败 → 抛错拒绝执行，绝不静默裸跑         |
 
 ### 7.3 生效边界
 
@@ -281,13 +283,14 @@ if (!decision.hardAsk && isRunAutoAllowed(sessionId, isVoiceAutoApprove)) return
 
 用户确认后的放行规则由 `resolvePermission` 统一处理：
 
-| scope | 行为 | 适用范围 | 存储 |
-|-------|------|----------|------|
-| `once` | 仅本次放行 | 所有工具 | 内存（无需存储） |
+| scope     | 行为       | 适用范围                                                              | 存储                                                            |
+| --------- | ---------- | --------------------------------------------------------------------- | --------------------------------------------------------------- |
+| `once`    | 仅本次放行 | 所有工具                                                              | 内存（无需存储）                                                |
 | `session` | 本会话放行 | bash（命令词级前缀）+ write/edit（精确路径）+ mcp_call（server/tool） | `sessionBashAllow` / `sessionFileAllow` / `sessionMcpAllow` Map |
-| `always` | 持久白名单 | **仅 bash 且非 hardAsk** | `settings.bashAllowlist` 持久化 |
+| `always`  | 持久白名单 | **仅 bash 且非 hardAsk**                                              | `settings.bashAllowlist` 持久化                                 |
 
 **关键限制**：
+
 - 文件操作不支持 `always`（路径型持久白名单意义有限）。
 - `install_skill` 不支持 `session`（仅 `once`）。
 - `hardAsk` 命中时不支持 `session` / `always`（deny 兜底不可白名单覆盖）。
@@ -298,10 +301,10 @@ if (!decision.hardAsk && isRunAutoAllowed(sessionId, isVoiceAutoApprove)) return
 
 **源码**：`src/main/agent/subagent.ts` 第 106–116 行、第 181 行
 
-| 子代理类型 | 权限钩子 | 行为 |
-|-----------|---------|------|
-| **plan**（只读规划子代理） | `planReadonlyHook` | 仅放行 `READONLY_COMMANDS` 中的 bash 只读简单命令，其余全部硬拒（不走用户确认） |
-| **general**（通用子代理） | 复用主会话的 `createBeforeToolCallHook` | 危险工具仍弹用户确认，与主 Agent 行为一致 |
+| 子代理类型                 | 权限钩子                                | 行为                                                                            |
+| -------------------------- | --------------------------------------- | ------------------------------------------------------------------------------- |
+| **plan**（只读规划子代理） | `planReadonlyHook`                      | 仅放行 `READONLY_COMMANDS` 中的 bash 只读简单命令，其余全部硬拒（不走用户确认） |
+| **general**（通用子代理）  | 复用主会话的 `createBeforeToolCallHook` | 危险工具仍弹用户确认，与主 Agent 行为一致                                       |
 
 ---
 
@@ -311,17 +314,17 @@ if (!decision.hardAsk && isRunAutoAllowed(sessionId, isVoiceAutoApprove)) return
 
 开启后的效果汇总：
 
-| 工具 / 场景 | 是否被跳过 | 原因 |
-|-------------|-----------|------|
-| bash 非破坏性命令 | 跳过确认 | `isRunAutoAllowed` → allow |
-| bash 破坏性命令（rm -rf、sudo 等） | **仍然硬弹确认** | `hardAsk=true`，第 278 行显式拦截 |
-| write_file / edit_file（边界内） | 本来就不弹 | `decideFile` 返回 allow |
-| write_file / edit_file（边界外，沙箱关闭） | 跳过确认 | `isRunAutoAllowed` 生效 |
-| write_file / edit_file（沙箱区外） | 跳过确认但仍被硬拒 | 第 2 层沙箱策略直接 block |
-| install_skill | 跳过确认 | `isRunAutoAllowed` 生效 |
-| mcp_call（首次） | 跳过确认 | `isRunAutoAllowed` 生效 |
-| mcp_call（本会话已放行） | 本来就不弹 | 会话放行命中 |
-| 计划模式下任何危险工具 | **仍然拦截** | 第 3 层在第 4 层之前就拦截了 |
+| 工具 / 场景                                | 是否被跳过         | 原因                              |
+| ------------------------------------------ | ------------------ | --------------------------------- |
+| bash 非破坏性命令                          | 跳过确认           | `isRunAutoAllowed` → allow        |
+| bash 破坏性命令（rm -rf、sudo 等）         | **仍然硬弹确认**   | `hardAsk=true`，第 278 行显式拦截 |
+| write_file / edit_file（边界内）           | 本来就不弹         | `decideFile` 返回 allow           |
+| write_file / edit_file（边界外，沙箱关闭） | 跳过确认           | `isRunAutoAllowed` 生效           |
+| write_file / edit_file（沙箱区外）         | 跳过确认但仍被硬拒 | 第 2 层沙箱策略直接 block         |
+| install_skill                              | 跳过确认           | `isRunAutoAllowed` 生效           |
+| mcp_call（首次）                           | 跳过确认           | `isRunAutoAllowed` 生效           |
+| mcp_call（本会话已放行）                   | 本来就不弹         | 会话放行命中                      |
+| 计划模式下任何危险工具                     | **仍然拦截**       | 第 3 层在第 4 层之前就拦截了      |
 
 **核心原则**：自动放行永远无法覆盖 `hardAsk`（破坏性命令）。
 
@@ -367,13 +370,13 @@ if (!decision.hardAsk && isRunAutoAllowed(sessionId, isVoiceAutoApprove)) return
 
 ## 12. 关键文件索引
 
-| 文件 | 职责 |
-|------|------|
-| `src/main/agent/permission.ts` | 权限决策引擎（核心）：`createBeforeToolCallHook`、`decideBash`、`decideFile`、`resolvePermission`、`DENY_PATTERNS`、`READONLY_COMMANDS` |
-| `src/main/agent/sandbox.ts` | OS 沙箱封装 + 文件域策略：`getSessionFsPolicy`、`getSessionWriteBoundary`、`isSandboxWriteAllowed`、`SandboxManager`、`resolveSrtWin` |
-| `src/main/agent/tools/index.ts` | 工具注册表 + `wrapGate`（启停门控）+ `wrapSandboxFsPolicy`（沙箱文件策略门）+ `buildTools` |
-| `src/main/agent/types.ts` | 类型定义：`PermissionScope`、`InteractionKind`、`SETTING_PERMISSION_AUTO_APPROVE` 等常量 |
-| `src/main/agent/interaction.ts` | 统一交互通道：`beginInteraction`、`respondInteraction`、`clearSessionInteractions` |
-| `src/main/agent/plan-mode.ts` | 计划模式状态管理：`isPlanMode`、`markPlanAutoAllow` |
-| `src/main/agent/agent-manager.ts` | Agent 生命周期管理，`createBeforeToolCallHook` 的调用点 |
-| `src/main/agent/subagent.ts` | 子代理系统：`planReadonlyHook` + 复用主会话权限钩子 |
+| 文件                              | 职责                                                                                                                                    |
+| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/main/agent/permission.ts`    | 权限决策引擎（核心）：`createBeforeToolCallHook`、`decideBash`、`decideFile`、`resolvePermission`、`DENY_PATTERNS`、`READONLY_COMMANDS` |
+| `src/main/agent/sandbox.ts`       | OS 沙箱封装 + 文件域策略：`getSessionFsPolicy`、`getSessionWriteBoundary`、`isSandboxWriteAllowed`、`SandboxManager`、`resolveSrtWin`   |
+| `src/main/agent/tools/index.ts`   | 工具注册表 + `wrapGate`（启停门控）+ `wrapSandboxFsPolicy`（沙箱文件策略门）+ `buildTools`                                              |
+| `src/main/agent/types.ts`         | 类型定义：`PermissionScope`、`InteractionKind`、`SETTING_PERMISSION_AUTO_APPROVE` 等常量                                                |
+| `src/main/agent/interaction.ts`   | 统一交互通道：`beginInteraction`、`respondInteraction`、`clearSessionInteractions`                                                      |
+| `src/main/agent/plan-mode.ts`     | 计划模式状态管理：`isPlanMode`、`markPlanAutoAllow`                                                                                     |
+| `src/main/agent/agent-manager.ts` | Agent 生命周期管理，`createBeforeToolCallHook` 的调用点                                                                                 |
+| `src/main/agent/subagent.ts`      | 子代理系统：`planReadonlyHook` + 复用主会话权限钩子                                                                                     |

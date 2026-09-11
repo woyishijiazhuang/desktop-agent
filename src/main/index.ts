@@ -77,7 +77,9 @@ app.whenReady().then(async () => {
   // 与窗口创建并行，避免磁盘 IO 卡住首窗（skills-store 幂等，重复播种直接跳过）。
   const skillsSeedT0 = performance.now()
   void seedBuiltinSkills()
-    .then(() => log.info('内置技能播种完成', { elapsedMs: Math.round(performance.now() - skillsSeedT0) }))
+    .then(() =>
+      log.info('内置技能播种完成', { elapsedMs: Math.round(performance.now() - skillsSeedT0) })
+    )
     .catch((e) => log.warn('内置技能播种失败', { err: e instanceof Error ? e.message : String(e) }))
 
   // 恢复工作区窗口：按 last_opened_at 倒序为每个工作区建窗口（无工作区时创建默认工作区）

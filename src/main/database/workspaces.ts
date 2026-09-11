@@ -42,7 +42,8 @@ export function createWorkspacesApi(db: DatabaseSync): WorkspacesApi {
 
     getWorkspace(workdir: string): Workspace | undefined {
       const row = db.prepare('SELECT * FROM workspaces WHERE workdir = ?').get(workdir) as
-        WorkspaceRow | undefined
+        | WorkspaceRow
+        | undefined
       return row ? toWorkspace(row) : undefined
     },
 

@@ -67,47 +67,92 @@ export const THEME_PALETTES: Record<ThemeColorKey, ThemePalette> = {
   blue: {
     key: 'blue',
     light: { primary: '#2563eb', hover: '#1d4ed8', pressed: '#1e40af', soft: '#dbeafe' },
-    dark: { primary: '#60a5fa', hover: '#93c5fd', pressed: '#3b82f6', soft: 'rgba(96, 165, 250, 0.16)' }
+    dark: {
+      primary: '#60a5fa',
+      hover: '#93c5fd',
+      pressed: '#3b82f6',
+      soft: 'rgba(96, 165, 250, 0.16)'
+    }
   },
   cyan: {
     key: 'cyan',
     light: { primary: '#0891b2', hover: '#0e7490', pressed: '#155e75', soft: '#cffafe' },
-    dark: { primary: '#22d3ee', hover: '#67e8f9', pressed: '#06b6d4', soft: 'rgba(34, 211, 238, 0.16)' }
+    dark: {
+      primary: '#22d3ee',
+      hover: '#67e8f9',
+      pressed: '#06b6d4',
+      soft: 'rgba(34, 211, 238, 0.16)'
+    }
   },
   teal: {
     key: 'teal',
     light: { primary: '#0d9488', hover: '#0f766e', pressed: '#115e59', soft: '#ccfbf1' },
-    dark: { primary: '#2dd4bf', hover: '#5eead4', pressed: '#14b8a6', soft: 'rgba(45, 212, 191, 0.16)' }
+    dark: {
+      primary: '#2dd4bf',
+      hover: '#5eead4',
+      pressed: '#14b8a6',
+      soft: 'rgba(45, 212, 191, 0.16)'
+    }
   },
   emerald: {
     key: 'emerald',
     light: { primary: '#059669', hover: '#047857', pressed: '#065f46', soft: '#d1fae5' },
-    dark: { primary: '#34d399', hover: '#6ee7b7', pressed: '#10b981', soft: 'rgba(52, 211, 153, 0.16)' }
+    dark: {
+      primary: '#34d399',
+      hover: '#6ee7b7',
+      pressed: '#10b981',
+      soft: 'rgba(52, 211, 153, 0.16)'
+    }
   },
   amber: {
     key: 'amber',
     light: { primary: '#d97706', hover: '#b45309', pressed: '#92400e', soft: '#fef3c7' },
-    dark: { primary: '#fbbf24', hover: '#fcd34d', pressed: '#f59e0b', soft: 'rgba(251, 191, 36, 0.16)' }
+    dark: {
+      primary: '#fbbf24',
+      hover: '#fcd34d',
+      pressed: '#f59e0b',
+      soft: 'rgba(251, 191, 36, 0.16)'
+    }
   },
   orange: {
     key: 'orange',
     light: { primary: '#ea580c', hover: '#c2410c', pressed: '#9a3412', soft: '#ffedd5' },
-    dark: { primary: '#fb923c', hover: '#fdba74', pressed: '#f97316', soft: 'rgba(251, 146, 60, 0.16)' }
+    dark: {
+      primary: '#fb923c',
+      hover: '#fdba74',
+      pressed: '#f97316',
+      soft: 'rgba(251, 146, 60, 0.16)'
+    }
   },
   rose: {
     key: 'rose',
     light: { primary: '#e11d48', hover: '#be123c', pressed: '#9f1239', soft: '#ffe4e6' },
-    dark: { primary: '#fb7185', hover: '#fda4af', pressed: '#f43f5e', soft: 'rgba(251, 113, 133, 0.16)' }
+    dark: {
+      primary: '#fb7185',
+      hover: '#fda4af',
+      pressed: '#f43f5e',
+      soft: 'rgba(251, 113, 133, 0.16)'
+    }
   },
   pink: {
     key: 'pink',
     light: { primary: '#db2777', hover: '#be185d', pressed: '#9d174d', soft: '#fce7f3' },
-    dark: { primary: '#f472b6', hover: '#f9a8d4', pressed: '#ec4899', soft: 'rgba(244, 114, 182, 0.16)' }
+    dark: {
+      primary: '#f472b6',
+      hover: '#f9a8d4',
+      pressed: '#ec4899',
+      soft: 'rgba(244, 114, 182, 0.16)'
+    }
   },
   indigo: {
     key: 'indigo',
     light: { primary: '#4f46e5', hover: '#4338ca', pressed: '#3730a3', soft: '#e0e7ff' },
-    dark: { primary: '#818cf8', hover: '#a5b4fc', pressed: '#6366f1', soft: 'rgba(129, 140, 248, 0.16)' }
+    dark: {
+      primary: '#818cf8',
+      hover: '#a5b4fc',
+      pressed: '#6366f1',
+      soft: 'rgba(129, 140, 248, 0.16)'
+    }
   }
 }
 

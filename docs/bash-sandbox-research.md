@@ -19,14 +19,15 @@
 
 沙箱要拆成两个本质不同的问题，不要混为一谈：
 
-| 问题 | 典型场景 | 能否靠代码内字符串规则解决 |
-|---|---|---|
-| **A. Agent 自身偶发误操作** | 自己写错 `git clean -fdx` 目录、`rm -rf` 打错路径 | 简单命令可覆盖大部分，成本低，但**只适用于直白形态** |
-| **B. 执行不可信/复杂内容** | `bash run.sh`、npm install、下载的脚本、外部 skill 附带代码 | **不能**。脚本内容执行前不可知，静态分析是类别错误而非精度问题 |
+| 问题                        | 典型场景                                                    | 能否靠代码内字符串规则解决                                     |
+| --------------------------- | ----------------------------------------------------------- | -------------------------------------------------------------- |
+| **A. Agent 自身偶发误操作** | 自己写错 `git clean -fdx` 目录、`rm -rf` 打错路径           | 简单命令可覆盖大部分，成本低，但**只适用于直白形态**           |
+| **B. 执行不可信/复杂内容**  | `bash run.sh`、npm install、下载的脚本、外部 skill 附带代码 | **不能**。脚本内容执行前不可知，静态分析是类别错误而非精度问题 |
 
 **对 B 唯一可靠的拦截点是进程级 OS 沙箱**：运行时内核按系统调用逐条裁决，访问未授予路径直接拒绝，**不需要预知脚本内容**。参考实现：Claude Code sandbox-runtime、OpenAI Codex CLI、nono、arapuca。
 
 **OS 沙箱也有边界**：必须授予工作区可写才能干活，因此脚本**在工作区内部仍可为所欲为**。沙箱真正防住的是「爆炸半径外溢」（系统目录、家目录密钥、其他项目）。工作区内部保护靠三样，不是沙箱：
+
 1. 执行入口的人工确认（`bash xxx.sh`、可疑 npm install 的调用级确认）；
 2. git / 版本管理作为恢复网；
 3. 高风险运行用隔离副本（容器/临时克隆，只把批准的输出拷回）。
@@ -41,12 +42,12 @@
 
 ## 二、架构分层结论
 
-| 层 | 职责 | 技术形态 | 强度 |
-|---|---|---|---|
-| **L0** | 现状直跑 | 持久 shell 以用户全权限 spawn | 无 |
-| **L1 策略层（辅助）** | 只拦「简单命令的明显越界」，作为 UX 兜底与 Agent 自纠错信号；**明示不兜底** | 扩展现有 permission 判定链：可配置可写根/保护路径/越界升级确认 | 弱（防呆） |
-| **L2 进程级沙箱（核心）** | 不可信/脚本内容一律进程级隔离执行 | macOS `sandbox-exec`（Seatbelt）/ Linux Landlock 或 bubblewrap / Windows AppContainer；**fail-closed**（不可用即拒绝执行，不裸跑） | 强（真隔离） |
-| **L3（可选）** | 高风险代码的隔离副本 | 容器 / 微VM（libkrun 等），输出经批准拷回 | 最强 |
+| 层                        | 职责                                                                        | 技术形态                                                                                                                           | 强度         |
+| ------------------------- | --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| **L0**                    | 现状直跑                                                                    | 持久 shell 以用户全权限 spawn                                                                                                      | 无           |
+| **L1 策略层（辅助）**     | 只拦「简单命令的明显越界」，作为 UX 兜底与 Agent 自纠错信号；**明示不兜底** | 扩展现有 permission 判定链：可配置可写根/保护路径/越界升级确认                                                                     | 弱（防呆）   |
+| **L2 进程级沙箱（核心）** | 不可信/脚本内容一律进程级隔离执行                                           | macOS `sandbox-exec`（Seatbelt）/ Linux Landlock 或 bubblewrap / Windows AppContainer；**fail-closed**（不可用即拒绝执行，不裸跑） | 强（真隔离） |
+| **L3（可选）**            | 高风险代码的隔离副本                                                        | 容器 / 微VM（libkrun 等），输出经批准拷回                                                                                          | 最强         |
 
 ### 2.1 执行入口分级（补充层）
 
@@ -59,7 +60,7 @@
 1. **接入点集中在两处 spawn**：
    - `bash-session.ts` `PersistentShell.ensureStarted()`（持久 shell）；
    - `BashSessionManager.startBackground()`（后台任务）。
-   spawn 目标从 `bash` 改为 `<沙箱包装器> run -v <可写根> -- bash --noprofile --norc -s`。
+     spawn 目标从 `bash` 改为 `<沙箱包装器> run -v <可写根> -- bash --noprofile --norc -s`。
 2. **沙箱包住整个持久 shell 进程**，而非逐命令：内部所有命令/脚本自动继承约束，cd/export 持久化语义、bash_input 交互、后台长驻命令天然保留。
 3. **fail-closed**：沙箱不可用（缺二进制 / 平台不支持 / 预检失败）时报错拒绝执行，绝不静默降级裸跑。
 4. **判定链关系**：L1 拦截插入 `permission.ts` 的 `evaluateBash()` 开头，优先级高于 allowlist/会话放行/自动放行；越界写不应因白名单或「本批全部允许」被放行。
@@ -73,13 +74,13 @@
 
 ### 4.1 候选一览
 
-| 库 | 语言 | 仓库（核实） | 平台覆盖（实测/声称） | Windows 后端强度 | 维护/成熟度 | 许可证 |
-|---|---|---|---|---|---|---|
-| **Arapuca** | Rust | github.com/LeGambiArt/arapuca | Linux/macOS/Windows 原生 | **AppContainer**（路径级 deny-by-default，最强） | 活跃：408 commits、v0.2.7（2026-08-17）、cosign 签名发布 | Apache-2.0 |
-| **agentbox** | Go | github.com/zhangyunhao116/agentbox | macOS/Linux/Windows 原生 | Restricted Token + Job Object + Low IL + ACL（弱于 AppContainer） | **Beta，16 commits，单人维护**，v1.0 前 API 不稳定 | MIT |
-| **ai-sandbox** | Rust | github.com/Teckwin/sandbox（crate 名 ai-sandbox） | 最广：+ FreeBSD Capsicum / OpenBSD pledge | Restricted Token（弱） | **已停更 5 个月**（2026-04 后无提交），v0.2.x | 未确认 |
-| **nanosandbox / "nanobox"** | Rust | github.com/nanosandboxai（org，仅 cli 等 5 仓库） | 微VM 级（libkrun），**无 Windows** | 无 | org 5 stars、Jun 2026 停更 | 未确认 |
-| **nono** | Rust | github.com/nolabs-ai/nono | macOS/Linux 原生，**Windows 仅 WSL2** | 无原生 | 最成熟：1675+ commits、~3.9k stars、v0.75（2026-09-01）、Sigstore 团队 + Datadog/Okta 背书 | Apache-2.0 |
+| 库                          | 语言 | 仓库（核实）                                      | 平台覆盖（实测/声称）                     | Windows 后端强度                                                  | 维护/成熟度                                                                                | 许可证     |
+| --------------------------- | ---- | ------------------------------------------------- | ----------------------------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------ | ---------- |
+| **Arapuca**                 | Rust | github.com/LeGambiArt/arapuca                     | Linux/macOS/Windows 原生                  | **AppContainer**（路径级 deny-by-default，最强）                  | 活跃：408 commits、v0.2.7（2026-08-17）、cosign 签名发布                                   | Apache-2.0 |
+| **agentbox**                | Go   | github.com/zhangyunhao116/agentbox                | macOS/Linux/Windows 原生                  | Restricted Token + Job Object + Low IL + ACL（弱于 AppContainer） | **Beta，16 commits，单人维护**，v1.0 前 API 不稳定                                         | MIT        |
+| **ai-sandbox**              | Rust | github.com/Teckwin/sandbox（crate 名 ai-sandbox） | 最广：+ FreeBSD Capsicum / OpenBSD pledge | Restricted Token（弱）                                            | **已停更 5 个月**（2026-04 后无提交），v0.2.x                                              | 未确认     |
+| **nanosandbox / "nanobox"** | Rust | github.com/nanosandboxai（org，仅 cli 等 5 仓库） | 微VM 级（libkrun），**无 Windows**        | 无                                                                | org 5 stars、Jun 2026 停更                                                                 | 未确认     |
+| **nono**                    | Rust | github.com/nolabs-ai/nono                         | macOS/Linux 原生，**Windows 仅 WSL2**     | 无原生                                                            | 最成熟：1675+ commits、~3.9k stars、v0.75（2026-09-01）、Sigstore 团队 + Datadog/Okta 背书 | Apache-2.0 |
 
 ### 4.2 Arapuca 详述（首选候选）
 
@@ -133,14 +134,14 @@ arapuca run -v /path/to/workspace \
 
 **srt 关键事实**
 
-| 项 | srt | 与本需求对应 |
-|---|---|---|
-| 平台 | macOS `sandbox-exec`(Seatbelt)；Linux bubblewrap + netns（Unix socket 代理）；**Windows 专用 `srt-sandbox` 低权限账户 + WFP 出口围栏 + 工作树逐会话 ACE** | 三端原生，但 **Windows 供给需提权**（安装器创建账户 + WFP，NSIS 安装期一次性完成） |
-| 形态 | npm 依赖（TypeScript 库 + CLI），vendor 内置少量平台 helper | Electron 零编译可并包；「随包二进制」范围远小于 arapuca 自维护 Rust 发布物 |
-| 默认策略 | 读默认放行（可 deny）、写默认拒绝（显式 allow 列表）、网络默认拒绝（域名 allowlist，HTTP/SOCKS5 双代理） | 与 L1「可写根 / 保护路径」模型可平移 |
-| 违规归因 | `getViolationsForCommand` / `annotateStderrWithSandboxFailures` | 可对接现有日志与 PermissionBar UX |
-| 成熟度 | Beta Research Preview（API 会漂移）；Claude Code 生产使用；Electron 先例 lvis-app（NSIS 供给 + 默认开启） | 生产验证强、API 稳定性存疑 |
-| 已知坑 | Linux bwrap 在 Ubuntu 24.04+ userns 受限环境需处理；TLS 盲代理（domain fronting 已公开讨论）；Windows ACL（0x80070005 类）仍在演进 | 均列入 5.5 待实测 |
+| 项       | srt                                                                                                                                                       | 与本需求对应                                                                       |
+| -------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| 平台     | macOS `sandbox-exec`(Seatbelt)；Linux bubblewrap + netns（Unix socket 代理）；**Windows 专用 `srt-sandbox` 低权限账户 + WFP 出口围栏 + 工作树逐会话 ACE** | 三端原生，但 **Windows 供给需提权**（安装器创建账户 + WFP，NSIS 安装期一次性完成） |
+| 形态     | npm 依赖（TypeScript 库 + CLI），vendor 内置少量平台 helper                                                                                               | Electron 零编译可并包；「随包二进制」范围远小于 arapuca 自维护 Rust 发布物         |
+| 默认策略 | 读默认放行（可 deny）、写默认拒绝（显式 allow 列表）、网络默认拒绝（域名 allowlist，HTTP/SOCKS5 双代理）                                                  | 与 L1「可写根 / 保护路径」模型可平移                                               |
+| 违规归因 | `getViolationsForCommand` / `annotateStderrWithSandboxFailures`                                                                                           | 可对接现有日志与 PermissionBar UX                                                  |
+| 成熟度   | Beta Research Preview（API 会漂移）；Claude Code 生产使用；Electron 先例 lvis-app（NSIS 供给 + 默认开启）                                                 | 生产验证强、API 稳定性存疑                                                         |
+| 已知坑   | Linux bwrap 在 Ubuntu 24.04+ userns 受限环境需处理；TLS 盲代理（domain fronting 已公开讨论）；Windows ACL（0x80070005 类）仍在演进                        | 均列入 5.5 待实测                                                                  |
 
 **选型结论修订**
 
@@ -217,14 +218,14 @@ arapuca run -v /path/to/workspace \
 
 **结果：10/10 通过**
 
-| 验收项 | 结果 | 说明 |
-|---|---|---|
-| A 持久 bash 被包住（stdin 驱动） | ✅ | 首命令即时返回；首字节延迟 < 1s，无异常启动慢 |
-| B `cd`/`export` 跨命令保留 | ✅ | 同一沙箱会话内 export/cd 均保留 |
-| B 工作区内写/读成功 | ✅ | 允许写根内正常创建/读/列文件 |
-| B 工作区外（HOME）写被 OS 级拒绝 | ✅ | `Operation not permitted`，host 无残留文件 |
-| B `denyRead` 路径读取被拒 | ✅ | 沙箱内 `cat` 被拒；host 进程不受影响 |
-| C 网络默认拒绝 / 白名单放行 | ✅ | 非白名单域名被拦，`example.com` 白名单内返回 200 |
+| 验收项                           | 结果 | 说明                                             |
+| -------------------------------- | ---- | ------------------------------------------------ |
+| A 持久 bash 被包住（stdin 驱动） | ✅   | 首命令即时返回；首字节延迟 < 1s，无异常启动慢    |
+| B `cd`/`export` 跨命令保留       | ✅   | 同一沙箱会话内 export/cd 均保留                  |
+| B 工作区内写/读成功              | ✅   | 允许写根内正常创建/读/列文件                     |
+| B 工作区外（HOME）写被 OS 级拒绝 | ✅   | `Operation not permitted`，host 无残留文件       |
+| B `denyRead` 路径读取被拒        | ✅   | 沙箱内 `cat` 被拒；host 进程不受影响             |
+| C 网络默认拒绝 / 白名单放行      | ✅   | 非白名单域名被拦，`example.com` 白名单内返回 200 |
 
 **关键发现（影响集成设计）**
 
@@ -241,12 +242,12 @@ arapuca run -v /path/to/workspace \
 
 **设置项（settings 表，设置页新增「沙箱」tab）**
 
-| key | 含义 | 默认 |
-|---|---|---|
-| `sandbox.enabled` | 总开关（默认关，维持现状直跑） | false |
-| `sandbox.writableRoots` | 用户追加可写根（工作区自动可写，无需登记） | [] |
-| `sandbox.denyReadRoots` | 禁止读取目录（默认全局可读，做减法） | [] |
-| `sandbox.networkAllowlist` | 网络域名白名单（留空=全禁） | 内置常用站点（npm/github/pypi 等） |
+| key                        | 含义                                       | 默认                               |
+| -------------------------- | ------------------------------------------ | ---------------------------------- |
+| `sandbox.enabled`          | 总开关（默认关，维持现状直跑）             | false                              |
+| `sandbox.writableRoots`    | 用户追加可写根（工作区自动可写，无需登记） | []                                 |
+| `sandbox.denyReadRoots`    | 禁止读取目录（默认全局可读，做减法）       | []                                 |
+| `sandbox.networkAllowlist` | 网络域名白名单（留空=全禁）                | 内置常用站点（npm/github/pypi 等） |
 
 **接线方式**
 

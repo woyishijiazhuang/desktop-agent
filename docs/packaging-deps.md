@@ -9,10 +9,10 @@
 
 打包产物中的「代码」来自两个完全不同的入口，理解这一点是排查所有打包依赖问题的前提：
 
-| 路径 | 依赖归属 | 进入产物的方式 | 运行时解析 |
-|---|---|---|---|
-| **Bundle 路径** | `devDependencies` | electron-vite 的 Rollup 在构建时把代码**打进** `out/main`、`out/renderer` 的 JS chunk | 无需 node_modules，代码已在产物里 |
-| **node_modules 路径** | `dependencies` | electron-builder 把生产依赖（含其传递依赖）**收集进** `app.asar/node_modules` | 主进程 `require()` 从 asar 内解析 |
+| 路径                  | 依赖归属          | 进入产物的方式                                                                        | 运行时解析                        |
+| --------------------- | ----------------- | ------------------------------------------------------------------------------------- | --------------------------------- |
+| **Bundle 路径**       | `devDependencies` | electron-vite 的 Rollup 在构建时把代码**打进** `out/main`、`out/renderer` 的 JS chunk | 无需 node_modules，代码已在产物里 |
+| **node_modules 路径** | `dependencies`    | electron-builder 把生产依赖（含其传递依赖）**收集进** `app.asar/node_modules`         | 主进程 `require()` 从 asar 内解析 |
 
 判断规则：
 
@@ -127,12 +127,12 @@ npx asar list "$APP" | grep -cE "@types|undici-types"
 
 ## 7. 产物体积分析（2026-09，macOS arm64）
 
-| 产物 | 大小 |
-|---|---|
-| `desktop-agent-1.1.0.dmg`（安装包） | 119M |
-| `桌面助手-1.1.0-arm64-mac.zip`（增量更新） | 115M |
-| unpacked 应用 `桌面助手.app` | 293M |
-| ├─ `app.asar`（应用代码 + node_modules + 白名单资源） | 63M |
+| 产物                                                    | 大小 |
+| ------------------------------------------------------- | ---- |
+| `desktop-agent-1.1.0.dmg`（安装包）                     | 119M |
+| `桌面助手-1.1.0-arm64-mac.zip`（增量更新）              | 115M |
+| unpacked 应用 `桌面助手.app`                            | 293M |
+| ├─ `app.asar`（应用代码 + node_modules + 白名单资源）   | 63M  |
 | └─ `Electron Framework.framework`（Electron 43 运行时） | 228M |
 
 **结论**：
@@ -173,24 +173,24 @@ npx asar list "dist/mac-arm64/桌面助手.app/Contents/Resources/app.asar" | gr
 
 **A. 运行时需解析、已随 `dependencies` 进入产物（正常）**
 
-| 包 | bundle 位置 | 说明 |
-|---|---|---|
-| `@electron-toolkit/preload` | out/preload | preload 运行时 |
-| `@electron-toolkit/utils` | out/main | 主进程工具 |
-| `@modelcontextprotocol/sdk/client/{index,stdio,streamableHttp}` | out/main | MCP SDK 子路径 |
-| `adm-zip` | out/main | 附件/解压 |
-| `electron` | out/main | Electron 运行时自身提供 |
-| `electron-ipc-service`、`electron-ipc-service/preload` | out/main + out/preload | IPC 基础设施 |
-| `electron-log/main` | out/main | 日志 |
-| `picomatch` | out/main | 路径匹配 |
-| `@mixmark-io/domino` | out/main | 见 §3.1，已修复进 dependencies |
+| 包                                                              | bundle 位置            | 说明                           |
+| --------------------------------------------------------------- | ---------------------- | ------------------------------ |
+| `@electron-toolkit/preload`                                     | out/preload            | preload 运行时                 |
+| `@electron-toolkit/utils`                                       | out/main               | 主进程工具                     |
+| `@modelcontextprotocol/sdk/client/{index,stdio,streamableHttp}` | out/main               | MCP SDK 子路径                 |
+| `adm-zip`                                                       | out/main               | 附件/解压                      |
+| `electron`                                                      | out/main               | Electron 运行时自身提供        |
+| `electron-ipc-service`、`electron-ipc-service/preload`          | out/main + out/preload | IPC 基础设施                   |
+| `electron-log/main`                                             | out/main               | 日志                           |
+| `picomatch`                                                     | out/main               | 路径匹配                       |
+| `@mixmark-io/domino`                                            | out/main               | 见 §3.1，已修复进 dependencies |
 
 **B. 运行时需解析、但**不在 `dependencies`**（潜在打包后报错）**
 
-| 包 | bundle 位置 | 来源链 | 触发路径 | 处置 |
-|---|---|---|---|---|
-| `google-auth-library` | `google-shared-*.js`（pi-ai Google provider 共享块） | pi-ai → @google/genai → google-auth-library | 配置/调用 Google（Gemini）模型，走 OAuth/服务账号认证 | 未修复：建议按 domino 同法加入 `dependencies`；若 Google 模型不作为发布功能，可忽略 |
-| `encoding` | `index-*.js` | pi-ai → @google/genai → google-auth-library → gaxios → encoding | gaxios 响应解码（与上同路径） | 同上 |
+| 包                    | bundle 位置                                          | 来源链                                                          | 触发路径                                              | 处置                                                                                |
+| --------------------- | ---------------------------------------------------- | --------------------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| `google-auth-library` | `google-shared-*.js`（pi-ai Google provider 共享块） | pi-ai → @google/genai → google-auth-library                     | 配置/调用 Google（Gemini）模型，走 OAuth/服务账号认证 | 未修复：建议按 domino 同法加入 `dependencies`；若 Google 模型不作为发布功能，可忽略 |
+| `encoding`            | `index-*.js`                                         | pi-ai → @google/genai → google-auth-library → gaxios → encoding | gaxios 响应解码（与上同路径）                         | 同上                                                                                |
 
 > 注：`google-auth-library`/`encoding` 均来自 devDependencies（pi-ai）被打包后其内部无法内联的传递依赖。dev 下经 pnpm 嵌套布局可解析，打包产物中没有 → 属**潜在**问题，仅在触发对应路径时报错，未触发不影响现有功能。
 
@@ -203,4 +203,3 @@ npx asar list "dist/mac-arm64/桌面助手.app/Contents/Resources/app.asar" | gr
 1. **在 `dependencies` 里** → 已进产物，正常。
 2. **不在 `dependencies`、但 bundle 里有它的运行时 `require`** → 必须加入 `dependencies`（否则打包后对应功能报 Module not found）。
 3. **bundle 里没有它的 require**（被内联）→ 保持 devDependencies，不占产物。
-
