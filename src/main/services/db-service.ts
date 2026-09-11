@@ -343,6 +343,15 @@ export class DbService extends IpcService {
     return db.getSetting<T>(key)
   }
 
+  /**
+   * 批量读取设置项：一次 IPC + 一条 SQL 取回多个 key。
+   * 渲染层冷启动加载设置时避免逐项 await 造成的多次跨进程往返。
+   * 返回仅含「库中已存在」key 的映射，调用方按需对缺失项做默认值兜底。
+   */
+  getSettings(keys: string[]): Record<string, unknown> {
+    return db.getSettings(keys)
+  }
+
   setSetting(key: string, value: unknown): void {
     db.setSetting(key, value)
     // 广播设置变更到全部窗口：多窗口下各窗口的设置 store 需同步刷新

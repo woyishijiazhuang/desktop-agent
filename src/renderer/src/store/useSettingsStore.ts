@@ -140,78 +140,61 @@ export const useSettingsStore = defineStore('settings', () => {
    * 注：IPC 客户端包装会擦除方法的泛型参数，故 getSetting 返回 unknown，需手动断言。
    */
   async function loadSettings(): Promise<void> {
-    const [
-      systemPrompt,
-      thinkingLevel,
-      maxTurns,
-      toolList,
-      webSearchConfig,
-      findSkillConfig,
-      skills,
-      notificationsEnabledVal,
-      memoryEnabledVal,
-      skillsEnabledVal,
-      kbEnabledVal,
-      autoCompressEnabledVal,
-      autoCompressThresholdVal,
-      closeToTrayVal,
-      titleBarModeVal,
-      agentEnvVal,
-      permissionAutoApproveVal,
-      permissionTimeoutSecVal,
-      sandboxEnabledVal,
-      sandboxWritableRootsVal,
-      sandboxDenyReadRootsVal,
-      sandboxNetworkAllowlistVal,
-      voiceConfig
-    ] = await Promise.all([
-      mainClient.db.getSetting(SETTING_DEFAULT_SYSTEM_PROMPT),
-      mainClient.db.getSetting(SETTING_DEFAULT_THINKING_LEVEL),
-      mainClient.db.getSetting(SETTING_MAX_TURNS_PER_RUN),
-      mainClient.agent.listTools(),
-      mainClient.agent.getWebSearchConfig(),
-      mainClient.agent.getFindSkillConfig(),
-      mainClient.agent.listInstalledSkills(),
-      mainClient.db.getSetting(SETTING_NOTIFICATIONS_ENABLED),
-      mainClient.db.getSetting(SETTING_MEMORY_ENABLED),
-      mainClient.db.getSetting(SETTING_SKILLS_ENABLED),
-      mainClient.db.getSetting(SETTING_KB_ENABLED),
-      mainClient.db.getSetting(SETTING_AUTO_COMPRESS_ENABLED),
-      mainClient.db.getSetting(SETTING_AUTO_COMPRESS_THRESHOLD),
-      mainClient.db.getSetting(SETTING_CLOSE_TO_TRAY),
-      mainClient.db.getSetting(SETTING_TITLE_BAR_MODE),
-      mainClient.db.getSetting(SETTING_AGENT_ENV),
-      mainClient.db.getSetting(SETTING_PERMISSION_AUTO_APPROVE),
-      mainClient.db.getSetting(SETTING_PERMISSION_TIMEOUT_SEC),
-      mainClient.db.getSetting(SETTING_SANDBOX_ENABLED),
-      mainClient.db.getSetting(SETTING_SANDBOX_WRITABLE_ROOTS),
-      mainClient.db.getSetting(SETTING_SANDBOX_DENY_READ_ROOTS),
-      mainClient.db.getSetting(SETTING_SANDBOX_NETWORK_ALLOWLIST),
-      mainClient.voice.getConfig()
-    ])
+    const [settings, toolList, webSearchConfig, findSkillConfig, skills, voiceConfig] =
+      await Promise.all([
+        mainClient.db.getSettings([
+          SETTING_DEFAULT_SYSTEM_PROMPT,
+          SETTING_DEFAULT_THINKING_LEVEL,
+          SETTING_MAX_TURNS_PER_RUN,
+          SETTING_NOTIFICATIONS_ENABLED,
+          SETTING_MEMORY_ENABLED,
+          SETTING_SKILLS_ENABLED,
+          SETTING_KB_ENABLED,
+          SETTING_AUTO_COMPRESS_ENABLED,
+          SETTING_AUTO_COMPRESS_THRESHOLD,
+          SETTING_CLOSE_TO_TRAY,
+          SETTING_TITLE_BAR_MODE,
+          SETTING_AGENT_ENV,
+          SETTING_PERMISSION_AUTO_APPROVE,
+          SETTING_PERMISSION_TIMEOUT_SEC,
+          SETTING_SANDBOX_ENABLED,
+          SETTING_SANDBOX_WRITABLE_ROOTS,
+          SETTING_SANDBOX_DENY_READ_ROOTS,
+          SETTING_SANDBOX_NETWORK_ALLOWLIST
+        ]),
+        mainClient.agent.listTools(),
+        mainClient.agent.getWebSearchConfig(),
+        mainClient.agent.getFindSkillConfig(),
+        mainClient.agent.listInstalledSkills(),
+        mainClient.voice.getConfig()
+      ])
     tools.value = toolList
     installedSkills.value = skills
-    defaultSystemPrompt.value = (systemPrompt as string | undefined) ?? ''
-    const lvl = (thinkingLevel as ThinkingLevel | undefined) ?? 'medium'
+    defaultSystemPrompt.value = (settings[SETTING_DEFAULT_SYSTEM_PROMPT] as string | undefined) ?? ''
+    const lvl = (settings[SETTING_DEFAULT_THINKING_LEVEL] as ThinkingLevel | undefined) ?? 'medium'
     lastUsedThinkingLevel.value = THINKING_LEVEL_OPTIONS.some((o) => o.value === lvl)
       ? lvl
       : 'medium'
-    const max = maxTurns as number | undefined
+    const max = settings[SETTING_MAX_TURNS_PER_RUN] as number | undefined
     maxTurnsPerRun.value =
       typeof max === 'number' && Number.isInteger(max) && max > 0 ? max : DEFAULT_MAX_TURNS_PER_RUN
     webSearchKeyConfigured.value = webSearchConfig.hasKey
     findSkillSource.value = findSkillConfig.source
-    notificationsEnabled.value = (notificationsEnabledVal as boolean | undefined) ?? true
-    permissionAutoApprove.value = (permissionAutoApproveVal as boolean | undefined) ?? false
-    const permTimeout = permissionTimeoutSecVal as number | undefined
+    notificationsEnabled.value =
+      (settings[SETTING_NOTIFICATIONS_ENABLED] as boolean | undefined) ?? true
+    permissionAutoApprove.value =
+      (settings[SETTING_PERMISSION_AUTO_APPROVE] as boolean | undefined) ?? false
+    const permTimeout = settings[SETTING_PERMISSION_TIMEOUT_SEC] as number | undefined
     permissionTimeoutSec.value =
       typeof permTimeout === 'number' && Number.isFinite(permTimeout) && permTimeout >= 0
         ? Math.floor(permTimeout)
         : DEFAULT_PERMISSION_TIMEOUT_SEC
-    sandboxEnabled.value = (sandboxEnabledVal as boolean | undefined) ?? false
-    sandboxWritableRoots.value = (sandboxWritableRootsVal as string[] | undefined) ?? []
-    sandboxDenyReadRoots.value = (sandboxDenyReadRootsVal as string[] | undefined) ?? []
-    const allowlist = sandboxNetworkAllowlistVal as string[] | undefined
+    sandboxEnabled.value = (settings[SETTING_SANDBOX_ENABLED] as boolean | undefined) ?? false
+    sandboxWritableRoots.value =
+      (settings[SETTING_SANDBOX_WRITABLE_ROOTS] as string[] | undefined) ?? []
+    sandboxDenyReadRoots.value =
+      (settings[SETTING_SANDBOX_DENY_READ_ROOTS] as string[] | undefined) ?? []
+    const allowlist = settings[SETTING_SANDBOX_NETWORK_ALLOWLIST] as string[] | undefined
     // 未配置过才回退内置默认；显式存空数组 = 用户选择「禁止全部外网」
     sandboxNetworkAllowlist.value =
       allowlist === undefined ? [...SANDBOX_DEFAULT_NETWORK_ALLOWLIST] : allowlist
@@ -243,18 +226,19 @@ export const useSettingsStore = defineStore('settings', () => {
         : DEFAULT_VOICE_SILENCE_SEC
     voiceFastChannel.value = vc?.fastChannel ?? DEFAULT_VOICE_FAST_CHANNEL
     voiceToolPhrases.value = vc?.toolPhrases ?? DEFAULT_VOICE_TOOL_PHRASES
-    memoryEnabled.value = (memoryEnabledVal as boolean | undefined) ?? true
-    skillsEnabled.value = (skillsEnabledVal as boolean | undefined) ?? true
-    kbEnabled.value = (kbEnabledVal as boolean | undefined) ?? true
+    memoryEnabled.value = (settings[SETTING_MEMORY_ENABLED] as boolean | undefined) ?? true
+    skillsEnabled.value = (settings[SETTING_SKILLS_ENABLED] as boolean | undefined) ?? true
+    kbEnabled.value = (settings[SETTING_KB_ENABLED] as boolean | undefined) ?? true
     autoCompressEnabled.value =
-      (autoCompressEnabledVal as boolean | undefined) ?? DEFAULT_AUTO_COMPRESS_ENABLED
-    const thr = autoCompressThresholdVal as number | undefined
+      (settings[SETTING_AUTO_COMPRESS_ENABLED] as boolean | undefined) ??
+      DEFAULT_AUTO_COMPRESS_ENABLED
+    const thr = settings[SETTING_AUTO_COMPRESS_THRESHOLD] as number | undefined
     autoCompressThreshold.value =
       typeof thr === 'number' && thr >= 50 && thr <= 100 ? thr : DEFAULT_AUTO_COMPRESS_THRESHOLD
-    closeToTray.value = (closeToTrayVal as boolean | undefined) ?? false
-    const mode = titleBarModeVal as TitleBarMode | undefined
+    closeToTray.value = (settings[SETTING_CLOSE_TO_TRAY] as boolean | undefined) ?? false
+    const mode = settings[SETTING_TITLE_BAR_MODE] as TitleBarMode | undefined
     titleBarMode.value = mode === 'custom' || mode === 'native' ? mode : 'native'
-    agentEnv.value = (agentEnvVal as Record<string, string> | undefined) ?? {}
+    agentEnv.value = (settings[SETTING_AGENT_ENV] as Record<string, string> | undefined) ?? {}
   }
 
   /**
