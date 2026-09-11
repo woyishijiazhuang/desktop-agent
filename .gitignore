@@ -20,3 +20,5 @@ release
 *.exe
 *.AppImage
 *.deb
+# husky 安装时自动生成的钩子包装器（prepare 脚本重建，不入库）
+.husky/_
