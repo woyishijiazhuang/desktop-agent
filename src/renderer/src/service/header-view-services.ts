@@ -19,14 +19,18 @@ export class HeaderUiService extends IpcService {
   static override readonly namespace = 'ui'
 
   /** 窗口状态同步（最大化/聚焦/置顶/原生标题栏模式）。 */
-  windowStateChange(_state: WindowState): void {}
+  windowStateChange(_state: WindowState): void {
+    // no-op：仅声明推送签名，真实实现由 header/index.ts 子类 override
+  }
 }
 
 export class HeaderThemeService extends IpcService {
   static override readonly namespace = 'theme'
 
   /** 主题色变更推送（工作区自定义优先，否则全局默认），注入 --primary* CSS 变量。 */
-  colorChanged(_palette: ThemePalette): void {}
+  colorChanged(_palette: ThemePalette): void {
+    // no-op：仅声明推送签名，真实实现由 header/index.ts 子类 override
+  }
 }
 
 /** header 视图注册的服务列表：render-client 据此推导推送目标。 */
