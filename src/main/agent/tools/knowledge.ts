@@ -1,7 +1,7 @@
 import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { db } from '../../database'
-import { embedTexts, embeddingCost, embeddingModelKey, resolveKbEmbedding } from '../embedding'
+import { embedTexts, embeddingCost, embeddingModelKey, resolveKbEmbedding } from '../context/embedding'
 import { createLogger } from '../../utils/log'
 
 const log = createLogger('tool:knowledge')

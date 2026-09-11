@@ -10,7 +10,7 @@ export type {
   PresetModelCost,
   ModelPricing,
   ModelPeakPeriod
-} from './model-config'
+} from './model'
 
 /**
  * 思考级别（与 pi-agent-core 的 ThinkingLevel 对齐，结构相同故可互相赋值）。

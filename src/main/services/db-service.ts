@@ -2,19 +2,19 @@ import { IpcService } from 'electron-ipc-service'
 import { app, dialog } from 'electron'
 import { writeFile } from 'node:fs/promises'
 import { db } from '../database'
-import { resolveScopedWorkdir } from './ipc-scope'
-import { rendererClient } from './render-client'
-import { cacheSessionWorkdir } from '../agent/workdir'
-import { clearSessionPermissions } from '../agent/permission'
-import { bashSessionManager } from '../agent/bash-session'
+import { resolveScopedWorkdir } from '../infra/ipc-scope'
+import { rendererClient } from '../infra/render-client'
+import { cacheSessionWorkdir } from '../agent/runtime/workdir'
+import { clearSessionPermissions } from '../agent/runtime/permission'
+import { bashSessionManager } from '../agent/runtime/bash-session'
 import {
   deleteSessionAttachments,
   copyAttachmentToSession,
   isLocalFileRef,
   fileRefToKey,
   toFileRef
-} from '../agent/attachment'
-import { extractMessageText } from '../utils/message-text'
+} from '../agent/context/attachment'
+import { extractMessageText } from '@shared/message-text'
 import { createLogger } from '../utils/log'
 import type {
   Session,

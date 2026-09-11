@@ -34,7 +34,7 @@ import { mainClient } from '@renderer/utils/main-client'
 import SessionItem from './SessionItem.vue'
 import BackgroundSessionsPanel from './BackgroundSessionsPanel.vue'
 import ContextRingButton from './ContextRingButton.vue'
-import type { Session, MessageSearchHit, SessionExportFormat } from '@main/service/db-service'
+import type { Session, MessageSearchHit, SessionExportFormat } from '@main/services/db-service'
 
 /**
  * 左侧会话侧栏：新建 / 切换 / 重命名 / 删除会话 + 压缩当前会话历史。

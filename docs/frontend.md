@@ -331,7 +331,7 @@ namespace `agentEvent`：`onEvent(payload)` —— 所有会话事件路由到�
 | 文件 | 职责 |
 |---|---|
 | `utils/main-client.ts` | `createIpcRendererClient<IpcMainServices>()` IPC 客户端单例 |
-| `utils/messageText.ts` | 消息 block 判别与文本提取：`FileTextBlock`/`SkillTextBlock` + 守卫 + `extractUserText`（排除文件/技能块） |
+| `utils/messageText.ts` | 消息 block 判别与用户文本提取：`FileTextBlock`/`SkillTextBlock` + 守卫 + `extractUserText`（排除文件/技能块）；通用文本提取 `extractMessageText` 已迁至共享层 `@shared/message-text` |
 | `utils/toolResult.ts` | 工具结果/参数摘要：`summarizeToolResult`（退出码/字节/条数，失败显首行）、`summarizeToolArgs`（reason 缺失时从关键参数推导意图） |
 | `utils/codeBlock.ts` | 代码块包装与格式化：`toCodeFence`（内容自适应反引号长度、按语言包围栏）、`tryPrettyJSON`（JSON pretty-print，供工具结果/参数按 JSON 高亮） |
 | `utils/toast.ts` | 全局 toast：`registerToast` 由 ToastBridge 注册，`showToast` 供 UiService IPC 使用（API 未就绪时降级 console） |

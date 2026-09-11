@@ -1,7 +1,7 @@
-import { rendererClient } from '../service/render-client'
-import { createLogger } from '../utils/log'
+import { rendererClient } from '../../infra/render-client'
+import { createLogger } from '../../utils/log'
 import { respondInteraction } from './interaction'
-import type { PlanProgress, PlanStepStatus } from './types'
+import type { PlanProgress, PlanStepStatus } from '../types'
 
 const log = createLogger('planMode')
 

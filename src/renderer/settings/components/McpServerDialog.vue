@@ -11,7 +11,7 @@ import {
   useMessage
 } from 'naive-ui'
 import { mainClient } from '@renderer/utils/main-client'
-import type { CreateMcpServerParams } from '@main/service/db-service'
+import type { CreateMcpServerParams } from '@main/services/db-service'
 import type { McpServerConfig } from '@main/agent/mcp/types'
 
 /** MCP server 新增 / 编辑弹窗（内置配置与用户自建配置共用同一表单）。 */

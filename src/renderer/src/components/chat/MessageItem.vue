@@ -33,8 +33,8 @@ import { tryPrettyJSON, toCodeFence } from '@renderer/utils/codeBlock'
 import { summarizeToolResult } from '@renderer/utils/toolResult'
 import { mainClient } from '@renderer/utils/main-client'
 import { chatMessageContextKey } from './chatMessageContext'
+import { extractMessageText } from '@shared/message-text'
 import {
-  extractMessageText,
   extractUserText,
   isFileBlock,
   isSkillBlock,

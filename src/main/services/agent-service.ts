@@ -2,38 +2,38 @@ import { IpcService } from 'electron-ipc-service'
 import { clipboard } from 'electron'
 import type { AgentMessage } from '@earendil-works/pi-agent-core'
 import type { ImageContent } from '@earendil-works/pi-ai'
-import { rendererClient } from '../service/render-client'
+import { rendererClient } from '../infra/render-client'
 import { db } from '../database'
-import { toCreateMessageParams, fromMessageRow, persistMessageImages } from './convert'
-import { extractMessageText } from '../utils/message-text'
-import { readAttachmentDataUrl, deleteAttachmentFile, collectFileRefs } from './attachment'
-import { listTools } from './tools'
-import { getSandboxPlatformStatus, provisionWindowsSandbox } from './sandbox'
-import { testWebSearchConnection } from './tools/web-search'
+import { toCreateMessageParams, fromMessageRow, persistMessageImages } from '../agent/context/convert'
+import { extractMessageText } from '@shared/message-text'
+import { readAttachmentDataUrl, deleteAttachmentFile, collectFileRefs } from '../agent/context/attachment'
+import { listTools } from '../agent/tools'
+import { getSandboxPlatformStatus, provisionWindowsSandbox } from '../agent/runtime/sandbox'
+import { testWebSearchConnection } from '../agent/tools/web-search'
 import {
   getFindSkillSource,
   setFindSkillSourceConfig,
   testFindSkillConnection
-} from './tools/find-skill'
+} from '../agent/tools/find-skill'
 import {
   listInstalledSkills as listInstalledSkillsStore,
   setSkillEnabled as setSkillEnabledStore,
   uninstallSkill as uninstallSkillStore,
   openSkillsDir as openSkillsDirStore,
   readSkillFile
-} from './skills-store'
+} from '../agent/skills/skills-store'
 import {
   hasWebSearchApiKey,
   setWebSearchApiKeyConfig,
   clearWebSearchApiKeyConfig
-} from './web-search-config'
-import { resolvePermission, SETTING_BASH_ALLOWLIST } from './permission'
-import { resolvePlanApproval } from './plan-mode'
-import { resolveAskUser } from './ask-user'
+} from '../agent/model/web-search-config'
+import { resolvePermission, SETTING_BASH_ALLOWLIST } from '../agent/runtime/permission'
+import { resolvePlanApproval } from '../agent/runtime/plan-mode'
+import { resolveAskUser } from '../agent/runtime/ask-user'
 import { extractDocumentText } from '../utils/doc-parser'
-import { completeText, type CompleteTextResult } from './models'
-import { resolveAssistantCost } from './model-config'
-import { AgentManager } from './agent-manager'
+import { completeText, type CompleteTextResult } from '../agent/model/models'
+import { resolveAssistantCost } from '../agent/model'
+import { AgentManager } from '../agent/agent-manager'
 import { createLogger } from '../utils/log'
 import type {
   FindSkillSource,
@@ -41,17 +41,17 @@ import type {
   ThinkingLevel,
   ToolInfo,
   PermissionScope
-} from './types'
+} from '../agent/types'
 import {
   isThinkingLevel,
   SETTING_WELCOME_SUGGESTIONS,
   SETTING_AUTO_COMPRESS_ENABLED,
   SETTING_AUTO_COMPRESS_THRESHOLD,
   DEFAULT_AUTO_COMPRESS_THRESHOLD
-} from './types'
-import { resolveSessionWorkdir } from './workdir'
+} from '../agent/types'
+import { resolveSessionWorkdir } from '../agent/runtime/workdir'
 import { refreshShellEnv } from '../utils/shell-env'
-import { notifyAgentFinished } from '../service/notifier'
+import { notifyAgentFinished } from '../infra/notifier'
 import { isDeepEqual } from '../utils/deep-equal'
 import { estimateTokens, truncateMiddle } from '../utils/token'
 

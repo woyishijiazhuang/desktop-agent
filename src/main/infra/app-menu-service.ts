@@ -1,6 +1,6 @@
 import { app, Menu } from 'electron'
 import { getFocusedAppWindow } from './window-manager'
-import { toggleMainWindow, showMainWindowAnd } from './window-service'
+import { toggleMainWindow, showMainWindowAnd } from '../services/window-service'
 import { createLogger } from '../utils/log'
 
 const log = createLogger('menu')

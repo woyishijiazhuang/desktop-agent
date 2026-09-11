@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { computed, ref } from 'vue'
-import type { UpdatePhase, UpdateState } from '@main/service/update-service'
+import type { UpdatePhase, UpdateState } from '@main/services/update-service'
 import { mainClient } from '../utils/main-client'
 
 /**

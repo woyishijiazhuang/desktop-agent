@@ -1,6 +1,6 @@
-import { db } from '../database'
-import { createLogger } from '../utils/log'
-import { encryptSecret, decryptSecret } from '../utils/safe-key'
+import { db } from '../../database'
+import { createLogger } from '../../utils/log'
+import { encryptSecret, decryptSecret } from '../../utils/safe-key'
 
 const log = createLogger('webSearch')
 

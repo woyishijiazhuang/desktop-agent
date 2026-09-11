@@ -9,9 +9,10 @@ import type {
 } from '@earendil-works/pi-agent-core'
 import type { Api, AssistantMessage, Model } from '@earendil-works/pi-ai'
 import { randomUUID } from 'node:crypto'
+import { extractMessageText } from '@shared/message-text'
 import { db } from '../database'
-import { resolveAssistantCost } from './model-config'
-import { evaluateReadonlyBash, createBeforeToolCallHook } from './permission'
+import { resolveAssistantCost } from './model'
+import { evaluateReadonlyBash, createBeforeToolCallHook } from './runtime/permission'
 import { createLogger } from '../utils/log'
 
 const log = createLogger('subagent')
@@ -189,7 +190,7 @@ export async function runSubagent(
   const unsub = subagent.subscribe((event) => {
     // 流式进度：累计 assistant 文本推给主 Agent 的工具卡片（替换语义）
     if (event.type === 'message_end' && event.message.role === 'assistant') {
-      const text = extractMessageText(event.message.content)
+      const text = extractMessageText(event.message.content, '\n')
       if (text) {
         outputBuffer = outputBuffer ? `${outputBuffer}\n\n${text}` : text
         onUpdate?.(outputBuffer)
@@ -256,15 +257,4 @@ export async function runSubagent(
       error: error || (failed ? '子代理运行失败' : undefined)
     }
   }
-}
-
-/** 从消息 content 中提取纯文本（text block 拼接；供流式进度与结果汇总）。 */
-function extractMessageText(content: unknown): string {
-  if (typeof content === 'string') return content
-  if (!Array.isArray(content)) return ''
-  return content
-    .filter((b): b is { type: string; text?: unknown } => !!b && typeof b === 'object')
-    .map((b) => (b.type === 'text' && typeof b.text === 'string' ? b.text : ''))
-    .join('\n')
-    .trim()
 }

@@ -1,6 +1,6 @@
 import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { listInstalledSkills, listSkillFiles, readSkillFile } from '../skills-store'
+import { listInstalledSkills, listSkillFiles, readSkillFile } from '../skills/skills-store'
 import { createLogger } from '../../utils/log'
 
 const log = createLogger('tool:read_skill')

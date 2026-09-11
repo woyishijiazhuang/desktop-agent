@@ -19,10 +19,10 @@ import {
   type UpdateModelConfigInput,
   type PresetProviderInfo,
   type PresetModelInfo
-} from './model-config'
-import { getModelsInstance } from './models'
+} from '../agent/model'
+import { getModelsInstance } from '../agent/model/models'
 import { createLogger } from '../utils/log'
-import { rendererClient } from '../service/render-client'
+import { rendererClient } from '../infra/render-client'
 
 const log = createLogger('modelConfig')
 

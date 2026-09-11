@@ -11,8 +11,8 @@ import {
   verifyWindowsWfpEgress,
   type SandboxRuntimeConfig
 } from '@anthropic-ai/sandbox-runtime'
-import { db } from '../database'
-import { createLogger } from '../utils/log'
+import { db } from '../../database'
+import { createLogger } from '../../utils/log'
 import { resolveSessionWorkdir } from './workdir'
 import type { BashSandboxWrapper } from './bash-session'
 import {
@@ -22,7 +22,7 @@ import {
   SETTING_SANDBOX_ENABLED,
   SETTING_SANDBOX_NETWORK_ALLOWLIST,
   SETTING_SANDBOX_WRITABLE_ROOTS
-} from './types'
+} from '../types'
 
 const log = createLogger('sandbox')
 

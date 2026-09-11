@@ -1,9 +1,9 @@
 import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { rendererClient } from '../../service/render-client'
+import { rendererClient } from '../../infra/render-client'
 import { createLogger } from '../../utils/log'
 import type { AskUserOption } from '../types'
-import { beginInteraction, getInteractionTimeoutMs } from '../interaction'
+import { beginInteraction, getInteractionTimeoutMs } from '../runtime/interaction'
 
 const log = createLogger('tool:ask_user')
 

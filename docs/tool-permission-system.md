@@ -75,7 +75,7 @@
 
 ## 4. 第 2 层：沙箱文件策略（wrapSandboxFsPolicy）
 
-**源码**：`src/main/agent/tools/index.ts` 第 290–324 行 + `src/main/agent/sandbox.ts`
+**源码**：`src/main/agent/tools/index.ts` 第 290–324 行 + `src/main/agent/runtime/sandbox.ts`
 
 ### 4.1 作用工具
 
@@ -110,7 +110,7 @@ denyReadRoots   = 用户 denyReadRoots 配置
 
 ## 5. 第 3 层：计划模式拦截
 
-**源码**：`src/main/agent/permission.ts` 第 235–247 行
+**源码**：`src/main/agent/runtime/permission.ts` 第 235–247 行
 
 当 `isPlanMode(sessionId) === true` 时：
 
@@ -122,7 +122,7 @@ denyReadRoots   = 用户 denyReadRoots 配置
 
 ## 6. 第 4 层：危险工具权限决策引擎
 
-**源码**：`src/main/agent/permission.ts` `createBeforeToolCallHook`（第 227–317 行）
+**源码**：`src/main/agent/runtime/permission.ts` `createBeforeToolCallHook`（第 227–317 行）
 
 ### 6.1 DANGEROUS_TOOLS 集合
 
@@ -247,7 +247,7 @@ if (!decision.hardAsk && isRunAutoAllowed(sessionId, isVoiceAutoApprove)) return
 
 ## 7. 第 5 层：bash OS 沙箱（SandboxManager）
 
-**源码**：`src/main/agent/sandbox.ts`
+**源码**：`src/main/agent/runtime/sandbox.ts`
 
 当 `sandbox.enabled` 为 true 时，在 bash 命令 spawn 时通过 `createSandboxWrapper` 套入 OS 级沙箱。
 
@@ -369,11 +369,11 @@ if (!decision.hardAsk && isRunAutoAllowed(sessionId, isVoiceAutoApprove)) return
 
 | 文件 | 职责 |
 |------|------|
-| `src/main/agent/permission.ts` | 权限决策引擎（核心）：`createBeforeToolCallHook`、`decideBash`、`decideFile`、`resolvePermission`、`DENY_PATTERNS`、`READONLY_COMMANDS` |
-| `src/main/agent/sandbox.ts` | OS 沙箱封装 + 文件域策略：`getSessionFsPolicy`、`getSessionWriteBoundary`、`isSandboxWriteAllowed`、`SandboxManager`、`resolveSrtWin` |
+| `src/main/agent/runtime/permission.ts` | 权限决策引擎（核心）：`createBeforeToolCallHook`、`decideBash`、`decideFile`、`resolvePermission`、`DENY_PATTERNS`、`READONLY_COMMANDS` |
+| `src/main/agent/runtime/sandbox.ts` | OS 沙箱封装 + 文件域策略：`getSessionFsPolicy`、`getSessionWriteBoundary`、`isSandboxWriteAllowed`、`SandboxManager`、`resolveSrtWin` |
 | `src/main/agent/tools/index.ts` | 工具注册表 + `wrapGate`（启停门控）+ `wrapSandboxFsPolicy`（沙箱文件策略门）+ `buildTools` |
 | `src/main/agent/types.ts` | 类型定义：`PermissionScope`、`InteractionKind`、`SETTING_PERMISSION_AUTO_APPROVE` 等常量 |
-| `src/main/agent/interaction.ts` | 统一交互通道：`beginInteraction`、`respondInteraction`、`clearSessionInteractions` |
-| `src/main/agent/plan-mode.ts` | 计划模式状态管理：`isPlanMode`、`markPlanAutoAllow` |
+| `src/main/agent/runtime/interaction.ts` | 统一交互通道：`beginInteraction`、`respondInteraction`、`clearSessionInteractions` |
+| `src/main/agent/runtime/plan-mode.ts` | 计划模式状态管理：`isPlanMode`、`markPlanAutoAllow` |
 | `src/main/agent/agent-manager.ts` | Agent 生命周期管理，`createBeforeToolCallHook` 的调用点 |
 | `src/main/agent/subagent.ts` | 子代理系统：`planReadonlyHook` + 复用主会话权限钩子 |

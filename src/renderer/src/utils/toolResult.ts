@@ -1,5 +1,5 @@
 import type { ToolResultMessage } from '@earendil-works/pi-ai'
-import { extractMessageText } from './messageText'
+import { extractMessageText } from '@shared/message-text'
 
 /**
  * 工具结果摘要（ToolCallCard / 孤儿结果卡共用）。

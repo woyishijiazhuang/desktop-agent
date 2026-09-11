@@ -5,8 +5,8 @@ import type { UpdateInfo, ProgressInfo } from 'electron-updater'
 import { db } from '../database'
 import { SETTING_AUTO_UPDATE_ENABLED } from '../agent/types'
 import { createLogger } from '../utils/log'
-import { rendererClient } from './render-client'
-import { notifyAgentFinished } from './notifier'
+import { rendererClient } from '../infra/render-client'
+import { notifyAgentFinished } from '../infra/notifier'
 
 const log = createLogger('updater')
 

@@ -1,7 +1,7 @@
 import { app, Menu, Tray, nativeImage } from 'electron'
 import trayColored from '../../../resources/tray-icon.png?asset'
 import trayTemplate from '../../../resources/tray-icon-template.png?asset'
-import { toggleMainWindow, showMainWindowAnd } from './window-service'
+import { toggleMainWindow, showMainWindowAnd } from '../services/window-service'
 import { createLogger } from '../utils/log'
 
 const log = createLogger('tray')

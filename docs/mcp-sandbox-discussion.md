@@ -48,7 +48,7 @@
 |------|------|
 | `src/main/agent/mcp/client.ts` | `buildTransport` 改为创建沙箱包装的 Transport |
 | `src/main/agent/mcp/types.ts` | `McpServerRow` 可能需扩展 `cwd` 字段 |
-| `src/main/agent/sandbox.ts` | 可能需新增 `wrapMcpTransport` 辅助函数 |
+| `src/main/agent/runtime/sandbox.ts` | 可能需新增 `wrapMcpTransport` 辅助函数 |
 | `src/main/database/schema.ts` | `mcp_servers` 表可能需加 `cwd` 列 |
 
 ### 3.2 未解决的问题

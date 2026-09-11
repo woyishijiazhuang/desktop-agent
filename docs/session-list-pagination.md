@@ -219,7 +219,7 @@ searchSessions(query: string, limit = 50): Session[] {
 
 ## 5. IPC 桥接层
 
-### 修改 [db-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/db-service.ts#L86)
+### 修改 [db-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/services/db-service.ts#L86)
 
 ```typescript
 // 新增导入
@@ -627,7 +627,7 @@ async function onSelectHit(hit: MessageSearchHit): Promise<void> {
 
 ### 8.6 孤儿附件清理
 
-**现状**：[attachment.ts#L154](file:///Users/hupengfei/Documents/my-app/src/main/agent/attachment.ts#L154) 调用 `db.listSessions()`
+**现状**：[attachment.ts#L154](file:///Users/hupengfei/Documents/my-app/src/main/agent/context/attachment.ts#L154) 调用 `db.listSessions()`
 
 **影响**：不受影响。`db.listSessions()` 保留全量查询接口。
 
@@ -686,12 +686,12 @@ CREATE INDEX IF NOT EXISTS idx_sessions_title ON sessions(title);
 | `src/main/database/types/session.ts` | 新增类型 | `ListSessionsOptions`、`ListSessionsResult` |
 | `src/main/database/sessions.ts` | 新增方法 | `listSessionsPaged()`、`searchSessions()` |
 | `src/main/database/index.ts` | 无需修改 | `db` 门面自动包含新方法 |
-| `src/main/service/db-service.ts` | 新增方法 | `listSessionsPaged()`、`searchSessions()` + 类型导出 |
+| `src/main/services/db-service.ts` | 新增方法 | `listSessionsPaged()`、`searchSessions()` + 类型导出 |
 | `src/renderer/src/store/useSessionStore.ts` | 重构 | 分页状态管理 + `loadMore()` + `searchSessions()` + `updateOldestCursor()` |
 | `src/renderer/src/components/sidebar/SessionSidebar.vue` | 重构 | IntersectionObserver 哨兵 + 搜索后端化 + 移除前端排序 |
 | `src/renderer/src/views/ChatView.vue` | 无需修改 | `sessions[0]` 仍可用 |
 | `src/renderer/src/store/useChatStore.ts` | 无需修改 | `forkFromMessage` 的 `unshift` 仍可用 |
-| `src/main/agent/attachment.ts` | 无需修改 | 使用 `listSessions()` 全量接口 |
+| `src/main/agent/context/attachment.ts` | 无需修改 | 使用 `listSessions()` 全量接口 |
 
 ---
 

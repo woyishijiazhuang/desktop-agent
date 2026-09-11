@@ -11,7 +11,7 @@ import {
   PinOutline,
   TrashOutline
 } from '@vicons/ionicons5'
-import type { Session } from '@main/service/db-service'
+import type { Session } from '@main/services/db-service'
 
 /**
  * 单个会话行：图标 + 标题 + 置顶标记 + 状态点（待交互/生成中/失败）+ 相对时间 + ⋯ 菜单。

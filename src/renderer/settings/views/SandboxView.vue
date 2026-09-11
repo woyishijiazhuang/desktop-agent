@@ -3,7 +3,7 @@ import { onMounted, ref, watch } from 'vue'
 import { NAlert, NButton, NCard, NInput, NSwitch, NTag, useMessage } from 'naive-ui'
 import { useSettingsStore } from '@renderer/store/useSettingsStore'
 import { mainClient } from '@renderer/utils/main-client'
-import type { SandboxPlatformStatus } from '@main/agent/sandbox'
+import type { SandboxPlatformStatus } from '@main/agent/runtime/sandbox'
 
 /** 沙箱各列表分类的配置（统一编辑区渲染）。 */
 interface ListCat {

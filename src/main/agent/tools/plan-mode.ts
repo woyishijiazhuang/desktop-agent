@@ -1,11 +1,11 @@
 import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
-import { rendererClient } from '../../service/render-client'
+import { rendererClient } from '../../infra/render-client'
 import { db } from '../../database'
 import { createLogger } from '../../utils/log'
 import type { PlanApprovalRequest } from '../types'
-import { setPlanMode, markPlanAutoAllow, seedPlanProgress, applyReportStep } from '../plan-mode'
-import { beginInteraction, getInteractionTimeoutMs } from '../interaction'
+import { setPlanMode, markPlanAutoAllow, seedPlanProgress, applyReportStep } from '../runtime/plan-mode'
+import { beginInteraction, getInteractionTimeoutMs } from '../runtime/interaction'
 
 const log = createLogger('tool:plan_mode')
 

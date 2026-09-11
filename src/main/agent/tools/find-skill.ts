@@ -2,7 +2,7 @@ import { Type } from '@earendil-works/pi-ai'
 import type { AgentTool } from '@earendil-works/pi-agent-core'
 import { db } from '../../database'
 import { createLogger } from '../../utils/log'
-import { listInstalledSkills, slugToId } from '../skills-store'
+import { listInstalledSkills, slugToId } from '../skills/skills-store'
 import {
   DEFAULT_FIND_SKILL_SOURCE,
   FIND_SKILL_SOURCE_LABELS,

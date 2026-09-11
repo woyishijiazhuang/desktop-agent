@@ -8,8 +8,8 @@ import {
   isThemeColorKey,
   type ThemeColorKey,
   type ThemePalette
-} from './theme-palettes'
-import { rendererClientForWorkspace } from './render-client'
+} from '../infra/theme-palettes'
+import { rendererClientForWorkspace } from '../infra/render-client'
 import { createLogger } from '../utils/log'
 
 const log = createLogger('theme')

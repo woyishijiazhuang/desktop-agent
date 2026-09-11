@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
-import type { Session, CreateSessionParams } from '@main/service/db-service'
+import type { Session, CreateSessionParams } from '@main/services/db-service'
 import { mainClient } from '../utils/main-client'
 import { useChatStore } from './useChatStore'
 import { useSettingsStore } from './useSettingsStore'

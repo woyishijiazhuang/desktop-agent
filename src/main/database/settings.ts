@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { SettingRow } from './types'
-import { isThemeColorKey } from '../service/theme-palettes'
+import { isThemeColorKey } from '../infra/theme-palettes'
 import {
   SETTINGS_TAB_KEYS,
   SETTING_VOICE_API_KEY,

@@ -1,7 +1,7 @@
 import { app } from 'electron'
 import { join } from 'node:path'
 import { mkdirSync } from 'node:fs'
-import { db } from '../database'
+import { db } from '../../database'
 
 /**
  * 工作目录解析（会话级）。

@@ -1,6 +1,6 @@
 import type { AgentEvent } from '@earendil-works/pi-agent-core'
 import type { AssistantMessage, ToolCall } from '@earendil-works/pi-ai'
-import { createLogger } from '../utils/log'
+import { createLogger } from '../../utils/log'
 
 const log = createLogger('loop-detector')
 

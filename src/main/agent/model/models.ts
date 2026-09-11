@@ -7,10 +7,10 @@ import {
   type AssistantMessage,
   type Usage
 } from '@earendil-works/pi-ai'
-import type { ModelKey } from './types'
-import { getDecryptedApiKey } from './model-config'
-import { extractMessageText } from '../utils/message-text'
-import { createLogger } from '../utils/log'
+import type { ModelKey } from '../types'
+import { getDecryptedApiKey } from '.'
+import { extractMessageText } from '@shared/message-text'
+import { createLogger } from '../../utils/log'
 
 const log = createLogger('models')
 

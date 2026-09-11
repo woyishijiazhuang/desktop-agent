@@ -5,23 +5,23 @@ import { electronApp } from '@electron-toolkit/utils'
 // 「DOMMatrix is not defined」。mdize 惰性加载，此处先注入即可覆盖后续所有文档解析。
 import DOMMatrixPolyfill from '@thednp/dommatrix'
 import { performance } from 'node:perf_hooks'
-import { ipcMainServices } from './service'
+import { ipcMainServices } from './services'
 import {
   getActiveWorkspaceWindow,
   markQuitting,
   restoreStartupWindows
-} from './service/window-manager'
-import { applyStoredThemeMode } from './service/theme-service'
-import { createTray } from './service/tray-service'
-import { createAppMenu } from './service/app-menu-service'
-import { initAutoUpdateService } from './service/update-service'
-import { registerVoiceAssetScheme, installVoiceAssetProtocol } from './service/asset-protocol'
+} from './infra/window-manager'
+import { applyStoredThemeMode } from './services/theme-service'
+import { createTray } from './infra/tray-service'
+import { createAppMenu } from './infra/app-menu-service'
+import { initAutoUpdateService } from './services/update-service'
+import { registerVoiceAssetScheme, installVoiceAssetProtocol } from './infra/asset-protocol'
 import icon from '../../resources/icon.png?asset'
 // 副作用：初始化主进程文件日志（electron-log，捕获 console 写入 userData/logs/main.log）
 import { createLogger } from './utils/log'
-import { cleanupOrphanAttachments } from './agent/attachment'
-import { bashSessionManager } from './agent/bash-session'
-import { seedBuiltinSkills } from './agent/skills-store'
+import { cleanupOrphanAttachments } from './agent/context/attachment'
+import { bashSessionManager } from './agent/runtime/bash-session'
+import { seedBuiltinSkills } from './agent/skills/skills-store'
 import { SETTING_CLOSE_TO_TRAY } from './agent/types'
 import { db } from './database'
 

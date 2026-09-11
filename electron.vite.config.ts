@@ -10,7 +10,8 @@ import type { Plugin } from 'vite'
 const alias = {
   '@main': resolve('src/main'),
   '@preload': resolve('src/preload'),
-  '@renderer': resolve('src/renderer/src')
+  '@renderer': resolve('src/renderer/src'),
+  '@shared': resolve('src/shared')
 }
 
 /**

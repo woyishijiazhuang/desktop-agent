@@ -9,7 +9,7 @@ import {
   type AppWindow,
   type ViewTarget
 } from './window-manager'
-import { resolveSessionWorkdir } from '../agent/workdir'
+import { resolveSessionWorkdir } from '../agent/runtime/workdir'
 
 /**
  * 与 electron-ipc-service 的 renderer 侧约定的推送通道常量。

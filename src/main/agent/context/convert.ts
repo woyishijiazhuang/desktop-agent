@@ -7,7 +7,7 @@ import type {
   TextContent,
   ImageContent
 } from '@earendil-works/pi-ai'
-import type { Message as DbMessage, CreateMessageParams, MessageMetadata } from '../database'
+import type { Message as DbMessage, CreateMessageParams, MessageMetadata } from '../../database'
 import {
   saveImageAttachment,
   isLocalFileRef,

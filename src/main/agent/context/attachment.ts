@@ -1,8 +1,8 @@
 import { app } from 'electron'
 import { join, extname } from 'node:path'
 import { mkdir, writeFile, readFile, rm, readdir, copyFile } from 'node:fs/promises'
-import { db } from '../database'
-import { createLogger } from '../utils/log'
+import { db } from '../../database'
+import { createLogger } from '../../utils/log'
 
 const log = createLogger('attachment')
 

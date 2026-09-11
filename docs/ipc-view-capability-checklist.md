@@ -3,7 +3,7 @@
 > 记录时间：2026-09-04
 > 状态：**已实施**（2026-09 落地，设置窗口独立入口已随之上线，见 [first-paint-strategy.md](first-paint-strategy.md) 方案二）
 > 背景：为保证「设置窗口独立入口」拆分不被 IPC 投递架构卡住，先行铺路：把 main 侧「内容视图=全量注册」的隐含假设收敛为可扩展的能力决策点，并给渲染层加容错守卫。原计划本期不拆设置窗口，随后已一并落地。
-> 前置上下文：render-client 推送目标已改为从 header 视图骨架类自动推导（见 [render-client.ts](../src/main/service/render-client.ts) 顶部注释），不再维护手写 VIEW_ROUTES。
+> 前置上下文：render-client 推送目标已改为从 header 视图骨架类自动推导（见 [render-client.ts](../src/main/infra/render-client.ts) 顶部注释），不再维护手写 VIEW_ROUTES。
 
 ---
 
@@ -45,8 +45,8 @@
 
 | # | 改动 | 位置 |
 |---|---|---|
-| B1 | `deliver` 中 `service === 'agentEvent'` 的兜底分支（sessionId 解析不到时）改为只遍历工作区窗口的 content 投递，不再发设置窗口 | `src/main/service/render-client.ts` `deliver` |
-| B2 | 提取 `broadcastToWorkspaceViews(channel, message, target)`，让 B1 与已有 `deliverBackgroundSessions`（[render-client.ts](../src/main/service/render-client.ts)）共用，避免两处各写一套遍历 | `src/main/service/window-manager.ts`（或 render-client 内部） |
+| B1 | `deliver` 中 `service === 'agentEvent'` 的兜底分支（sessionId 解析不到时）改为只遍历工作区窗口的 content 投递，不再发设置窗口 | `src/main/infra/render-client.ts` `deliver` |
+| B2 | 提取 `broadcastToWorkspaceViews(channel, message, target)`，让 B1 与已有 `deliverBackgroundSessions`（[render-client.ts](../src/main/infra/render-client.ts)）共用，避免两处各写一套遍历 | `src/main/infra/window-manager.ts`（或 render-client 内部） |
 
 ## 4. C. 视图能力模型建缝（本期只加结构）
 
@@ -54,7 +54,7 @@
 
 | # | 改动 | 位置 |
 |---|---|---|
-| C1 | 新增 `collectContentTargets(service, method): AppWindow[]`：默认返回全部应用窗口；`agentEvent.*` 返回工作区窗口（服务化 B1 收敛逻辑）；header 可达性（`headerReachableMethods`）判定保留不动 | `src/main/service/render-client.ts` |
+| C1 | 新增 `collectContentTargets(service, method): AppWindow[]`：默认返回全部应用窗口；`agentEvent.*` 返回工作区窗口（服务化 B1 收敛逻辑）；header 可达性（`headerReachableMethods`）判定保留不动 | `src/main/infra/render-client.ts` |
 | C2 | `deliver` 兜底分支与相关广播改走 C1，消除散落的窗口集合判断 | 同上 |
 | C3 | 在 C1 上方注释写明契约：**拆设置窗口时唯一增量 = 给设置入口加能力骨架（仿 [header-view-services.ts](../src/renderer/src/service/header-view-services.ts)）并在 `collectContentTargets` 追加「settings 内容视图只收 X 集合」过滤**；本期 settings==full SPA，无需任何枚举 | 同上 |
 
@@ -79,7 +79,7 @@ C 的缝已验证够用，实际按此执行并落地：
 
 1. 设置入口注册裁剪为子集（settings-sync / theme-sync / model-config-sync / ui / updateEvents，见 [settings/main.ts](../src/renderer/settings/main.ts)）；
 2. settings 侧直接以 `initializeSafeRendererServices` 注入裁剪集（未再单独建骨架模块，守卫本身即为裁剪注册入口）；
-3. `collectContentTargets` 以 `service === 'agentEvent'` 过滤 settings（见 [render-client.ts](../src/main/service/render-client.ts)）；A 的守卫兜底保留作保险。
+3. `collectContentTargets` 以 `service === 'agentEvent'` 过滤 settings（见 [render-client.ts](../src/main/infra/render-client.ts)）；A 的守卫兜底保留作保险。
 
 ---
 

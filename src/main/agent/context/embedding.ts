@@ -1,9 +1,9 @@
 import { safeStorage } from 'electron'
-import { db } from '../database'
-import { getDecryptedApiKey } from './model-config'
-import { findBuiltinModel } from './model-config/preset-catalog'
-import { SETTING_KB_EMBEDDING_CONFIG } from './types'
-import { createLogger } from '../utils/log'
+import { db } from '../../database'
+import { getDecryptedApiKey } from '../model'
+import { findBuiltinModel } from '../model/preset-catalog'
+import { SETTING_KB_EMBEDDING_CONFIG } from '../types'
+import { createLogger } from '../../utils/log'
 
 const log = createLogger('embedding')
 

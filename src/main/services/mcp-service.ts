@@ -1,15 +1,15 @@
 import { IpcService } from 'electron-ipc-service'
-import { db } from '../../database'
-import type { CreateMcpServerParams, UpdateMcpServerParams } from '../../database'
-import { mcpManager } from './index'
-import { seedBuiltinMcpServers } from './presets'
-import { createLogger } from '../../utils/log'
+import { db } from '../database'
+import type { CreateMcpServerParams, UpdateMcpServerParams } from '../database'
+import { mcpManager } from '../agent/mcp/index'
+import { seedBuiltinMcpServers } from '../agent/mcp/presets'
+import { createLogger } from '../utils/log'
 import {
   rowToConfig,
   type McpServerConfig,
   type McpServerStatus,
   type McpTestResult
-} from './types'
+} from '../agent/mcp/types'
 
 const log = createLogger('mcp')
 

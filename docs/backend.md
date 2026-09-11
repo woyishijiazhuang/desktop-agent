@@ -84,11 +84,12 @@
 
 采用**基于服务类的声明式 IPC**。每个服务继承 `IpcService`，声明静态 `namespace`，其 public 方法即暴露给另一进程的 IPC 方法，方法名约定为 `namespace.method`。
 
-**主进程服务注册**（[service/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/index.ts)）：
+**主进程服务注册**（[services/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/services/index.ts)）：
 
 ```ts
 export const ipcMainServices = initializeIpcMainServices([
-  AppService, DbService, WindowService, AgentService, McpService, ModelConfigService
+  AppService, DbService, WindowService, ThemeService, AgentService, McpService,
+  ModelConfigService, KnowledgeService, BashService, WorkspaceService, VoiceService, UpdateService
 ])
 ```
 
@@ -118,20 +119,16 @@ src/
 ├── main/                          # Electron 主进程
 │   ├── index.ts                   # 主进程入口（窗口/托盘/菜单/崩溃收集/附件清理）
 │   ├── env.d.ts                   # Vite 类型声明（?asset 模块）
-│   ├── agent/                     # Agent 子系统
+│   ├── agent/                     # Agent 子系统（领域逻辑）
 │   │   ├── agent-manager.ts       # Agent 实例生命周期（LRU 8、两阶段锁、事件桥、标题生成）
-│   │   ├── agent-service.ts       # AgentService IPC（对话控制/压缩/文档解析/技能/白名单）
-│   │   ├── model-config-service.ts# ModelConfigService IPC（模型配置 CRUD/预置目录/测试）
-│   │   ├── model-config.ts        # model-config/ 门面（保持旧 import 路径）
-│   │   ├── model-config/          # 加解密/脱敏/预置目录/定价/注册/测试
-│   │   ├── mcp/                   # MCP 客户端（client/index/service/schema/utils/test/types）
-│   │   ├── skills-store.ts        # 技能存储与安装（manifest + 目录管理）
-│   │   ├── attachment.ts          # 附件存储（图片落盘/file 引用/孤儿清理）
-│   │   ├── convert.ts             # AgentMessage ↔ DB 行互转 + 图片落盘还原
-│   │   ├── models.ts              # 运行时 Models 集合单例 + completeText
-│   │   ├── permission.ts          # 危险工具权限钩子 + bash 白名单
+│   │   ├── subagent.ts            # 子代理（task 工具）：plan/general 独立上下文执行
 │   │   ├── types.ts               # 共享类型 + 系统提示构建 + SETTING_* 常量
-│   │   └── tools/                 # 内置工具实现（10 个文件）
+│   │   ├── context/               # 上下文与附件：attachment / convert / embedding / agent-md
+│   │   ├── model/                 # 模型域：crypto/mappers/preset-catalog/pricing/register/test/models/web-search-config（index.ts 门面）
+│   │   ├── runtime/               # 会话运行时与安全：interaction/plan-mode/ask-user/permission/sandbox/bash-session/workdir/loop-detector
+│   │   ├── skills/                # 技能存储与安装（skills-store.ts）
+│   │   ├── mcp/                   # MCP 客户端（client/index/presets/utils/test/types）
+│   │   └── tools/                 # 内置工具实现
 │   ├── database/                  # SQLite 数据层
 │   │   ├── index.ts               # 单例门面 db（按域组装 + 启动清理）
 │   │   ├── schema.ts              # 建表/索引/轻量列清理
@@ -141,26 +138,44 @@ src/
 │   │   ├── settings.ts            # 设置项（写入白名单校验）
 │   │   ├── mcp-servers.ts         # MCP 服务器配置 CRUD
 │   │   ├── memory.ts              # 长期记忆 CRUD + 检索注入 + FTS
+│   │   ├── knowledge.ts           # 知识库文档/切片
+│   │   ├── workspaces.ts          # 工作区 CRUD
 │   │   ├── usage.ts               # 用量日志 + 统计聚合
 │   │   ├── fts.ts                 # 2-gram 分词/索引/查询/摘要片段
 │   │   ├── utils.ts               # 事务包装 + 行→对象映射
 │   │   └── types/                 # 各域类型定义
-│   ├── service/                   # IPC 服务层与窗口管理
+│   ├── services/                  # IPC 服务层（IpcService）
 │   │   ├── index.ts               # 注册全部主进程 IPC 服务
-│   │   ├── app-service.ts         # 应用级服务（版本/外链/开机自启/诊断）
-│   │   ├── db-service.ts          # 数据库 CRUD IPC 薄封装
-│   │   ├── window-service.ts      # 窗口控制服务（含置顶/标题栏模式）
+│   │   ├── agent-service.ts       # namespace agent（对话控制/压缩/技能/权限）
+│   │   ├── model-config-service.ts# namespace modelConfig
+│   │   ├── mcp-service.ts         # namespace mcp
+│   │   ├── app-service.ts         # namespace app
+│   │   ├── db-service.ts          # namespace db
+│   │   ├── window-service.ts      # namespace window
+│   │   ├── theme-service.ts       # namespace theme
+│   │   ├── update-service.ts      # namespace update
+│   │   ├── bash-service.ts        # namespace bash
+│   │   ├── workspace-service.ts   # namespace workspace
+│   │   ├── knowledge-service.ts   # namespace knowledge
+│   │   └── voice-service.ts       # namespace voice
+│   ├── infra/                     # 非 IPC 基础设施
 │   │   ├── window-manager.ts      # BaseWindow + 双视图管理
+│   │   ├── render-client.ts       # 主进程 → 渲染进程 IPC 客户端（Proxy 广播）
+│   │   ├── notifier.ts            # 系统通知
 │   │   ├── tray-service.ts        # 系统托盘
-│   │   └── app-menu-service.ts    # 应用菜单 + Dock 右键菜单
-│   └── utils/
+│   │   ├── app-menu-service.ts    # 应用菜单 + Dock 右键菜单
+│   │   ├── asset-protocol.ts      # 自定义资源协议
+│   │   ├── theme-palettes.ts      # 主题调色板
+│   │   └── ipc-scope.ts           # 工作区作用域包装
+│   └── utils/                     # 纯工具函数
 │       ├── log.ts                 # electron-log 文件日志（createLogger）
-│       ├── render-client.ts       # 主进程 → 渲染进程 IPC 客户端（Proxy 广播）
-│       ├── message-text.ts        # 消息文本提取
-│       └── doc-parser.ts          # 文档解析（mdize 惰性加载）
+│       ├── doc-parser.ts          # 文档解析（mdize 惰性加载）
+│       └── ...                    # deep-equal / file-url / safe-key / shell-env / token
 ├── preload/
 │   ├── index.ts                   # IPC 桥 + contextBridge
 │   └── globals.d.ts               # Window.electron 全局类型
+├── shared/                        # main / renderer 共享纯函数与类型
+│   └── message-text.ts            # extractMessageText（消息文本提取）
 └── ... (renderer 见前端文档)
 ```
 
@@ -198,7 +213,7 @@ src/
 
 **关键设计**：`Map<sessionId, Agent>` + LRU 数组 + 轮次计数 + 串行化锁。`getOrCreateAgent` 快速路径（缓存命中完全并发）/ 慢路径（`withCreateLock` 串行化 + 双重检查）。`bridgeEvents` 统一处理轮次超限（`maxTurnsPerRun`，默认 40）、空错误载体过滤、message_end 落库 + usage 记录、agent_end 推送完整 transcript。`generateTitle` 仅默认标题「新会话」时用首条用户消息生成，与回复并行；写入前重读标题防覆盖用户手动重命名。系统提示词在会话首次创建 Agent 时组装并固化进 `sessions.resolved_system_prompt` 快照（时间/记忆等一次固定），重建直接复用以命中 LLM 前缀缓存；`endedRuns` 记录已收到 agent_end 的会话（prompt 兜底 catch 避免重复补发覆盖错误态）、`lruPaused` 记录被 LRU 满暂停的会话（agent_end 携带提示文案）。
 
-#### [agent-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/agent-service.ts)
+#### [services/agent-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/services/agent-service.ts)
 
 **角色**：AgentService IPC 服务（namespace `agent`），对话控制、压缩、事件桥、模型配置管理入口、技能、权限、文档解析等。
 
@@ -232,7 +247,7 @@ src/
 
 **事件推送**（经 rendererClient）：`agentEvent.onEvent`、`agentEvent.onSessionUpdate`、`agentEvent.onPermissionRequest`。
 
-#### [model-config-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/model-config-service.ts)
+#### [services/model-config-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/services/model-config-service.ts)
 
 **角色**：ModelConfigService IPC 服务（namespace `modelConfig`），模型配置管理。每次变更同步注册/注销运行时 provider。
 
@@ -247,7 +262,7 @@ src/
 | `listPresetModels(providerId)` | 某服务商的预置模型列表 |
 | `listPresetModelsOnline(providerId, apiKey)` | 在线拉取服务商 /models（apiKey 仅透传不落库） |
 
-#### [model-config/](file:///Users/hupengfei/Documents/my-app/src/main/agent/model-config/) 目录
+#### [agent/model/](file:///Users/hupengfei/Documents/my-app/src/main/agent/model/) 目录
 
 - **crypto.ts**：`getDecryptedApiKey` / `setConfigApiKey` / `clearConfigApiKey`（safeStorage 加密存 DB）。
 - **mappers.ts**：`ModelConfigSummary`（脱敏，无密文）、`CreateModelConfigInput`、`UpdateModelConfigInput`、`toSummary`/`toCreateParams`/`toUpdateParams`。
@@ -260,28 +275,29 @@ src/
 
 - **client.ts**：`connectMcpServer` / `callMcpTool`，stdio（`StdioClientTransport`）与 streamable HTTP（`StreamableHTTPClientTransport`）双传输，连接/拉工具带超时（`CONNECT_TIMEOUT_MS=8000`、`LIST_TOOLS_TIMEOUT_MS=8000`）。
 - **index.ts**：`mcpManager` 单例，维护每 server 连接；`reload` 先断开全部再并行重连；`getTools` 惰性连接并把工具转 AgentTool（工具名加 `{safeName}_` 前缀防冲突）；`getStatus` 供设置页。
-- **service.ts**：`McpService`（namespace `mcp`）——`listServers` / `createServer` / `updateServer` / `setEnabled` / `deleteServer` / `getStatus` / `testConnection` / `connectAll`；变更后 reload 连接池 + 触发 `onConfigChanged`。
-- **schema.ts**：JSON Schema → TypeBox 转换（`jsonSchemaToType`）。
+- **services/mcp-service.ts**：`McpService`（namespace `mcp`）——`listServers` / `createServer` / `updateServer` / `setEnabled` / `deleteServer` / `getStatus` / `testConnection` / `connectAll`；变更后 reload 连接池；启动时 `seedBuiltinMcpServers` 播种内置预设。
+- **presets.ts**：内置 MCP 预设（Playwright/Computer Use/Context7/GitHub），`getBuiltinMcpPresets` / `seedBuiltinMcpServers`。
+- **types.ts**：`McpServerConfig` / `McpServerStatus` / `McpToolDescriptor` / `McpTestResult` / `BuiltinMcpPreset` 与 `rowToConfig` 行映射。
 - **utils.ts**：`withTimeout` / `safeName`（server 名净化做工具前缀）/ `mcpResultToContent`（结果 → pi-ai content blocks）。
 - **test.ts**：`testMcpConnection`（试连不落池）。
 
-#### [skills-store.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/skills-store.ts)
+#### [skills/skills-store.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/skills/skills-store.ts)
 
 **角色**：技能存储与市场安装。技能落盘 `{userData}/skills/{id}/`，manifest.json 记录。`installSkill` 支持字节（SKILL.md 文本）/ 腾讯（zip 安全解压，10MB/300 文件上限、防路径穿越）。`readSkillFile` 白名单防目录穿越、512KB 上限、NUL 字节检测。
 
-#### [attachment.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/attachment.ts)
+#### [context/attachment.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/context/attachment.ts)
 
 **角色**：本地附件存储。目录 `{userData}/attachments/{sessionId}/{uuid}.{ext}`；DB 中 image block 的 data 为 `file:{sessionId}/{uuid}.{ext}` 引用；`cleanupOrphanAttachments` 清理回收站软删会话到期/清空后残留的附件目录。
 
-#### [convert.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/convert.ts)
+#### [context/convert.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/context/convert.ts)
 
 **角色**：AgentMessage ↔ DB 行互转 + 图片附件落盘/还原。`persistMessageImages`（base64→file 引用）、`rowsToAgentMessages`（file 引用→base64 还原）。custom 消息整条序列化；assistant 的 api/provider/usage 快照存 metadata；token 用量统一走 usage_logs。
 
-#### [models.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/models.ts)
+#### [model/models.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/model/models.ts)
 
 **角色**：运行时 Models 集合单例与一次性文本补全。空集合启动，仅注册用户添加的 model_configs（不装 builtin 避免污染选择器）；`completeText` 供标题生成/压缩摘要用。
 
-#### [permission.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/permission.ts)
+#### [runtime/permission.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/runtime/permission.ts)
 
 **角色**：危险工具权限拦截钩子 + bash 白名单。判定顺序：deny（破坏性命令正则）> 只读命令自动放行 > 持久白名单 > 会话放行 > 弹窗确认。`always` 作用域仅 bash 且 denyHit=false 时写入白名单。
 
@@ -307,49 +323,53 @@ src/
 | memory.ts | `list_memories` / `add_memory` / `update_memory` / `delete_memory` | 长期记忆四件套（总量上限 20 条 / 3000 字 / 单条 200 字，超限拒绝写入） | parallel | ✅（受 memoryEnabled） |
 | web-search-config.ts | —（非工具） | Tavily API Key 加密存取 | — | — |
 
-### 4.5 服务层（service）
+### 4.5 服务层（services）与基础设施（infra）
 
-#### [service/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/index.ts)
+#### [services/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/services/index.ts)
 
-注册 6 个 IPC 服务并接线 MCP 变更 → 驱逐全部 Agent（见 [第 2 节](#2-进程架构与双向-ipc)）。
+注册 12 个 IPC 服务，并接线工作区删除 → 驱逐其会话 Agent、窗口关闭守卫（见 [第 2 节](#2-进程架构与双向-ipc)）。
 
-#### [service/app-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/app-service.ts)
+#### [services/app-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/services/app-service.ts)
 
 **namespace `app`**：`getAppVersion`、`openExternal`（仅放行 http/https）、`getAutoLaunch`/`setAutoLaunch`（开机自启）、`getDiagnosticsInfo`（日志/崩溃目录）、`openDiagnosticsDir('logs'|'crashes')`（白名单目录）、`clearLogs`。
 
-#### [service/db-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/db-service.ts)
+#### [services/db-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/services/db-service.ts)
 
 **namespace `db`**：会话/消息/设置/压缩/上下文/回收站/全文搜索/记忆/用量/导出完整 CRUD 薄封装；`forkSession` 后复制图片附件文件到新会话目录并改写 `file:` 引用；`exportSession(sessionId, format)`（markdown/json，系统保存对话框）。**模型配置与加密 key 不在此暴露**（由 model-config 直接操作 db 单例），避免渲染进程接触加密 key。
 
-#### [service/window-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/window-service.ts)
+#### [services/window-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/services/window-service.ts)
 
 **namespace `window`**：`initWindow`（幂等绑定窗口事件 + 返回当前状态）、`setBackgroundColor`（与渲染层主题背景对齐，防 resize 闪白）、`triggerWindowAction`（hide/show/close/maximize/minimize/fullscreen/always-on-top/native-title-bar 等 12 种动作）。置顶动作持久化到 settings `window.alwaysOnTop`（启动时由 main 恢复）；native/custom 标题栏切换写 `window.titleBarMode` 后 `setImmediate(recreateMainWindow())`。窗口事件变化经 `rendererClient.ui.windowStateChange` 广播。
 
-#### [service/window-manager.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/window-manager.ts)
+#### [infra/window-manager.ts](file:///Users/hupengfei/Documents/my-app/src/main/infra/window-manager.ts)
 
 **角色**：BaseWindow + 双 WebContentsView 管理（架构见 [第 2 节](#2-进程架构与双向-ipc)）。导出 `HEADER_HEIGHT=32`、`createMainWindow`、`recreateMainWindow`（标题栏模式切换，保留位置尺寸）、`getMainWindow/getHeaderView/getContentView/getWindowByWebContents/broadcastToAllViews/ensureMainWindow/markQuitting`。初始尺寸按主屏工作区等比（宽 ~66%、高 ~72%，960~1800/680~1200 约束，居中）。`win.on('close')` 拦截：`quitting` 为 false 且开启「关闭到托盘」时 preventDefault + hide。两视图都挂 `optimizer.watchWindowShortcuts`。
 
-#### [service/tray-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/tray-service.ts)
+#### [infra/tray-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/infra/tray-service.ts)
 
 `createTray()`：托盘图标单张 @2x 源图运行时派生 @1x（macOS template 图自动着色，其余平台彩色徽章）。菜单：显示/隐藏、新建对话、打开设置、退出。非 macOS 点击图标切换显隐。
 
-#### [service/app-menu-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/service/app-menu-service.ts)
+#### [infra/app-menu-service.ts](file:///Users/hupengfei/Documents/my-app/src/main/infra/app-menu-service.ts)
 
 `createAppMenu()`：替换默认英文菜单（补齐 macOS 标准应用菜单 + 编辑菜单，保证 Cmd+C/V/X 等剪贴板快捷键生效）。结构：macOS 应用菜单（关于/隐藏/退出）+「操作」菜单（显示/隐藏、新建对话、打开设置 → `rendererClient.ui.trayAction`）+「编辑」+「视图」（含「标题栏开发者工具」toggleDevTools 到 headerView）+ macOS「窗口」菜单。同时设置 Dock 右键菜单。
 
-### 4.6 工具函数（utils）
+#### [infra/](file:///Users/hupengfei/Documents/my-app/src/main/infra/) 其余非 IPC 基础设施
+
+- **render-client.ts**：主进程 → 渲染进程广播客户端（Proxy 自建，见 [第 2 节](#2-进程架构与双向-ipc)）。
+- **notifier.ts**：系统通知封装。
+- **asset-protocol.ts**：自定义资源协议注册与解析。
+- **theme-palettes.ts**：主题调色板定义（main/renderer 共用数据源）。
+- **ipc-scope.ts**：工作区作用域方法包装（`withWorkspaceScope`）。
+
+### 4.6 工具函数（utils）与共享层（shared）
 
 #### [utils/log.ts](file:///Users/hupengfei/Documents/my-app/src/main/utils/log.ts)
 
 electron-log 文件日志。`log.initialize({ spyRendererConsole: true })`（捕获渲染/preload console）+ `errorHandler.startCatching`（未捕获异常落盘）。文件 level 'silly'、单文件 5MB 轮转。导出 `createLogger(scope)`（模块标签）、`getLogFilePath()`、`clearLogFile()`。
 
-#### [utils/render-client.ts](file:///Users/hupengfei/Documents/my-app/src/main/utils/render-client.ts)
+#### [shared/message-text.ts](file:///Users/hupengfei/Documents/my-app/src/shared/message-text.ts)
 
-主进程 → 渲染进程广播客户端（Proxy 自建，见 [第 2 节](#2-进程架构与双向-ipc)）。
-
-#### [utils/message-text.ts](file:///Users/hupengfei/Documents/my-app/src/main/utils/message-text.ts)
-
-`extractMessageText(content)`：从 string 或 block 数组提取纯文本（拼接全部 text block），供标题生成/压缩摘要/会话导出复用。
+`extractMessageText(content, separator?)`：从 string 或 block 数组提取纯文本（拼接全部 text block），供标题生成/压缩摘要/会话导出/子代理进度等 main 与 renderer 两侧场景复用。
 
 #### [utils/doc-parser.ts](file:///Users/hupengfei/Documents/my-app/src/main/utils/doc-parser.ts)
 

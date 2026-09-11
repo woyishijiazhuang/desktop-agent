@@ -5,9 +5,9 @@ import {
   openWorkspaceWindow,
   closeWorkspaceWindow,
   forceCloseWorkspaceWindow
-} from './window-manager'
-import { deleteSessionAttachments } from '../agent/attachment'
-import { readAgentMdRaw, writeAgentMd } from '../agent/agent-md'
+} from '../infra/window-manager'
+import { deleteSessionAttachments } from '../agent/context/attachment'
+import { readAgentMdRaw, writeAgentMd } from '../agent/context/agent-md'
 import { createLogger } from '../utils/log'
 import type { Workspace, WorkspaceWithStats } from '../database'
 

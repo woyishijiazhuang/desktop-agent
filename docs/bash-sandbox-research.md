@@ -12,8 +12,8 @@
 
 ### 1.1 现状
 
-- bash 工具以**用户全权限直跑**：持久 shell 由 `src/main/agent/bash-session.ts` 的 `ensureStarted()` 一处 spawn（后台任务由 `startBackground()` 另一处 spawn），命令以应用真实身份执行，可读写任何文件。
-- 现有防线只有**应用层策略**（`src/main/agent/permission.ts`）：危险命令人工确认、只读命令自动放行、持久白名单、DENY_PATTERNS、计划模式拦截。**本质是「防呆」，不是「隔离」**——复合命令/变量/脚本可绕过词级匹配，恶意代码直接穿透。
+- bash 工具以**用户全权限直跑**：持久 shell 由 `src/main/agent/runtime/bash-session.ts` 的 `ensureStarted()` 一处 spawn（后台任务由 `startBackground()` 另一处 spawn），命令以应用真实身份执行，可读写任何文件。
+- 现有防线只有**应用层策略**（`src/main/agent/runtime/permission.ts`）：危险命令人工确认、只读命令自动放行、持久白名单、DENY_PATTERNS、计划模式拦截。**本质是「防呆」，不是「隔离」**——复合命令/变量/脚本可绕过词级匹配，恶意代码直接穿透。
 
 ### 1.2 核心认知（来自讨论的关键结论）
 
@@ -250,7 +250,7 @@ arapuca run -v /path/to/workspace \
 
 **接线方式**
 
-- **bash 域（OS 级）**：[bash-session.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/bash-session.ts) 注入 `BashSandboxWrapper` 钩子；`ensureStarted`/`startBackground` 改为支持异步包装，spawn 时整体套 Seatbelt（macOS）/bwrap（Linux）/AppContainer（Windows）。工作区可写根取「该次 spawn 的 cwd」（会话动态）。默认可写额外包含各平台临时目录（`platformTempPaths`）。fail-closed：包装失败即抛错拒绝执行。
+- **bash 域（OS 级）**：[bash-session.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/runtime/bash-session.ts) 注入 `BashSandboxWrapper` 钩子；`ensureStarted`/`startBackground` 改为支持异步包装，spawn 时整体套 Seatbelt（macOS）/bwrap（Linux）/AppContainer（Windows）。工作区可写根取「该次 spawn 的 cwd」（会话动态）。默认可写额外包含各平台临时目录（`platformTempPaths`）。fail-closed：包装失败即抛错拒绝执行。
 - **文件域（应用层路径判定，与 bash 同一边界）**：[tools/index.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/tools/index.ts) 的 `wrapSandboxFsPolicy` 拦截写工具（`write_file`/`edit_file`/`download`，目标须在工作区+可写目录+临时目录内）与读工具（`read_file`，命中禁读目录拒绝）；`grep` 在扫描时过滤禁读目录内文件。关闭沙箱时零拦截。
 - **平台状态与 Windows 供给**：`agent.getSandboxStatus` 探测后端就绪度（mac 恒可用 / Linux 检测 bwrap / Windows 检测供给），设置页给 Linux 安装命令引导与 Windows「安装沙箱组件」按钮（一次 UAC）；electron-builder `extraResources` 携带 `srt-win`/`seccomp` helper，打包环境自动定位（`windows.srtWin.path`/`seccomp.applyPath`）。
 

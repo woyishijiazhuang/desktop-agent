@@ -1,5 +1,5 @@
 import { IpcService, useIpcMainContext } from 'electron-ipc-service'
-import { rendererClientFor } from './render-client'
+import { rendererClientFor } from '../infra/render-client'
 import { db, resolveDefaultWorkdir } from '../database'
 import {
   getAppWindowByWebContents,
@@ -9,7 +9,7 @@ import {
   recreateAllWindows,
   setAlwaysOnTop,
   type AppWindow
-} from './window-manager'
+} from '../infra/window-manager'
 import { SETTING_TITLE_BAR_MODE, SETTING_SETTINGS_TAB, type TitleBarMode } from '../agent/types'
 import type { SettingsTabKey } from '@renderer/service/ui-service'
 import { createLogger } from '../utils/log'

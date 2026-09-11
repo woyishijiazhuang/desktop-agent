@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { db } from '../database'
-import { SETTING_AGENT_MD_INJECTION_CHARS } from './types'
+import { db } from '../../database'
+import { SETTING_AGENT_MD_INJECTION_CHARS } from '../types'
 
 /** agent.md 注入系统提示词的上限默认值（字符）：常驻上下文摘要，超限截断提示按需 read_file。 */
 export const DEFAULT_AGENT_MD_MAX_CHARS = 8192

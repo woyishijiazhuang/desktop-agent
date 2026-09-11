@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto'
-import { db } from '../database'
-import { createLogger } from '../utils/log'
-import type { InteractionKind } from './types'
-import { SETTING_PERMISSION_TIMEOUT_SEC, DEFAULT_PERMISSION_TIMEOUT_SEC } from './types'
+import { db } from '../../database'
+import { createLogger } from '../../utils/log'
+import type { InteractionKind } from '../types'
+import { SETTING_PERMISSION_TIMEOUT_SEC, DEFAULT_PERMISSION_TIMEOUT_SEC } from '../types'
 
 const log = createLogger('interaction')
 

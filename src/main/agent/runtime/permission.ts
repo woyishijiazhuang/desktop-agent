@@ -1,7 +1,7 @@
 import type { BeforeToolCallContext, BeforeToolCallResult } from '@earendil-works/pi-agent-core'
-import { rendererClient } from '../service/render-client'
-import { db } from '../database'
-import { createLogger } from '../utils/log'
+import { rendererClient } from '../../infra/render-client'
+import { db } from '../../database'
+import { createLogger } from '../../utils/log'
 import { isPlanMode, isPlanRunAutoAllow } from './plan-mode'
 import {
   getSessionWriteBoundary,
@@ -16,8 +16,8 @@ import {
   getInteractionCtx,
   getInteractionTimeoutMs
 } from './interaction'
-import type { PermissionScope } from './types'
-import { SETTING_PERMISSION_AUTO_APPROVE } from './types'
+import type { PermissionScope } from '../types'
+import { SETTING_PERMISSION_AUTO_APPROVE } from '../types'
 
 const log = createLogger('permission')
 

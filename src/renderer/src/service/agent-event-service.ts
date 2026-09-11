@@ -5,9 +5,9 @@ import { useInteractionStore } from '../store/useInteractionStore'
 import { usePlanStore } from '../store/usePlanStore'
 import { useSessionStore } from '../store/useSessionStore'
 import { useBackgroundStore } from '../store/useBackgroundStore'
-import type { Session } from '@main/service/db-service'
+import type { Session } from '@main/services/db-service'
 import type { AgentEventPayload, InteractionRequest, PlanProgress } from '@main/agent/types'
-import type { BackgroundSessionInfo } from '@main/agent/bash-session'
+import type { BackgroundSessionInfo } from '@main/agent/runtime/bash-session'
 
 /**
  * Agent 事件接收服务：main 进程通过 rendererClient.agentEvent.* 推送事件到此处。

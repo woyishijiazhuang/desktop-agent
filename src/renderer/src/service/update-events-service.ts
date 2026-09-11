@@ -1,5 +1,5 @@
 import { IpcService } from 'electron-ipc-service/renderer'
-import type { UpdateState } from '@main/service/update-service'
+import type { UpdateState } from '@main/services/update-service'
 import { useUpdateStore } from '../store/useUpdateStore'
 
 /**

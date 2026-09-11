@@ -3,8 +3,8 @@ import { join, relative, extname, dirname, sep } from 'node:path'
 import { readFileSync } from 'node:fs'
 import { mkdir, writeFile, readFile, rm, readdir, stat } from 'node:fs/promises'
 import AdmZip from 'adm-zip'
-import { createLogger } from '../utils/log'
-import type { FindSkillSource, InstalledSkill } from './types'
+import { createLogger } from '../../utils/log'
+import type { FindSkillSource, InstalledSkill } from '../types'
 
 const log = createLogger('skills')
 

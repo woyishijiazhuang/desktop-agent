@@ -15,10 +15,10 @@ import {
   resolveKbEmbedding,
   type KbEmbeddingSettings,
   type ResolvedEmbedding
-} from '../agent/embedding'
+} from '../agent/context/embedding'
 import { SETTING_KB_ENABLED, SETTING_KB_EMBEDDING_CONFIG } from '../agent/types'
-import { getDecryptedApiKey } from '../agent/model-config'
-import { findBuiltinModel } from '../agent/model-config/preset-catalog'
+import { getDecryptedApiKey } from '../agent/model'
+import { findBuiltinModel } from '../agent/model/preset-catalog'
 import type { KbDocument, KbEmbeddingStats, KbSearchHit } from '../database'
 import { createLogger } from '../utils/log'
 

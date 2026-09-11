@@ -1,4 +1,4 @@
-import { createLogger } from '../utils/log'
+import { createLogger } from '../../utils/log'
 import { respondInteraction } from './interaction'
 
 const log = createLogger('askUser')
