@@ -373,6 +373,17 @@ function recordSessionAllow(ctx: PermissionCtx): void {
   }
 }
 
+/**
+ * 会话终止（删除会话 / 删除工作区）：释放该会话的全部「本会话放行」规则。
+ * 三张表均以 sessionId 为键且只在会话存续期间有意义；不清理会随历史会话数无限累积
+ * （会话/工作区删除链路见 db-service.deleteSession 与 service/index onSessionsRemoved）。
+ */
+export function clearSessionPermissions(sessionId: string): void {
+  sessionBashAllow.delete(sessionId)
+  sessionFileAllow.delete(sessionId)
+  sessionMcpAllow.delete(sessionId)
+}
+
 /** 写入持久白名单（仅 bash 且未命中破坏性命令；deny 兜底不可被白名单覆盖）。 */
 function recordAlwaysAllow(ctx: PermissionCtx): void {
   if (ctx.toolName !== 'bash' || ctx.hardAsk) return

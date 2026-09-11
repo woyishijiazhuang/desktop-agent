@@ -168,6 +168,8 @@ interface PendingCommand {
   aborted: boolean
   resolve: (result: ShellRunResult) => void
   onUpdate?: (text: string) => void
+  /** 结算时摘除挂在 AbortSignal 上的 abort 监听器（正常完成也要摘，防同一 signal 多次 run 累积）。 */
+  cleanupAbort?: () => void
 }
 
 /**
@@ -296,9 +298,16 @@ export class PersistentShell {
         cmd.timer = setTimeout(() => this.interruptFront('timeout', timeoutMs), timeoutMs)
       }
       const onAbort = (): void => this.interruptFront('aborted', timeoutMs)
-      if (opts.signal) {
-        if (opts.signal.aborted) onAbort()
-        else opts.signal.addEventListener('abort', onAbort, { once: true })
+      const signal = opts.signal
+      if (signal) {
+        if (signal.aborted) {
+          onAbort()
+        } else {
+          signal.addEventListener('abort', onAbort, { once: true })
+          // 命令正常完成时 { once: true } 不会摘除监听器：同一 signal（如一轮 run 的 agent.signal）
+          // 复用于多次 bash 调用会持续累积闭包，故登记结算时清理。
+          cmd.cleanupAbort = () => signal.removeEventListener('abort', onAbort)
+        }
       }
     })
   }
@@ -428,6 +437,8 @@ export class PersistentShell {
       clearTimeout(cmd.timer)
       cmd.timer = null
     }
+    // 命令结束（哨兵/超时/中止/shell 退出）统一摘除 abort 监听器
+    cmd.cleanupAbort?.()
     cmd.resolve({ ...result, durationMs: Date.now() - cmd.startedAt })
   }
 
@@ -947,6 +958,17 @@ class BashSessionManager {
       this.defaults.set(sessionId, shell)
     }
     return shell
+  }
+
+  /**
+   * 会话终止（删除会话 / 删除工作区）：回收该会话的默认持久 shell（连同其子进程）。
+   * 不回收会随历史会话数累积常驻子进程，直到应用退出时才由 disposeAll 统一释放。
+   */
+  disposeSession(sessionId: string): void {
+    const shell = this.defaults.get(sessionId)
+    if (!shell) return
+    shell.dispose()
+    this.defaults.delete(sessionId)
   }
 
   /** 启动一个后台命令会话，返回会话（含随机 sessionId）。沙箱开启时命令整体套入 OS 沙箱。 */

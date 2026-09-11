@@ -5,6 +5,8 @@ import { db } from '../database'
 import { resolveScopedWorkdir } from './ipc-scope'
 import { rendererClient } from './render-client'
 import { cacheSessionWorkdir } from '../agent/workdir'
+import { clearSessionPermissions } from '../agent/permission'
+import { bashSessionManager } from '../agent/bash-session'
 import {
   deleteSessionAttachments,
   copyAttachmentToSession,
@@ -181,9 +183,12 @@ export class DbService extends IpcService {
     return session
   }
 
-  /** 软删除会话（进入回收站，不物理删除）。 */
+  /** 软删除会话（进入回收站，不物理删除）。同时释放该会话的会话级内存资源。 */
   deleteSession(id: string): void {
     db.deleteSession(id)
+    // 会话删除后不可恢复：释放「本会话放行」规则与持久化 shell，避免随历史会话数累积
+    clearSessionPermissions(id)
+    bashSessionManager.disposeSession(id)
   }
 
   // ==================== 回收站清理 ====================

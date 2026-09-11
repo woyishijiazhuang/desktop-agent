@@ -13,6 +13,8 @@ import { WorkspaceService } from './workspace-service'
 import { VoiceService } from './voice-service'
 import { UpdateService } from './update-service'
 import { setWindowCloseGuard } from './window-manager'
+import { clearSessionPermissions } from '../agent/permission'
+import { bashSessionManager } from '../agent/bash-session'
 import { createLogger } from '../utils/log'
 
 const log = createLogger('service')
@@ -53,10 +55,12 @@ log.debug('IPC services 已注册', {
 // MCP 配置变更不再驱逐 Agent：MCP 工具经 mcp_tools/mcp_call 元工具按需发现与调用（不预注入），
 // 变更只影响后续发现的目录内容与实时可用性校验，在途会话无需中断（见 agent/mcp/index.ts）。
 
-// 工作区删除后驱逐其会话的内存 Agent（防悬挂引用与持久化 shell 残留）。
+// 工作区删除后驱逐其会话的内存 Agent，并释放会话级内存资源（本会话放行规则、持久化 shell）。
 // 在 service 层接线，避免 workspace-service 反向依赖 agent-service 造成循环引用。
 ipcMainServices.workspace.setOnSessionsRemoved(async (sessionIds) => {
   for (const id of sessionIds) {
+    clearSessionPermissions(id)
+    bashSessionManager.disposeSession(id)
     await ipcMainServices.agent.evictSession(id)
   }
 })
