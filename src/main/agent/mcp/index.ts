@@ -5,6 +5,7 @@ import type { McpServerStatus, McpTestResult } from './types'
 import { createLogger } from '../../utils/log'
 import { connectMcpServer, callMcpTool } from './client'
 import { testMcpConnection } from './test'
+import { notifyMcpStatuses } from '../../infra/mcp-events'
 import { SETTING_MCP_TOOL_USAGE } from '../types'
 
 const log = createLogger('mcp')
@@ -47,12 +48,23 @@ function truncate(s: string, max: number): string {
 class McpManager {
   private connections = new Map<string, ServerConnection>()
   private errors = new Map<string, string>()
+  /**
+   * 进行中的连接尝试（按 server 去重：reload 与 ensureConnected 并发时共用同一次尝试）。
+   * 值带唯一 token 用于判断尝试是否仍「当前」：reload 作废旧尝试后，其结果不得回写连接池。
+   */
+  private inflight = new Map<string, { token: symbol; promise: Promise<void> }>()
 
   /** 重建全部连接：先断开所有，再并行连接已启用的 server。失败不影响其它。 */
   async reload(): Promise<void> {
+    // 先作废在途尝试：旧尝试完成时会发现自己已不是「当前尝试」，据此丢弃结果并关闭连接。
+    // 否则连接进行中改配置会复用旧尝试的 row（编辑不生效）或残留已停用 server 的子进程。
+    this.inflight.clear()
     await this.disconnectAll()
     const enabled = db.listMcpServers().filter((s) => s.enabled)
     log.info('MCP reload', { enabledServerCount: enabled.length })
+    // 清掉上一轮失败信息：重连期间状态为「连接中」，成功/失败后再推送最终态
+    for (const row of enabled) this.errors.delete(row.id)
+    notifyMcpStatuses(this.getStatus())
     await Promise.all(enabled.map((row) => this.connectServer(row)))
   }
 
@@ -72,11 +84,43 @@ class McpManager {
     if (count > 0) log.info('已断开全部 MCP 连接', { count })
   }
 
-  /** 连接单个 server 并拉取工具；失败记录错误，不抛出（不影响调用方）。 */
-  private async connectServer(row: McpServerRow): Promise<void> {
-    if (this.connections.has(row.id)) return
+  /**
+   * 连接单个 server 并拉取工具；失败记录错误，不抛出（不影响调用方）。
+   * 同一 server 的并发调用共用同一次尝试（inflight 去重），避免 reload 与 Agent 按需
+   * 重连同时触发导致 spawn 两份 npx 进程。开始/结束都广播状态，设置页实时反映进度。
+   */
+  private connectServer(row: McpServerRow): Promise<void> {
+    if (this.connections.has(row.id)) return Promise.resolve()
+    const pending = this.inflight.get(row.id)
+    if (pending) return pending.promise
+    this.errors.delete(row.id)
+    const attempt = { token: Symbol('mcp-connect'), promise: Promise.resolve() }
+    attempt.promise = this.runConnectAttempt(row, attempt.token)
+    this.inflight.set(row.id, attempt)
+    notifyMcpStatuses(this.getStatus())
+    return attempt.promise
+  }
+
+  /** 给定 token 是否仍是该 server 的当前尝试（reload 作废后即失效）。 */
+  private isCurrentAttempt(serverId: string, token: symbol): boolean {
+    return this.inflight.get(serverId)?.token === token
+  }
+
+  /**
+   * 执行一次连接尝试并回写结果。若已失效（reload 作废了本次尝试），则丢弃结果并关闭连接：
+   * 避免旧 row 配置的连接覆盖新配置，或为已停用/删除的 server 残留一个无人关闭的子进程。
+   */
+  private async runConnectAttempt(row: McpServerRow, token: symbol): Promise<void> {
     try {
       const conn = await connectMcpServer(row)
+      if (!this.isCurrentAttempt(row.id, token)) {
+        try {
+          await conn.client.close()
+        } catch {
+          // 忽略关闭失败
+        }
+        return
+      }
       this.connections.set(row.id, { row, ...conn })
       this.errors.delete(row.id)
       log.info('MCP server 连接成功', {
@@ -85,9 +129,14 @@ class McpManager {
         toolCount: conn.tools.length
       })
     } catch (err) {
+      // 失效尝试的失败不上报：它对应的配置可能已被编辑/停用，错误会污染最新状态
+      if (!this.isCurrentAttempt(row.id, token)) return
       const error = err instanceof Error ? err.message : String(err)
       this.errors.set(row.id, error)
       log.error('MCP server 连接失败', { server: row.name, transport: row.transport, error })
+    } finally {
+      if (this.isCurrentAttempt(row.id, token)) this.inflight.delete(row.id)
+      notifyMcpStatuses(this.getStatus())
     }
   }
 
@@ -231,13 +280,15 @@ class McpManager {
   getStatus(): McpServerStatus[] {
     return db.listMcpServers().map((row) => {
       const conn = this.connections.get(row.id)
+      const connecting = this.inflight.has(row.id)
       return {
         serverId: row.id,
         name: row.name,
         transport: row.transport,
         enabled: row.enabled,
         connected: !!conn,
-        error: this.errors.get(row.id) ?? null,
+        // 重连进行中不展示上一轮的错误，UI 显示「连接中」
+        error: connecting ? null : (this.errors.get(row.id) ?? null),
         toolCount: conn?.tools.length ?? 0
       }
     })

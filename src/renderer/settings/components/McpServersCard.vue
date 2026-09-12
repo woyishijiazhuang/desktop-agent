@@ -1,7 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { storeToRefs } from 'pinia'
 import { NCard, NButton, NTag, NSwitch, NSpace, NPopconfirm, useMessage } from 'naive-ui'
 import { mainClient } from '@renderer/utils/main-client'
+import { useMcpStatusStore } from '@renderer/store/useMcpStatusStore'
 import McpServerDialog from './McpServerDialog.vue'
 import type { McpServerConfig, McpServerStatus } from '@main/agent/mcp/types'
 
@@ -9,11 +11,15 @@ import type { McpServerConfig, McpServerStatus } from '@main/agent/mcp/types'
  * 设置页「MCP 服务器」卡片：管理全部 MCP server 配置（stdio / HTTP/SSE）。
  * 随应用出厂的内置 MCP（如浏览器/电脑操控等）启动时已播种为默认关闭的配置，带「内置」标签，
  * 与用户自建配置一致：可启停、编辑参数（如填 Token），但不可删除（删除按钮仅对自建配置显示）。
+ *
+ * 连接状态：挂载时拉一次全量快照兜底，之后由 main 经 mcpSync 推送实时更新
+ * （npx 冷启动可能耗时数十秒，不能只靠挂载时一次性拉取）。
  */
 const message = useMessage()
+const mcpStatusStore = useMcpStatusStore()
+const { statusMap } = storeToRefs(mcpStatusStore)
 
 const servers = ref<McpServerConfig[]>([])
-const statusMap = ref<Record<string, McpServerStatus>>({})
 
 const dialogShow = ref(false)
 const editing = ref<McpServerConfig | null>(null)
@@ -24,7 +30,7 @@ async function refresh(): Promise<void> {
     mainClient.mcp.getStatus()
   ])
   servers.value = list
-  statusMap.value = Object.fromEntries(status.map((s) => [s.serverId, s]))
+  mcpStatusStore.hydrate(status)
 }
 
 onMounted(() => void refresh())
@@ -112,7 +118,11 @@ function statusOf(s: McpServerConfig): McpServerStatus | undefined {
           <span v-if="s.enabled && statusOf(s)?.connected" class="mcp-list__status is-ok">
             ● 已连接 · {{ statusOf(s)?.toolCount ?? 0 }} 个工具
           </span>
-          <span v-else-if="s.enabled && statusOf(s)?.error" class="mcp-list__status is-err">
+          <span
+            v-else-if="s.enabled && statusOf(s)?.error"
+            class="mcp-list__status is-err"
+            :title="statusOf(s)?.error ?? ''"
+          >
             ● 连接失败：{{ statusOf(s)?.error }}
           </span>
           <span v-else class="mcp-list__status">

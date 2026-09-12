@@ -13,6 +13,7 @@ import { SettingsSyncService } from '@renderer/service/settings-sync-service'
 import { ThemeSyncService } from '@renderer/service/theme-sync-service'
 import { ModelConfigSyncService } from '@renderer/service/model-config-sync-service'
 import { UpdateEventsService } from '@renderer/service/update-events-service'
+import { McpSyncService } from '@renderer/service/mcp-sync-service'
 import App from './App.vue'
 import router from './router'
 
@@ -21,7 +22,8 @@ initializeSafeRendererServices([
   SettingsSyncService,
   ThemeSyncService,
   ModelConfigSyncService,
-  UpdateEventsService
+  UpdateEventsService,
+  McpSyncService
 ])
 
 const pinia = createPinia()

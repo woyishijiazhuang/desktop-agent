@@ -51,7 +51,11 @@ electronFuses:
   enableEmbeddedAsarIntegrityValidation: true # 加载 app.asar 前校验嵌入的 SHA256（mac≥16/win≥30，哈希由 builder 自动注入）
   onlyLoadAppFromAsar: true # 只从 app.asar 找应用代码，封堵 resources/app 目录旁路
   loadBrowserProcessSpecificV8Snapshot: false # 未使用自定义 V8 快照
-  grantFileProtocolExtraPrivileges: false # 收回 file:// 页面的 Node 集成/关 webSecurity 特权（本应用 preload + contextIsolation，不依赖）
+  # 必须保持开启：渲染层经 webContents.loadFile() 以 file:// 从 app.asar 加载
+  # out/renderer/**.html（window-manager.ts）。翻转关闭后 Chromium 网络服务
+  # 拒绝 file:// 读取 asar 内文件，三个入口全部 ERR_FILE_NOT_FOUND，窗口白屏。
+  # 官方安全建议是改用自定义协议（app://）提供页面；本应用仍是 file:// 方案，不可关。
+  grantFileProtocolExtraPrivileges: true
   # 本机/CI 无 Developer ID 时签名步骤会整体跳过，翻转二进制后原有 linker 签名失效，
   # Apple Silicon 会直接 SIGKILL。开启此项让 @electron/fuses 翻转后对主二进制重新 ad-hoc 签名。
   # 将来用正式证书签名时，builder 的正式签名会覆盖它，无副作用。

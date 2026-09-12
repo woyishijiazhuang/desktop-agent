@@ -5,6 +5,7 @@ import { SettingsSyncService } from './settings-sync-service'
 import { ThemeSyncService } from './theme-sync-service'
 import { ModelConfigSyncService } from './model-config-sync-service'
 import { UpdateEventsService } from './update-events-service'
+import { McpSyncService } from './mcp-sync-service'
 
 // Register all services — main 进程通过 rendererClient.<namespace>.* 反向调用。
 // 使用容错守卫注册（utils/ipc-guard）：本内容视图（工作区 SPA）注册全量服务，
@@ -15,7 +16,8 @@ export const ipcRendererServices = initializeSafeRendererServices([
   SettingsSyncService,
   ThemeSyncService,
   ModelConfigSyncService,
-  UpdateEventsService
+  UpdateEventsService,
+  McpSyncService
 ])
 
 // Export the combined type for the main's createMainClient
