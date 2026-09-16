@@ -4,6 +4,7 @@ import type { McpServerRow } from '../../database'
 import type { McpServerStatus, McpTestResult } from './types'
 import { createLogger } from '../../utils/log'
 import { connectMcpServer, callMcpTool } from './client'
+import { killProcessTree } from './utils'
 import { testMcpConnection } from './test'
 import { notifyMcpStatuses } from '../../infra/mcp-events'
 import { SETTING_MCP_TOOL_USAGE } from '../types'
@@ -38,6 +39,8 @@ interface ServerConnection {
   row: McpServerRow
   client: Client
   tools: McpToolLike[]
+  /** stdio server 的子进程 pid（http 传输为 null）；退出清理据此终止整棵进程树。 */
+  pid: number | null
 }
 
 /** 文本截断（目录/列表输出控制体量，防止撑爆上下文）。 */
@@ -51,101 +54,89 @@ class McpManager {
   /**
    * 进行中的连接尝试（按 server 去重：reload 与 ensureConnected 并发时共用同一次尝试）。
    * 值带唯一 token 用于判断尝试是否仍「当前」：reload 作废旧尝试后，其结果不得回写连接池。
+   * row 为本次尝试使用的配置快照，供 reload 判定该尝试是否已因配置变更而失效。
    */
-  private inflight = new Map<string, { token: symbol; promise: Promise<void> }>()
+  private inflight = new Map<string, { token: symbol; promise: Promise<void>; row: McpServerRow }>()
 
   /**
-   * 同步连接池与数据库配置（增量）：
-   * - 停用/删除的 server → 断开并作废 inflight
-   * - 已连接且配置未变的 → 保持不动
-   * - 新启用或配置变更的 → 连接
+   * 同步连接池与数据库配置（**增量**）：只处理「停用 / 删除 / 配置变更」的 server，
+   * 其余连接原样保持，避免停用任一 server 时把其他已连接的 server 拖回「连接中」。
    *
-   * 不再全量 disconnectAll + 重连，避免一个 server 的启停导致其他已连接 server
-   * 重新变成「连接中」。保留 inflight token 机制以防并发安全。
+   * 同时按配置快照作废已失效的在途尝试（旧尝试完成时 isCurrentAttempt 为 false，
+   * 会自行丢弃结果并关闭连接），因此改配置期间也不会回写旧连接。
    */
   async reload(): Promise<void> {
     const rows = db.listMcpServers()
     const rowMap = new Map(rows.map((r) => [r.id, r]))
     const enabledRows = rows.filter((r) => r.enabled)
-    const needReconnect = new Set<string>()
+    /** 该 server 是否仍满足「已启用且配置未变」——不满足即需断开/重连。 */
+    const stillValid = (id: string, used: McpServerRow): boolean => {
+      const current = rowMap.get(id)
+      return !!current && current.enabled && !this.configChanged(current, used)
+    }
 
-    // 1. 处理已建立连接的 server
+    // 1) 已建立的连接：失效的断开，其余保持不动
     for (const [id, conn] of [...this.connections]) {
-      const row = rowMap.get(id)
-      if (!row || !row.enabled) {
-        // 停用/删除 → 断开
-        try {
-          await conn.client.close()
-        } catch {
-          // 忽略关闭失败
-        }
-        this.connections.delete(id)
-      } else if (this.configChanged(row, conn.row)) {
-        // 配置变更 → 断开旧连接，标记需重连
-        try {
-          await conn.client.close()
-        } catch {
-          // 忽略关闭失败
-        }
-        this.connections.delete(id)
-        needReconnect.add(id)
+      if (stillValid(id, conn.row)) continue
+      try {
+        await conn.client.close()
+      } catch {
+        // 忽略关闭失败
       }
+      this.connections.delete(id)
     }
 
-    // 2. 处理 inflight：作废已停用/删除/需重连的，其他保留让其自然完成
-    for (const [id] of [...this.inflight]) {
-      const row = rowMap.get(id)
-      if (!row || !row.enabled || needReconnect.has(id)) {
-        this.inflight.delete(id)
-        // 旧尝试完成时 isCurrentAttempt 会返回 false，自动丢弃结果并关闭连接
-      }
+    // 2) 在途尝试：配置快照已失效的作废，其余让其自然完成
+    for (const [id, attempt] of [...this.inflight]) {
+      if (!stillValid(id, attempt.row)) this.inflight.delete(id)
     }
 
-    // 3. 清理错误记录
-    for (const row of enabledRows) this.errors.delete(row.id)
+    // 3) 只为「未连接且无有效在途尝试」的 server 发起连接；
+    //    先清掉其上一轮失败信息，使广播时 UI 显示「连接中」而非残留错误
+    const toConnect = enabledRows.filter(
+      (row) => !this.connections.has(row.id) && !this.inflight.has(row.id)
+    )
+    for (const row of toConnect) this.errors.delete(row.id)
 
-    // 4. 计算需要连接的 server
-    const toConnect = enabledRows.filter((row) => {
-      if (needReconnect.has(row.id)) return true
-      if (this.connections.has(row.id)) return false // 已连接且配置未变
-      if (this.inflight.has(row.id)) return false // 正在连接中
-      return true // 新启用或从未连接
-    })
-
-    log.info('MCP reload（增量）', {
+    log.info('MCP reload', {
       enabledServerCount: enabledRows.length,
-      toConnect: toConnect.length,
-      keepConnected: enabledRows.length - toConnect.length
+      keepConnectedCount: enabledRows.length - toConnect.length,
+      toConnectCount: toConnect.length
     })
     notifyMcpStatuses(this.getStatus())
     await Promise.all(toConnect.map((row) => this.connectServer(row)))
   }
 
-  /** 对比两行配置是否变化（除 enabled 外的关键字段或 updatedAt）。 */
-  private configChanged(a: McpServerRow, b: McpServerRow): boolean {
+  /** 判定两次读取的配置是否发生需重连的变化（enabled 单独判断，不参与比较）。 */
+  private configChanged(current: McpServerRow, used: McpServerRow): boolean {
     return (
-      a.transport !== b.transport ||
-      a.command !== b.command ||
-      a.args !== b.args ||
-      a.env !== b.env ||
-      a.url !== b.url
+      current.transport !== used.transport ||
+      current.command !== used.command ||
+      current.args !== used.args ||
+      current.env !== used.env ||
+      current.url !== used.url
     )
   }
 
-  /** 断开全部连接（应用退出 / reload 用）。 */
-  async disconnectAll(): Promise<void> {
-    const count = this.connections.size
-    await Promise.all(
-      [...this.connections.values()].map(async (conn) => {
-        try {
-          await conn.client.close()
-        } catch {
-          // 忽略关闭失败
-        }
-      })
-    )
+  /**
+   * 终止全部 stdio MCP server 进程树（应用退出清理用，不阻塞退出）。
+   *
+   * 为什么不用 client.close()：退出流程无法 await，SDK 的 close 要等最长约 4s 才走到
+   * SIGKILL 兜底，等不到它执行。这里直接按进程树终止（含 npx/node 子孙）。
+   * http 传输没有子进程，其连接随进程退出自然释放。
+   *
+   * 注意：这是强制终止（不给 server 优雅退出机会），仅用于应用退出；配置变更走增量 reload，
+   * 那里仍用 client.close() 优雅断开。
+   */
+  killAllProcessTrees(): void {
+    let count = 0
+    for (const conn of this.connections.values()) {
+      if (conn.pid === null) continue
+      killProcessTree(conn.pid)
+      count += 1
+    }
     this.connections.clear()
-    if (count > 0) log.info('已断开全部 MCP 连接', { count })
+    if (count > 0) log.info('已终止全部 MCP server 子进程', { count })
   }
 
   /**
@@ -158,7 +149,7 @@ class McpManager {
     const pending = this.inflight.get(row.id)
     if (pending) return pending.promise
     this.errors.delete(row.id)
-    const attempt = { token: Symbol('mcp-connect'), promise: Promise.resolve() }
+    const attempt = { token: Symbol('mcp-connect'), promise: Promise.resolve(), row }
     attempt.promise = this.runConnectAttempt(row, attempt.token)
     this.inflight.set(row.id, attempt)
     notifyMcpStatuses(this.getStatus())

@@ -21,6 +21,7 @@ import icon from '../../resources/icon.png?asset'
 import { createLogger } from './utils/log'
 import { cleanupOrphanAttachments } from './agent/context/attachment'
 import { bashSessionManager } from './agent/runtime/bash-session'
+import { mcpManager } from './agent/mcp/index'
 import { seedBuiltinSkills } from './agent/skills/skills-store'
 import { SETTING_CLOSE_TO_TRAY } from './agent/types'
 import { db } from './database'
@@ -128,4 +129,7 @@ app.on('before-quit', () => {
   markQuitting()
   // 回收全部持久化 shell 与后台命令进程，避免孤儿进程
   bashSessionManager.disposeAll()
+  // 终止全部 MCP server 进程树（stdio 子进程及其 npx/node 子孙），避免孤儿进程。
+  // 不阻塞退出：Windows 转交独立的 taskkill 进程执行，Unix 为毫秒级同步系统调用。
+  mcpManager.killAllProcessTrees()
 })

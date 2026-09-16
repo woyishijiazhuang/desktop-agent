@@ -103,7 +103,7 @@ export const ipcMainServices = initializeIpcMainServices([
 ])
 ```
 
-**关键接线**：`ipcMainServices.mcp.onConfigChanged(() => agent.evictAllSessions())` —— MCP 配置变更后驱逐全部内存 Agent，下一轮创建时重新拉取 MCP 工具集（在 service 层接线，避免 mcp/service 反向依赖 agent-service 造成循环引用）。
+**关于 MCP 配置变更**：不再需要 `onConfigChanged → evictAllSessions` 之类的接线 —— MCP 工具不预注入 Agent，而是经 `mcp_tools` / `mcp_call` 两个元工具按需发现调用，配置变更只做增量 reload 连接池，在途对话不受影响。
 
 **主进程 → 渲染进程反向调用**（[utils/render-client.ts](file:///Users/hupengfei/Documents/my-app/src/main/utils/render-client.ts)）：electron-ipc-service 的 `createIpcMainClient` 依赖 `BrowserWindow.getAllWindows()`，BaseWindow 迁移后不可用，这里用 Proxy 自建同 API 形状实现，每次调用经 `broadcastToAllViews(...)`（遍历本窗口全部 WebContentsView fire-and-forget）广播。
 
@@ -205,7 +205,7 @@ src/
 - `app.setName('桌面助手')`（须在 whenReady 之前）：使菜单栏/Dock/任务栏显示品牌名，与 electron-builder productName 一致。
 - `crashReporter.start({ uploadToServer: false })`：崩溃本地落盘不上报（dump 位于 `app.getPath('crashDumps')`，设置页可查看）。
 - `whenReady` 后：`setAppUserModelId('com.desktop-agent.app')` → macOS Dock 设品牌图标 → `createMainWindow()` + `createTray()` + `createAppMenu()` → 兜底清理孤儿附件（`cleanupOrphanAttachments`）→ 连接已启用 MCP server（`mcp.connectAll()`，失败不影响启动）→ 恢复窗口置顶偏好。
-- `before-quit` 调 `markQuitting()` 放行窗口 close（否则「关闭到托盘」设置会拦截真实退出）。
+- `before-quit`：`markQuitting()` 放行窗口 close（否则「关闭到托盘」设置会拦截真实退出）→ `bashSessionManager.disposeAll()` 回收后台 shell 进程 → `mcpManager.killAllProcessTrees()` 终止全部 MCP server 进程树。两项清理都不阻塞退出：MCP 部分在 Windows 上转交独立的 `taskkill` 进程执行，发起后应用即可退出、taskkill 仍会完成清理（见 `agent/mcp/utils.ts`）。
 
 ### 4.2 数据库层
 
@@ -285,12 +285,12 @@ src/
 
 #### [mcp/](file:///Users/hupengfei/Documents/my-app/src/main/agent/mcp/) 目录
 
-- **client.ts**：`connectMcpServer` / `callMcpTool`，stdio（`StdioClientTransport`）与 streamable HTTP（`StreamableHTTPClientTransport`）双传输，连接/拉工具带超时（`CONNECT_TIMEOUT_MS=8000`、`LIST_TOOLS_TIMEOUT_MS=8000`）。
-- **index.ts**：`mcpManager` 单例，维护每 server 连接；`reload` 先断开全部再并行重连；`getTools` 惰性连接并把工具转 AgentTool（工具名加 `{safeName}_` 前缀防冲突）；`getStatus` 供设置页。
+- **client.ts**：`connectMcpServer` / `callMcpTool`，stdio（`StdioClientTransport`）与 streamable HTTP（`StreamableHTTPClientTransport`）双传输，连接/拉工具带超时（`CONNECT_TIMEOUT_MS=30s`、`LIST_TOOLS_TIMEOUT_MS=10s`）；返回 `{ client, tools, pid }`，`pid` 为 stdio 子进程 id（http 传输为 null），供应用退出时终止进程树。
+- **index.ts**：`mcpManager` 单例，维护每 server 连接与工具缓存。工具**不预注入 Agent**，改为两个元工具按需发现/调用：`describeMcp`（mcp_tools：服务器目录 / 关键词搜索 / 工具参数 Schema）与 `invokeTool`（mcp_call，调用前实时校验 server 与工具可用），故配置变更无需驱逐会话；`getStatus` 供设置页。`reload` 为**增量同步**：只断开/重连「停用、删除、配置变更」的 server，其余连接原样保持，避免停用任一 server 把其他已连接的 server 拖回「连接中」；`killAllProcessTrees` 供应用退出时终止全部 stdio 子进程树。
 - **services/mcp-service.ts**：`McpService`（namespace `mcp`）——`listServers` / `createServer` / `updateServer` / `setEnabled` / `deleteServer` / `getStatus` / `testConnection` / `connectAll`；变更后 reload 连接池；启动时 `seedBuiltinMcpServers` 播种内置预设。
 - **presets.ts**：内置 MCP 预设（Playwright/Computer Use/Context7/GitHub），`getBuiltinMcpPresets` / `seedBuiltinMcpServers`。
-- **types.ts**：`McpServerConfig` / `McpServerStatus` / `McpToolDescriptor` / `McpTestResult` / `BuiltinMcpPreset` 与 `rowToConfig` 行映射。
-- **utils.ts**：`withTimeout` / `safeName`（server 名净化做工具前缀）/ `mcpResultToContent`（结果 → pi-ai content blocks）。
+- **types.ts**：`McpServerConfig` / `McpServerStatus` / `McpTestResult` / `BuiltinMcpPreset` 与 `rowToConfig` 行映射。
+- **utils.ts**：`withTimeout` / `mcpResultToContent`（结果 → pi-ai content blocks）/ `buildMcpSpawnEnv`（登录 shell PATH 解析，解决打包后 npx ENOENT）/ `killProcessTree`（按进程树终止 stdio 子进程：Windows 用 `/F /T` 的 `taskkill` 独立进程、发起后立即返回，Unix 递归 `pgrep -P` + SIGKILL）。
 - **test.ts**：`testMcpConnection`（试连不落池）。
 
 #### [skills/skills-store.ts](file:///Users/hupengfei/Documents/my-app/src/main/agent/skills/skills-store.ts)
@@ -613,18 +613,18 @@ Agent 调工具 → beforeToolCall 钩子
 
 ## 9. 关键设计速查
 
-| 设计                  | 要点                                                                                                                                                                                  |
-| --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **每会话独立 Agent**  | `agents: Map<sessionId, Agent>` + LRU（max 8），并发会话互不阻塞                                                                                                                      |
-| **两阶段锁**          | 快速路径（cache 命中）lock-free；慢路径（cache miss）promise-chain 串行化 + 双重检查                                                                                                  |
-| **安全驱逐**          | 先同步移除 map/LRU，再 abort + `waitForIdle`，杜绝双 run 冲突                                                                                                                         |
-| **BaseWindow 双视图** | headerView（32px 标题栏）+ contentView，弹窗不遮标题栏；render-client Proxy 广播替代 getAllWindows                                                                                    |
-| **双向 IPC**          | renderer→main（invoke）+ main→renderer（rendererClient 广播），权限回路闭环                                                                                                           |
-| **模型隔离**          | Models 集合不装 builtin（避免污染）；ModelKey 二元组定位；config.id 即 provider id                                                                                                    |
-| **API Key 安全**      | `safeStorage` 加密 BLOB，单独列读写，渲染进程只接触 `hasApiKey` 布尔                                                                                                                  |
-| **会话压缩**          | LLM 摘要 + 乐观锁推进版本，不删原消息，`transformContext` 注入摘要 + 自动压缩预检                                                                                                     |
-| **流式事件过滤**      | `isEmptyErrorCarrier` 过滤纯错误载体，避免空气泡；轮次超限 / LRU 暂停自动中止并携带提示；失败未产出内容时补失败标记行（重启后恢复重试入口）                                           |
-| **危险工具权限**      | write_file/edit_file/bash/install_skill 前置确认，支持 once/session/always 三作用域 + bash 白名单；请求 60s 超时自动拒绝（防挂起）；rm 破坏性删除 deny 正则覆盖选项在文件名之后的写法 |
-| **上下文注入**        | 长期记忆在会话首次创建 Agent 时全量注入 systemPrompt 快照（重建复用、命中前缀缓存）；压缩摘要经 `transformContext` 以 user 标记块注入，绝不改 systemPrompt                            |
-| **MCP 联动**          | 配置变更 → reload 连接池 → 驱逐全部 Agent，下一轮重建时重新拉取工具集                                                                                                                 |
-| **无兼容代码**        | 旧 `credentials` 表直接 drop，token 列迁移至 usage_logs，`parseModelKey` 不支持旧版纯 ID                                                                                              |
+| 设计                  | 要点                                                                                                                                                                                                 |
+| --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **每会话独立 Agent**  | `agents: Map<sessionId, Agent>` + LRU（max 8），并发会话互不阻塞                                                                                                                                     |
+| **两阶段锁**          | 快速路径（cache 命中）lock-free；慢路径（cache miss）promise-chain 串行化 + 双重检查                                                                                                                 |
+| **安全驱逐**          | 先同步移除 map/LRU，再 abort + `waitForIdle`，杜绝双 run 冲突                                                                                                                                        |
+| **BaseWindow 双视图** | headerView（32px 标题栏）+ contentView，弹窗不遮标题栏；render-client Proxy 广播替代 getAllWindows                                                                                                   |
+| **双向 IPC**          | renderer→main（invoke）+ main→renderer（rendererClient 广播），权限回路闭环                                                                                                                          |
+| **模型隔离**          | Models 集合不装 builtin（避免污染）；ModelKey 二元组定位；config.id 即 provider id                                                                                                                   |
+| **API Key 安全**      | `safeStorage` 加密 BLOB，单独列读写，渲染进程只接触 `hasApiKey` 布尔                                                                                                                                 |
+| **会话压缩**          | LLM 摘要 + 乐观锁推进版本，不删原消息，`transformContext` 注入摘要 + 自动压缩预检                                                                                                                    |
+| **流式事件过滤**      | `isEmptyErrorCarrier` 过滤纯错误载体，避免空气泡；轮次超限 / LRU 暂停自动中止并携带提示；失败未产出内容时补失败标记行（重启后恢复重试入口）                                                          |
+| **危险工具权限**      | write_file/edit_file/bash/install_skill 前置确认，支持 once/session/always 三作用域 + bash 白名单；请求 60s 超时自动拒绝（防挂起）；rm 破坏性删除 deny 正则覆盖选项在文件名之后的写法                |
+| **上下文注入**        | 长期记忆在会话首次创建 Agent 时全量注入 systemPrompt 快照（重建复用、命中前缀缓存）；压缩摘要经 `transformContext` 以 user 标记块注入，绝不改 systemPrompt                                           |
+| **MCP 联动**          | 配置变更 → 增量 reload 连接池（只断开/重连停用、删除、改配置的 server，其余保持不动）；工具经 mcp_tools / mcp_call 元工具按需发现，故无需驱逐 Agent；应用退出时终止全部 stdio 子进程树（不阻塞退出） |
+| **无兼容代码**        | 旧 `credentials` 表直接 drop，token 列迁移至 usage_logs，`parseModelKey` 不支持旧版纯 ID                                                                                                             |

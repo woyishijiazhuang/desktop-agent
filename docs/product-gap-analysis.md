@@ -71,7 +71,7 @@
 
 - @modelcontextprotocol/sdk 客户端：stdio + streamable HTTP 双传输
 - 设置页「工具与扩展」管理 MCP server（CRUD/启停/连接测试/状态与错误查看）
-- 工具注入 Agent（server 名前缀防冲突，配置变更自动 reload + 驱逐 Agent 使下一轮生效）
+- MCP 工具经 `mcp_tools` / `mcp_call` 两个元工具按需发现调用（不预注入工具集），配置变更增量 reload 连接池、无需驱逐 Agent
 
 **桌面化（应用级）**
 

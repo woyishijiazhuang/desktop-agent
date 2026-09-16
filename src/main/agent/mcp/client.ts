@@ -26,6 +26,8 @@ export interface McpTool {
 export interface McpConnection {
   client: Client
   tools: McpTool[]
+  /** stdio server 的子进程 pid（http 传输无子进程，为 null）；应用退出时据此终止进程树。 */
+  pid: number | null
 }
 
 /** 构造对应传输方式的 transport。 */
@@ -82,6 +84,8 @@ export async function connectMcpServer(row: McpServerRow): Promise<McpConnection
     )
     return {
       client,
+      // 只有 stdio 传输才有子进程；该 pid 供应用退出时同步终止整棵进程树
+      pid: transport instanceof StdioClientTransport ? transport.pid : null,
       tools: tools.map((t) => ({
         name: t.name,
         description: t.description ?? '',

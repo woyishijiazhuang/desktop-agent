@@ -34,14 +34,6 @@ export interface McpServerStatus {
   toolCount: number
 }
 
-/** MCP server 暴露的单个工具描述（列表/测试用）。 */
-export interface McpToolDescriptor {
-  name: string
-  description: string
-  /** JSON Schema（MCP inputSchema），渲染层仅展示不解释。 */
-  inputSchema: unknown
-}
-
 /** 连接测试结果。 */
 export interface McpTestResult {
   ok: boolean

@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process'
+import { execSync, spawn } from 'node:child_process'
 import { existsSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -24,10 +24,51 @@ export function withTimeout<T>(promise: Promise<T>, ms: number, label: string): 
   })
 }
 
-/** 工具名前缀：server 名净化后 + 下划线，避免多 server 工具名冲突。 */
-export function safeName(name: string): string {
-  const cleaned = name.replace(/[^a-zA-Z0-9\u4e00-\u9fa5_-]/g, '_').slice(0, 24)
-  return cleaned || 'mcp'
+// ---- stdio 子进程生命周期 ----
+
+/**
+ * 终止一个 MCP server 子进程及其全部子孙进程（应用退出清理用）。
+ *
+ * 为什么不用 client.close()：SDK 的 close 会先等最多 2s（等子进程自行退出）再发 SIGTERM，
+ * 应用退出流程无法 await，等不到后续兜底（见 @modelcontextprotocol/sdk client/stdio.js）。
+ * 另外 npx 启动的 server 是 `npx → npm exec → node` 多层进程，只杀根进程会残留子孙
+ * （Node 文档明确：Linux 上杀死父进程不会终止子进程的子进程）。故这里按进程树终止。
+ *
+ * 本函数不阻塞应用退出：Windows 分支只发起独立的 taskkill 进程（实测发起开销约 0.1s，
+ * 同步等待则约 0.7s/次；taskkill 不依赖父进程存活，父进程退出后仍会完成清理）；
+ * Unix 分支的 pgrep/信号均为毫秒级同步系统调用。
+ */
+export function killProcessTree(pid: number): void {
+  if (process.platform === 'win32') {
+    // /T 连子孙一并终止，/F 强制（等效 SIGKILL）；detached + unref 使其不受本进程退出影响
+    try {
+      spawn('taskkill', ['/F', '/T', '/PID', String(pid)], {
+        stdio: 'ignore',
+        detached: true
+      }).unref()
+    } catch {
+      // 发起失败时忽略（进程可能已退出）
+    }
+    return
+  }
+  // Unix：先递归终止子孙，最后终止自身
+  try {
+    const out = execSync(`pgrep -P ${pid}`, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore']
+    })
+    for (const line of out.split('\n')) {
+      const child = Number(line.trim())
+      if (Number.isInteger(child) && child > 0) killProcessTree(child)
+    }
+  } catch {
+    // 无子进程时 pgrep 以退出码 1 结束，忽略
+  }
+  try {
+    process.kill(pid, 'SIGKILL')
+  } catch {
+    // 进程已退出，忽略
+  }
 }
 
 /** MCP callTool 结果 → pi-ai content blocks。 */
