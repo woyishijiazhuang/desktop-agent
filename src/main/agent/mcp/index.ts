@@ -54,18 +54,82 @@ class McpManager {
    */
   private inflight = new Map<string, { token: symbol; promise: Promise<void> }>()
 
-  /** 重建全部连接：先断开所有，再并行连接已启用的 server。失败不影响其它。 */
+  /**
+   * 同步连接池与数据库配置（增量）：
+   * - 停用/删除的 server → 断开并作废 inflight
+   * - 已连接且配置未变的 → 保持不动
+   * - 新启用或配置变更的 → 连接
+   *
+   * 不再全量 disconnectAll + 重连，避免一个 server 的启停导致其他已连接 server
+   * 重新变成「连接中」。保留 inflight token 机制以防并发安全。
+   */
   async reload(): Promise<void> {
-    // 先作废在途尝试：旧尝试完成时会发现自己已不是「当前尝试」，据此丢弃结果并关闭连接。
-    // 否则连接进行中改配置会复用旧尝试的 row（编辑不生效）或残留已停用 server 的子进程。
-    this.inflight.clear()
-    await this.disconnectAll()
-    const enabled = db.listMcpServers().filter((s) => s.enabled)
-    log.info('MCP reload', { enabledServerCount: enabled.length })
-    // 清掉上一轮失败信息：重连期间状态为「连接中」，成功/失败后再推送最终态
-    for (const row of enabled) this.errors.delete(row.id)
+    const rows = db.listMcpServers()
+    const rowMap = new Map(rows.map((r) => [r.id, r]))
+    const enabledRows = rows.filter((r) => r.enabled)
+    const needReconnect = new Set<string>()
+
+    // 1. 处理已建立连接的 server
+    for (const [id, conn] of [...this.connections]) {
+      const row = rowMap.get(id)
+      if (!row || !row.enabled) {
+        // 停用/删除 → 断开
+        try {
+          await conn.client.close()
+        } catch {
+          // 忽略关闭失败
+        }
+        this.connections.delete(id)
+      } else if (this.configChanged(row, conn.row)) {
+        // 配置变更 → 断开旧连接，标记需重连
+        try {
+          await conn.client.close()
+        } catch {
+          // 忽略关闭失败
+        }
+        this.connections.delete(id)
+        needReconnect.add(id)
+      }
+    }
+
+    // 2. 处理 inflight：作废已停用/删除/需重连的，其他保留让其自然完成
+    for (const [id] of [...this.inflight]) {
+      const row = rowMap.get(id)
+      if (!row || !row.enabled || needReconnect.has(id)) {
+        this.inflight.delete(id)
+        // 旧尝试完成时 isCurrentAttempt 会返回 false，自动丢弃结果并关闭连接
+      }
+    }
+
+    // 3. 清理错误记录
+    for (const row of enabledRows) this.errors.delete(row.id)
+
+    // 4. 计算需要连接的 server
+    const toConnect = enabledRows.filter((row) => {
+      if (needReconnect.has(row.id)) return true
+      if (this.connections.has(row.id)) return false // 已连接且配置未变
+      if (this.inflight.has(row.id)) return false // 正在连接中
+      return true // 新启用或从未连接
+    })
+
+    log.info('MCP reload（增量）', {
+      enabledServerCount: enabledRows.length,
+      toConnect: toConnect.length,
+      keepConnected: enabledRows.length - toConnect.length
+    })
     notifyMcpStatuses(this.getStatus())
-    await Promise.all(enabled.map((row) => this.connectServer(row)))
+    await Promise.all(toConnect.map((row) => this.connectServer(row)))
+  }
+
+  /** 对比两行配置是否变化（除 enabled 外的关键字段或 updatedAt）。 */
+  private configChanged(a: McpServerRow, b: McpServerRow): boolean {
+    return (
+      a.transport !== b.transport ||
+      a.command !== b.command ||
+      a.args !== b.args ||
+      a.env !== b.env ||
+      a.url !== b.url
+    )
   }
 
   /** 断开全部连接（应用退出 / reload 用）。 */
