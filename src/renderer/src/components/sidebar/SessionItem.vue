@@ -4,6 +4,7 @@ import { NDropdown, NButton, NIcon } from 'naive-ui'
 import type { DropdownOption } from 'naive-ui'
 import {
   ArchiveOutline,
+  ArrowUndoOutline,
   ChatbubbleEllipsesOutline,
   CreateOutline,
   DownloadOutline,
@@ -54,6 +55,12 @@ function buildMenuOptions(): DropdownOption[] {
       label: '导出为 JSON',
       key: 'export-json',
       icon: () => h(NIcon, null, { default: () => h(DownloadOutline) })
+    },
+    { type: 'divider', key: 'd-undo' },
+    {
+      label: '撤销文件改动',
+      key: 'undo-files',
+      icon: () => h(NIcon, null, { default: () => h(ArrowUndoOutline) })
     },
     { type: 'divider', key: 'd-more' },
     {

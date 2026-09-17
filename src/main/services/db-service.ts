@@ -4,6 +4,7 @@ import { writeFile } from 'node:fs/promises'
 import { db } from '../database'
 import { resolveScopedWorkdir } from '../infra/ipc-scope'
 import { rendererClient } from '../infra/render-client'
+import { gcFileHistoryBlobs } from '../infra/file-history'
 import { cacheSessionWorkdir } from '../agent/runtime/workdir'
 import { clearSessionPermissions } from '../agent/runtime/permission'
 import { bashSessionManager } from '../agent/runtime/bash-session'
@@ -205,14 +206,29 @@ export class DbService extends IpcService {
       await deleteSessionAttachments(s.id)
     }
     const count = db.purgeTrash()
-    if (count > 0) log.info('清空回收站', { count })
+    if (count > 0) {
+      log.info('清空回收站', { count })
+      // file_change_log 行已由 FK 级联删除，此处回收孤儿撤销快照 blob
+      void gcFileHistoryBlobs().catch((err) =>
+        log.warn('清空回收站后快照 GC 失败', {
+          error: err instanceof Error ? err.message : String(err)
+        })
+      )
+    }
     return count
   }
 
   /** 物理删除删除时间超过 days 天的软删除会话（到期清理），返回删除的会话数。 */
   purgeExpiredDeletedSessions(days: number): number {
     const count = db.purgeExpiredDeletedSessions(days)
-    if (count > 0) log.info('清理到期软删除会话', { days, count })
+    if (count > 0) {
+      log.info('清理到期软删除会话', { days, count })
+      void gcFileHistoryBlobs().catch((err) =>
+        log.warn('到期清理后快照 GC 失败', {
+          error: err instanceof Error ? err.message : String(err)
+        })
+      )
+    }
     return count
   }
 

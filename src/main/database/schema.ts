@@ -216,6 +216,29 @@ export function initSchema(db: DatabaseSync): void {
       created_at INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
     ) STRICT;
 
+    -- 文件变更历史（write_file / edit_file 每次成功落盘一条，供用户撤销，见 docs/file-undo-design.md）。
+    -- before_hash 为 null = 本次为新建文件（撤销 = 删文件）；after_hash 用于撤销前乐观锁校验。
+    -- 原内容以 sha256 内容寻址存 {userData}/file-history/blobs/（infra/file-history.ts）。
+    -- status: applied=可撤销 / undone=已撤销 / superseded=整批回退时连带作废 /
+    --         skipped=未记录快照（二进制/超限/读取失败，undo_error 存原因）/ failed=预留。
+    -- 会话物理删除（purgeTrash/到期清理/工作区删除）经 FK 级联清掉记录，孤儿快照由 blob GC 回收；
+    -- 软删除（回收站）保留记录（会话可恢复）。
+    CREATE TABLE IF NOT EXISTS file_change_log (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id    TEXT NOT NULL,
+      tool_call_id  TEXT,
+      tool_name     TEXT NOT NULL,
+      path          TEXT NOT NULL,
+      before_hash   TEXT,
+      after_hash    TEXT NOT NULL,
+      bytes         INTEGER NOT NULL DEFAULT 0,
+      status        TEXT NOT NULL DEFAULT 'applied'
+                    CHECK(status IN ('applied','undone','superseded','failed','skipped')),
+      undo_error    TEXT,
+      created_at    INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+      FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+    ) STRICT;
+
     -- 单用户应用，无 user_id 概念。
     CREATE INDEX IF NOT EXISTS idx_sessions_active ON sessions(last_active_at);
     CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
@@ -236,6 +259,10 @@ export function initSchema(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_kb_embedding_logs_ts ON kb_embedding_logs(timestamp);
     -- 语音 TTS 缓存唯一键（含变体序号），供 upsert 与按 key 查询。
     CREATE UNIQUE INDEX IF NOT EXISTS idx_voice_tts_cache_key ON voice_tts_cache(phrase, voice, style, variant);
+    -- 文件变更历史：按会话列出 / 同路径 superseded 检查 / 按时间清理。
+    CREATE INDEX IF NOT EXISTS idx_fcl_session ON file_change_log(session_id, id);
+    CREATE INDEX IF NOT EXISTS idx_fcl_path ON file_change_log(path, id);
+    CREATE INDEX IF NOT EXISTS idx_fcl_created ON file_change_log(created_at);
   `)
 
   // 轻量列清理：token 统计已由 usage_logs 取代，物理移除 messages 的 token 用量列与

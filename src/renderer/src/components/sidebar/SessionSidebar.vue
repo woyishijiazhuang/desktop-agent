@@ -30,6 +30,7 @@ import { useChatStore } from '@renderer/store/useChatStore'
 import { useThemeStore } from '@renderer/store/useThemeStore'
 import { useWindowStore } from '@renderer/store/useWindowStore'
 import { useInteractionStore } from '@renderer/store/useInteractionStore'
+import { useFileHistoryStore } from '@renderer/store/useFileHistoryStore'
 import { mainClient } from '@renderer/utils/main-client'
 import SessionItem from './SessionItem.vue'
 import BackgroundSessionsPanel from './BackgroundSessionsPanel.vue'
@@ -46,6 +47,7 @@ import type { Session, MessageSearchHit, SessionExportFormat } from '@main/servi
  */
 const sessionStore = useSessionStore()
 const chatStore = useChatStore()
+const fileHistoryStore = useFileHistoryStore()
 const themeStore = useThemeStore()
 const windowStore = useWindowStore()
 const message = useMessage()
@@ -239,6 +241,7 @@ function onMenu(key: string, session: Session): void {
   else if (key === 'export-json') void onExport(session, 'json')
   else if (key === 'rename') openRename(session)
   else if (key === 'delete') confirmDelete(session)
+  else if (key === 'undo-files') confirmUndoFiles(session)
 }
 
 /** 导出会话为 Markdown / JSON（主进程弹保存对话框并写文件）。 */
@@ -275,6 +278,33 @@ function confirmDelete(session: Session): void {
     negativeText: '取消',
     onPositiveClick: async () => {
       await sessionStore.deleteSession(session.id)
+    }
+  })
+}
+
+/**
+ * 撤销本会话全部文件改动（会话级 oops）：回退 write_file / edit_file 到会话首次改动前。
+ * 生成中的会话拒绝（避免与在途写入竞争）；被外部修改过的文件自动跳过并逐个报告。
+ */
+function confirmUndoFiles(session: Session): void {
+  if (isSessionBusy(session.id)) {
+    message.warning('该会话正在生成，请等待完成后再撤销文件改动')
+    return
+  }
+  dialog.warning({
+    title: '撤销文件改动',
+    content: `将「${session.title}」中 AI 对文件的全部改动回退到会话开始前的内容？已手动修改过的文件会自动跳过。`,
+    positiveText: '撤销',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await fileHistoryStore.undoSession(session.id)
+        if (res.count > 0) message.success(`已回退 ${res.count} 个文件的改动`)
+        else if (res.failures.length === 0) message.info('该会话没有可撤销的文件改动')
+        for (const f of res.failures) message.warning(`已跳过 ${f.path}：${f.error}`)
+      } catch (err) {
+        message.error(err instanceof Error ? err.message : String(err))
+      }
     }
   })
 }

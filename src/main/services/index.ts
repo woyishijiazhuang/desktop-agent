@@ -9,12 +9,14 @@ import { McpService } from './mcp-service'
 import { ModelConfigService } from './model-config-service'
 import { KnowledgeService } from './knowledge-service'
 import { BashService } from './bash-service'
+import { FileHistoryService } from './file-history-service'
 import { WorkspaceService } from './workspace-service'
 import { VoiceService } from './voice-service'
 import { UpdateService } from './update-service'
 import { setWindowCloseGuard } from '../infra/window-manager'
 import { clearSessionPermissions } from '../agent/runtime/permission'
 import { bashSessionManager } from '../agent/runtime/bash-session'
+import { gcFileHistoryBlobs } from '../infra/file-history'
 import { createLogger } from '../utils/log'
 
 const log = createLogger('service')
@@ -30,6 +32,7 @@ export const ipcMainServices = initializeIpcMainServices([
   ModelConfigService,
   KnowledgeService,
   BashService,
+  FileHistoryService,
   WorkspaceService,
   VoiceService,
   UpdateService
@@ -46,6 +49,7 @@ log.debug('IPC services 已注册', {
     'modelConfig',
     'knowledge',
     'bash',
+    'fileHistory',
     'workspace',
     'voice',
     'update'
@@ -62,6 +66,14 @@ ipcMainServices.workspace.setOnSessionsRemoved(async (sessionIds) => {
     clearSessionPermissions(id)
     bashSessionManager.disposeSession(id)
     await ipcMainServices.agent.evictSession(id)
+  }
+  // file_change_log 行已随会话物理删除 FK 级联清掉，此处回收孤儿快照 blob
+  if (sessionIds.length > 0) {
+    void gcFileHistoryBlobs().catch((err) =>
+      log.warn('工作区删除后快照 GC 失败', {
+        error: err instanceof Error ? err.message : String(err)
+      })
+    )
   }
 })
 

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue'
-import { NTag, NButton, NIcon } from 'naive-ui'
+import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { NTag, NButton, NIcon, useMessage } from 'naive-ui'
 import MarkdownRender from 'markstream-vue'
 import {
   CheckmarkCircleOutline,
@@ -14,6 +14,8 @@ import {
 } from '@vicons/ionicons5'
 import type { ToolCall, ToolResultMessage } from '@earendil-works/pi-ai'
 import type { ToolStatus } from '@renderer/store/useChatStore'
+import { useChatStore } from '@renderer/store/useChatStore'
+import { useFileHistoryStore } from '@renderer/store/useFileHistoryStore'
 import { useThemeStore } from '@renderer/store/useThemeStore'
 import { useBackgroundStore } from '@renderer/store/useBackgroundStore'
 import { useCopy } from '@renderer/composables/useCopy'
@@ -89,6 +91,72 @@ const bgStore = useBackgroundStore()
 // 后台会话实际状态由 store 驱动（main 推送 + 面板挂载时拉取）；未加载过则补拉一次，
 // 避免应用重启后凭历史消息的 background 标记误判「后台运行中」
 if (!bgStore.loaded) void bgStore.refresh()
+
+// ==================== 文件撤销（write_file / edit_file） ====================
+const chatStore = useChatStore()
+const fileHistoryStore = useFileHistoryStore()
+const toast = useMessage()
+
+/**
+ * 本卡片的文件变更项（fileHistory store 按 toolCallId 维护，状态跨重启准确）：
+ * applied → 显示撤销按钮；undone/superseded/skipped → 状态标签；无记录 → 无撤销 UI。
+ * 仅在工具已出结果（落盘完成）后展示，生成中（会话 busy）禁用按钮，避免与在途写入竞争。
+ */
+const undoItem = computed(() => {
+  if (
+    (props.toolCall.name !== 'write_file' && props.toolCall.name !== 'edit_file') ||
+    !props.result
+  ) {
+    return null
+  }
+  return fileHistoryStore.getItem(chatStore.currentSessionId, props.toolCall.id) ?? null
+})
+
+/** 撤销后 / 不可撤销的状态标签文案（原因经原生 title 提示）。 */
+const undoStateText = computed(() => {
+  const item = undoItem.value
+  if (!item) return ''
+  if (item.status === 'undone') return '已撤销'
+  if (item.status === 'superseded') return '已作废'
+  return '不可撤销'
+})
+
+const undoStateTitle = computed(() => {
+  const item = undoItem.value
+  if (!item) return ''
+  if (item.status === 'superseded') return '因整批撤销被连带作废'
+  return item.undoError ?? ''
+})
+
+/** 两段式确认：首击变「确认撤销？」，3 秒内再击执行，超时自动复位。 */
+const undoArmed = ref(false)
+let undoArmTimer = 0
+
+onBeforeUnmount(() => window.clearTimeout(undoArmTimer))
+
+function onUndoClick(): void {
+  const item = undoItem.value
+  if (!item?.undoable || chatStore.isBusy) return
+  if (!undoArmed.value) {
+    undoArmed.value = true
+    undoArmTimer = window.setTimeout(() => (undoArmed.value = false), 3000)
+    return
+  }
+  window.clearTimeout(undoArmTimer)
+  undoArmed.value = false
+  void doUndo(item.logId, item.sessionId)
+}
+
+async function doUndo(logId: number, sessionId: string): Promise<void> {
+  try {
+    const res = await fileHistoryStore.undo(logId, sessionId)
+    // 成功后状态经 onFileChanges 推送翻转（按钮 → 「已撤销」标签），这里只反馈结果
+    if (res.ok) toast.success('已撤销该文件改动')
+    else toast.error(res.error ?? '撤销失败')
+  } catch (err) {
+    toast.error(err instanceof Error ? err.message : String(err))
+  }
+}
 /**
  * edit_file 的标准 unified diff（来自 details.diff，历史消息同样有）：
  * 用 markstream 的 diff 渲染器（Monaco DiffEditor，+/- 着色、hunk 信息）。
@@ -257,6 +325,26 @@ function onCopyResult(): void {
           :class="`tool-card__summary--${resultSummary.tone}`"
         >
           {{ resultSummary.text }}
+        </span>
+        <!-- 文件撤销（write_file / edit_file）：applied → 两段式确认按钮；终态 → 标签 -->
+        <button
+          v-if="undoItem?.undoable"
+          class="tool-card__undo"
+          :class="{ 'tool-card__undo--armed': undoArmed }"
+          :disabled="chatStore.isBusy"
+          :title="
+            chatStore.isBusy ? '会话生成中，暂不可撤销' : '撤销这次文件改动（恢复到改动前内容）'
+          "
+          @click.stop="onUndoClick"
+        >
+          {{ undoArmed ? '确认撤销？' : '撤销' }}
+        </button>
+        <span
+          v-else-if="undoItem && !undoItem.undoable"
+          class="tool-card__undo-state"
+          :title="undoStateTitle"
+        >
+          {{ undoStateText }}
         </span>
         <NTag :type="statusType" size="tiny" round>{{ statusLabel }}</NTag>
         <NIcon v-if="canExpand" class="tool-card__chevron" :size="14" title="展开/收起详情">
@@ -598,6 +686,37 @@ function onCopyResult(): void {
 }
 .tool-card__extra :deep(.n-tag) {
   flex-shrink: 0;
+}
+/* 撤销按钮（write_file / edit_file 卡片）：与状态标签同尺寸的轻量文字按钮；
+   两段式确认的 armed 态转警示色；生成中禁用（防与在途写入竞争） */
+.tool-card__undo {
+  flex-shrink: 0;
+  padding: 0 4px;
+  border: none;
+  background: none;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-3);
+  cursor: pointer;
+  border-radius: 3px;
+  &:hover {
+    color: var(--error);
+  }
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+}
+.tool-card__undo--armed {
+  color: var(--error);
+  font-weight: 500;
+}
+/* 撤销终态标签：已撤销 / 已作废 / 不可撤销 */
+.tool-card__undo-state {
+  flex-shrink: 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--text-3);
 }
 .tool-card__chevron {
   color: var(--text-3);

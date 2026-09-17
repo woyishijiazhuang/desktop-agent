@@ -15,6 +15,7 @@ import { createSettingsApi } from './settings'
 import { createKnowledgeApi } from './knowledge'
 import { createWorkspacesApi } from './workspaces'
 import { createVoiceTtsCacheApi } from './voice-tts-cache'
+import { createFileHistoryApi } from './file-history'
 
 // 重新导出类型，保持既有 import 路径（如 '../database'）不变。
 export * from './types'
@@ -111,6 +112,7 @@ export const db = {
   ...createKnowledgeApi(raw),
   ...createWorkspacesApi(raw),
   ...createVoiceTtsCacheApi(raw),
+  ...createFileHistoryApi(raw),
 
   getDbPath(): string {
     return raw.location() ?? ''

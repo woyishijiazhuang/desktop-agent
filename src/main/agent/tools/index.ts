@@ -21,6 +21,7 @@ import { createAskUserTool } from './ask-user'
 import { createTaskTool } from './task'
 import { mcpToolsTool, mcpCallTool } from './mcp'
 import { db } from '../../database'
+import { withFileChangeRecording } from '../../infra/file-history'
 import {
   getSessionFsPolicy,
   isPathWithinAny,
@@ -330,6 +331,52 @@ function wrapSandboxFsPolicy(tool: AgentTool, sessionId: string): AgentTool {
   return { ...tool, execute }
 }
 
+/** 需要记录文件变更历史（供用户在工具卡片上撤销）的写工具。 */
+const FILE_HISTORY_TOOLS = new Set(['write_file', 'edit_file'])
+
+/**
+ * 文件历史记录层（包装链最内层）：write_file / edit_file 落盘前快照原内容、
+ * 落盘后登记 file_change_log，供用户撤销（设计见 docs/file-undo-design.md）。
+ * 外层沙箱拒绝在到达这里之前 throw，不产生记录；记录失败只损失可撤销性，不影响写入。
+ */
+function wrapFileHistory(tool: AgentTool, sessionId: string): AgentTool {
+  const { name } = tool
+  if (!FILE_HISTORY_TOOLS.has(name) || !sessionId) return tool
+  const origExecute = tool.execute
+  const execute = (async (
+    toolCallId: string,
+    params: unknown,
+    signal?: AbortSignal,
+    onUpdate?: unknown
+  ) => {
+    const target = (params as { path?: string } | null | undefined)?.path
+    if (typeof target !== 'string' || !target) {
+      return (origExecute as (...args: unknown[]) => Promise<unknown>).call(
+        tool,
+        toolCallId,
+        params,
+        signal,
+        onUpdate
+      )
+    }
+    return withFileChangeRecording({
+      sessionId,
+      toolCallId,
+      toolName: name,
+      path: target,
+      run: () =>
+        (origExecute as (...args: unknown[]) => Promise<unknown>).call(
+          tool,
+          toolCallId,
+          params,
+          signal,
+          onUpdate
+        )
+    })
+  }) as unknown as typeof tool.execute
+  return { ...tool, execute }
+}
+
 export function buildTools(opts: BuildToolsOptions = { sessionId: '' }): AgentTool[] {
   const overrides = readOverrides()
   const exclude = new Set(opts.exclude ?? [])
@@ -339,7 +386,13 @@ export function buildTools(opts: BuildToolsOptions = { sessionId: '' }): AgentTo
     // 注入判定：默认启用或用户曾显式开启；一旦开启过即长期留在集合内（保持工具数组稳定）
     const everOn = entry.defaultEnabled || overrides[entry.name] === true
     if (!everOn) continue
-    result.push(...entry.build(opts).map((t) => wrapGate(wrapSandboxFsPolicy(t, opts.sessionId))))
+    result.push(
+      ...entry
+        .build(opts)
+        .map((t) =>
+          wrapGate(wrapSandboxFsPolicy(wrapFileHistory(t, opts.sessionId), opts.sessionId))
+        )
+    )
   }
   return result
 }

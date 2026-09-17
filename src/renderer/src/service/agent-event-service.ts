@@ -5,9 +5,11 @@ import { useInteractionStore } from '../store/useInteractionStore'
 import { usePlanStore } from '../store/usePlanStore'
 import { useSessionStore } from '../store/useSessionStore'
 import { useBackgroundStore } from '../store/useBackgroundStore'
+import { useFileHistoryStore } from '../store/useFileHistoryStore'
 import type { Session } from '@main/services/db-service'
 import type { AgentEventPayload, InteractionRequest, PlanProgress } from '@main/agent/types'
 import type { BackgroundSessionInfo } from '@main/agent/runtime/bash-session'
+import type { FileChangesPayload } from '@main/infra/file-history'
 
 /**
  * Agent 事件接收服务：main 进程通过 rendererClient.agentEvent.* 推送事件到此处。
@@ -158,5 +160,13 @@ export class AgentEventService extends IpcService {
   /** 后台命令快照更新（main 在后台会话 启动/退出/终止 时推送全量列表）。 */
   onBackgroundSessions(sessions: BackgroundSessionInfo[]): void {
     useBackgroundStore().setSessions(sessions)
+  }
+
+  /**
+   * 文件变更历史更新（新记录登记 / 撤销后状态翻转）：同步到 fileHistory store，
+   * 工具卡片的「撤销」按钮据此实时出现/翻转为「已撤销」。
+   */
+  onFileChanges(payload: FileChangesPayload): void {
+    useFileHistoryStore().applyChanges(payload.sessionId, payload.items)
   }
 }

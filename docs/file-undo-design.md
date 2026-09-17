@@ -1,7 +1,7 @@
 # 文件撤销（File Undo）设计方案
 
 > 目标读者：本项目维护者
-> 状态：设计稿（未实现）
+> 状态：已实现（阶段 1/2/3 + 清理 GC；阶段 4 `revertTo` 与配额未实现，见十一）
 > 范围：`write_file` / `edit_file` 两个写文件工具的文件级撤销
 
 ---
@@ -128,7 +128,8 @@ CREATE TABLE IF NOT EXISTS file_change_log (
   status        TEXT NOT NULL DEFAULT 'applied'
                 CHECK(status IN ('applied','undone','superseded','failed','skipped')),
   undo_error    TEXT,                 -- 不可撤销原因（外部修改/大文件/二进制…）
-  created_at    INTEGER NOT NULL DEFAULT (unixepoch() * 1000)
+  created_at    INTEGER NOT NULL DEFAULT (unixepoch() * 1000),
+  FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 ) STRICT;
 
 CREATE INDEX IF NOT EXISTS idx_fcl_session ON file_change_log(session_id, id);
@@ -137,6 +138,7 @@ CREATE INDEX IF NOT EXISTS idx_fcl_created ON file_change_log(created_at);
 ```
 
 - 与既有约定一致：时间列用 unix 毫秒、表用 `STRICT`。
+- 实现偏差：比初稿多一条 `FOREIGN KEY ... ON DELETE CASCADE` —— 会话物理删除（清空回收站 / 到期清理 / 工作区删除）由 FK 级联清行，免去在各删除路径逐个挂删除钩子；软删除（回收站）行仍保留（会话可恢复）。孤儿快照由 blob GC 回收（见十）。
 - `schema.ts` 的 `CREATE TABLE IF NOT EXISTS` 对老库自动建表，无需迁移代码。
 - `status` 语义：
   - `applied`：已落盘、可撤销；
@@ -257,13 +259,13 @@ undoSession(sessionId: string): RevertResult
 
 ## 十、清理与配额
 
-| 时机                                                         | 动作                                                                                                               |
-| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
-| 会话软删除（回收站）                                         | 保留记录（可恢复会话）                                                                                             |
-| 会话物理删除（`purgeTrash` / `purgeExpiredDeletedSessions`） | 删除该会话全部 log 行 → 触发 blob GC                                                                               |
-| 工作区删除（`setOnSessionsRemoved`）                         | 同上，按 sessionIds 批量                                                                                           |
-| 启动时                                                       | 一次 blob GC（删除无任何 log 引用的 hash）                                                                         |
-| 配额                                                         | 单会话 log 上限（建议 500 条）、blob 总量上限（建议 500 MB）、保留天数（建议 30 天）；超限按最老优先淘汰 log 并 GC |
+| 时机                                                         | 动作                                                                                                                                                                 |
+| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 会话软删除（回收站）                                         | 保留记录（可恢复会话）                                                                                                                                               |
+| 会话物理删除（`purgeTrash` / `purgeExpiredDeletedSessions`） | log 行经 FK 级联删除 → 触发 blob GC（已实现）                                                                                                                        |
+| 工作区删除（`setOnSessionsRemoved`）                         | 同上，FK 级联清行后触发 blob GC（已实现）                                                                                                                            |
+| 启动时                                                       | 一次 blob GC：删除已无任何 log 行引用的 hash（`FileHistoryService` 构造时触发，已实现；含 undone/superseded 行引用——会话级回退可能需要已被单条撤销的首条记录的快照） |
+| 配额                                                         | 单会话 log 上限（建议 500 条）、blob 总量上限（建议 500 MB）、保留天数（建议 30 天）；超限按最老优先淘汰 log 并 GC（**未实现**）                                     |
 
 挂载点与 `clearSessionPermissions` / `deleteSessionAttachments` 完全同构，复用既有链路，不新增生命周期机制。
 
@@ -271,15 +273,31 @@ undoSession(sessionId: string): RevertResult
 
 ## 十一、分期实施计划
 
-| 阶段                   | 交付                                                                      | 验收标准                                                                  |
-| ---------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| 1. 快照基础设施        | `SnapshotStore`（blob 读写/GC）+ `file_change_log` 表 + `wrapFileHistory` | 每次 write/edit 后 DB 有记录、blob 有旧内容；失败/被拒调用无记录          |
-| 2. 会话级撤销          | `FileHistoryService.undoSession` + 会话入口 + `onFileChanges`             | 撤销后文件内容与操作前逐字节一致（含 BOM / CRLF / 尾换行）                |
-| 3. 单条撤销 + 卡片按钮 | `undo(logId)` + `ToolCallCard` 按钮 + 已撤销态                            | 乐观锁与 `external_modified` 拒绝路径可用；手工改动后撤销被拒             |
-| 4. 回退到某条          | `revertTo` + 消息级入口 + cascade 标记                                    | 跨多文件、多步回退后所有受影响文件状态正确；被作废条目状态为 `superseded` |
-| 5. 清理与配额          | 回收站/工作区/启动三处 GC + 配额                                          | 删除会话后 blob 无泄漏；超限淘汰后仍可撤销保留期内记录                    |
+| 阶段                   | 交付                                                                      | 验收标准                                                                  | 状态                   |
+| ---------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------- |
+| 1. 快照基础设施        | `SnapshotStore`（blob 读写/GC）+ `file_change_log` 表 + `wrapFileHistory` | 每次 write/edit 后 DB 有记录、blob 有旧内容；失败/被拒调用无记录          | ✅ 已实现              |
+| 2. 会话级撤销          | `FileHistoryService.undoSession` + 会话入口 + `onFileChanges`             | 撤销后文件内容与操作前逐字节一致（含 BOM / CRLF / 尾换行）                | ✅ 已实现              |
+| 3. 单条撤销 + 卡片按钮 | `undo(logId)` + `ToolCallCard` 按钮 + 已撤销态                            | 乐观锁与 `external_modified` 拒绝路径可用；手工改动后撤销被拒             | ✅ 已实现              |
+| 4. 回退到某条          | `revertTo` + 消息级入口 + cascade 标记                                    | 跨多文件、多步回退后所有受影响文件状态正确；被作废条目状态为 `superseded` | 未实现                 |
+| 5. 清理与配额          | 回收站/工作区/启动三处 GC + 配额                                          | 删除会话后 blob 无泄漏；超限淘汰后仍可撤销保留期内记录                    | GC 已实现 / 配额未实现 |
 
 **验证手段**：真实文件（含 CRLF / 无尾换行 / BOM / 中文）做「写入 → 撤销 → 逐字节比对」；并发场景用「撤销前手工改文件」验证拒绝路径。
+
+**实现落点**（2026-09）：
+
+| 层            | 文件                                                                                              |
+| ------------- | ------------------------------------------------------------------------------------------------- |
+| 表结构        | `src/main/database/schema.ts`（`file_change_log` + 3 索引）                                       |
+| log 读写 API  | `src/main/database/file-history.ts`（组装进 `db` 门面）                                           |
+| 快照 + 撤销域 | `src/main/infra/file-history.ts`（blob 读写 / 记录 / undo / undoSession / GC / 推送）             |
+| 工具包装层    | `src/main/agent/tools/index.ts` 的 `wrapFileHistory`（`wrapGate → sandbox → fileHistory → 工具`） |
+| IPC 服务      | `src/main/services/file-history-service.ts`（namespace `fileHistory`）                            |
+| 推送          | `rendererClient.agentEvent.onFileChanges({ sessionId, items })` → 渲染侧 `agent-event-service.ts` |
+| 渲染侧状态    | `src/renderer/src/store/useFileHistoryStore.ts`（全量拉取 + 推送合并）                            |
+| 单条撤销 UI   | `ToolCallCard.vue` 头部（两段式确认按钮 + 已撤销/已作废/不可撤销标签）                            |
+| 会话级入口 UI | `SessionItem.vue` ⋯ 菜单「撤销文件改动」→ `SessionSidebar.vue` 确认框                             |
+
+注：`undoSession` 逐文件校验「期望状态」（按时间线重放 applied/skipped→after、undone→before），外部修改过的文件跳过并逐个报告；最早一条 applied 标 `undone`、其余标 `superseded`。子代理（task 工具）复用宿主会话 id 记录，会话级撤销天然覆盖其改动。
 
 ---
 

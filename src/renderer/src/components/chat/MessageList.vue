@@ -10,6 +10,7 @@ import WelcomeView from './WelcomeView.vue'
 import { useStableMessageKeys } from '@renderer/composables/useStableMessageKeys'
 import { provideStickToBottomPause } from '@renderer/composables/useStickToBottomPause'
 import { useChatStore } from '@renderer/store/useChatStore'
+import { useFileHistoryStore } from '@renderer/store/useFileHistoryStore'
 
 const props = defineProps<{
   messages: AgentMessage[]
@@ -23,6 +24,17 @@ const props = defineProps<{
 }>()
 const emit = defineEmits<{ send: [text: string]; regenerate: [] }>()
 const chatStore = useChatStore()
+
+// 文件撤销状态：进入会话时拉取该会话的文件变更全量（工具卡片撤销按钮的状态源）；
+// 之后的增量经 agentEvent.onFileChanges 推送合并，跨重启状态仍准确。
+const fileHistoryStore = useFileHistoryStore()
+watch(
+  () => props.sessionId,
+  (id) => {
+    if (id) void fileHistoryStore.ensureSessionLoaded(id)
+  },
+  { immediate: true }
+)
 
 const keyed = useStableMessageKeys(() => props.messages)
 
