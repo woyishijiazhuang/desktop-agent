@@ -42,6 +42,8 @@ export interface UndoResult {
   error?: string
   /** 文件已被外部修改（乐观锁校验失败）：UI 据此给出针对性提示。 */
   externalModified?: boolean
+  /** 连带回退的同文件后续改动条数（>0 = 该文件整体回退到本条之前，后续改动被作废）。 */
+  cascaded?: number
 }
 
 export interface RevertFailure {
@@ -232,11 +234,15 @@ async function readBlob(hash: string): Promise<Buffer | null> {
 }
 
 /**
- * 撤销单条改动（阶段一）。安全闸（任一不满足即拒绝）：
+ * 撤销某次改动（阶段一 + 文件级连带回退）。安全闸（任一不满足即拒绝）：
  * 1. status === 'applied'；
- * 2. 同路径无更晚的 applied 记录（superseded_by_later_ops，跨会话）；
- * 3. 乐观锁：当前文件 sha256 === after_hash（保护用户手工编辑 / 其他程序写入）。
- * 执行：新建（before_hash=null）→ 校验后删除文件；否则快照原子写回。
+ * 2. 乐观锁：当前文件内容与「期望状态」一致（保护用户手工编辑 / 其他程序写入）；
+ * 3. 时点前首条记录若未存快照（skipped）→ 基线不可知，拒绝。
+ * 执行：目标为该条生效前的内容（新建类 → 校验后删除文件），否则快照原子写回。
+ *
+ * 若该文件此后还有 applied 改动，不做「只撤中间那一条」——后续改动叠在它上面，
+ * 没有中间态可复原；此时把**该文件**整体回退到这条之前（等价于限定单文件的 revertTo），
+ * 后续记录标 superseded（只影响该文件，其它文件不动），并在结果里报告 cascaded 条数。
  */
 export async function undoFileChange(logId: number, sessionId: string): Promise<UndoResult> {
   const row = db.getFileChange(logId)
@@ -250,16 +256,24 @@ export async function undoFileChange(logId: number, sessionId: string): Promise<
   }
   if (row.status !== 'applied') return { ok: false, error: '该改动当前不可撤销' }
 
-  if (db.hasAppliedFileChangeAfter(row.path, row.id)) {
+  // 该文件在本会话的全部记录：时点前（重放求目标状态）、时点后仍 applied（连带回退）
+  const allRows = db.listFileChangesBySession(sessionId).filter((r) => r.path === row.path)
+  const rowsBefore = allRows.filter((r) => r.id < row.id)
+  const laterApplied = allRows.filter((r) => r.status === 'applied' && r.id > row.id)
+  const first = allRows[0]
+  if (rowsBefore.length > 0 && first.status === 'skipped') {
     return {
       ok: false,
-      error:
-        '该文件在此之后还有其它改动：请撤销最新一次改动，或使用会话菜单的「撤销本会话的文件改动」'
+      error: `本会话首次改动未记录快照（${first.undoError ?? '原因未知'}），无法回退到此位置`
     }
   }
+  const targetHash =
+    rowsBefore.length > 0 ? replayState(rowsBefore, first.beforeHash) : row.beforeHash
+  // 期望当前状态：无后续改动时严格比对该条写入后的内容；有后续改动时按账本重放
+  const expected = laterApplied.length > 0 ? replayState(allRows, first.beforeHash) : row.afterHash
 
   const cur = await currentHash(row.path)
-  if (cur !== row.afterHash) {
+  if (cur !== expected) {
     return {
       ok: false,
       externalModified: true,
@@ -269,10 +283,10 @@ export async function undoFileChange(logId: number, sessionId: string): Promise<
 
   try {
     await assertUndoWritable(sessionId, row.path)
-    if (row.beforeHash === null) {
-      await rm(row.path)
+    if (targetHash === null) {
+      if (expected !== null) await rm(row.path) // 该时点文件尚不存在（本次新建）：校验后删除
     } else {
-      const blob = await readBlob(row.beforeHash)
+      const blob = await readBlob(targetHash)
       if (!blob) return { ok: false, error: '撤销快照数据缺失（可能已被清理），无法撤销' }
       await atomicWrite(row.path, blob)
     }
@@ -280,16 +294,31 @@ export async function undoFileChange(logId: number, sessionId: string): Promise<
     return { ok: false, error: err instanceof Error ? err.message : String(err) }
   }
 
-  db.updateFileChangeStatus(logId, 'undone')
-  const updated = db.getFileChange(logId)
-  if (updated) pushFileChanges(sessionId, [updated])
+  db.updateFileChangeStatus(row.id, 'undone')
+  for (const r of laterApplied) db.updateFileChangeStatus(r.id, 'superseded')
+  pushFileChanges(sessionId, db.listFileChangesBySession(sessionId))
   log.info('撤销文件改动', {
     logId,
     path: row.path,
     toolName: row.toolName,
-    created: row.createdAt
+    created: row.createdAt,
+    cascaded: laterApplied.length
   })
-  return { ok: true }
+  return { ok: true, cascaded: laterApplied.length }
+}
+
+/**
+ * 按时间线重放某文件的状态机：baseline 起步，applied/skipped → after（写入确实发生），
+ * undone → before；superseded 不改变状态（该次改动的效果已由整批回退覆盖）。
+ * 用于推导「当前应有的内容」（撤销前置校验）与「回退目标时点的内容」。
+ */
+function replayState(rows: FileChangeRow[], baseline: string | null): string | null {
+  let state = baseline
+  for (const r of rows) {
+    if (r.status === 'applied' || r.status === 'skipped') state = r.afterHash
+    else if (r.status === 'undone') state = r.beforeHash
+  }
+  return state
 }
 
 /**
@@ -318,11 +347,7 @@ export async function undoSessionFileChanges(sessionId: string): Promise<RevertR
     const targetHash = first.beforeHash
 
     // 期望当前状态：从首条记录前重放（superseded/failed 不改变状态；skipped 的写入确实发生）
-    let expected: string | null = first.beforeHash
-    for (const r of allRows) {
-      if (r.status === 'applied' || r.status === 'skipped') expected = r.afterHash
-      else if (r.status === 'undone') expected = r.beforeHash
-    }
+    const expected = replayState(allRows, first.beforeHash)
     const cur = await currentHash(file)
     if (cur !== expected) {
       failures.push({ path: file, error: '文件已被外部修改，已跳过' })
@@ -359,6 +384,82 @@ export async function undoSessionFileChanges(sessionId: string): Promise<RevertR
   const updatedRows = db.listFileChangesBySession(sessionId)
   pushFileChanges(sessionId, updatedRows)
   log.info('撤销会话文件改动', { sessionId, files: count, skipped: failures.length })
+  return { ok: true, count, failures }
+}
+
+/**
+ * 回退到某个时间点（阶段四，UI「回退到此处」）：把 id ≥ logId 的本会话所有 applied 改动
+ * 涉及的文件，恢复到该时点的内容（等价「该条记录生效前」的状态）。
+ * 与 undoSession 同一套安全闸，逐文件校验并报告：
+ * - 期望当前状态 = 全量重放（不一致 = 被外部修改过 → 跳过）；
+ * - 回退目标状态 = 时点前记录的重放结果；时点前无记录时取时点后最早一条的 before_hash
+ *   （即这批改动的起点）。时点前首条记录是 skipped（未存快照）则基线不可知，拒绝该文件；
+ * - 目标为 null（该文件在该时点尚不存在）→ 校验后删除文件。
+ * 收尾：受影响文件中最早一条 applied 标 undone（保留撤销链可重放），其余标 superseded。
+ */
+export async function revertToFileChange(sessionId: string, logId: number): Promise<RevertResult> {
+  const rows = db.listFileChangesBySession(sessionId)
+  if (!rows.some((r) => r.id === logId)) {
+    return { ok: false, count: 0, failures: [], error: '回退目标不存在（会话可能已被清理）' }
+  }
+  // 子代理（task）复用宿主会话 id 记录，无需合并父子会话
+  const pathRows = new Map<string, FileChangeRow[]>()
+  for (const r of rows) {
+    const list = pathRows.get(r.path)
+    if (list) list.push(r)
+    else pathRows.set(r.path, [r])
+  }
+
+  const failures: RevertFailure[] = []
+  let count = 0
+  for (const [file, allRows] of pathRows) {
+    const appliedAfter = allRows.filter((r) => r.id >= logId && r.status === 'applied')
+    if (appliedAfter.length === 0) continue // 该文件在本时点之后无改动
+    const first = allRows[0]
+    const rowsBefore = allRows.filter((r) => r.id < logId)
+    // 时点前的基线来自首条记录的 before_hash；首条未存快照则无法重放该文件的历史
+    if (rowsBefore.length > 0 && first.status === 'skipped') {
+      failures.push({
+        path: file,
+        error: `本会话首次改动未记录快照（${first.undoError ?? '原因未知'}），无法回退到此位置`
+      })
+      continue
+    }
+    const targetHash =
+      rowsBefore.length > 0 ? replayState(rowsBefore, first.beforeHash) : appliedAfter[0].beforeHash
+    const expected = replayState(allRows, first.beforeHash)
+
+    const cur = await currentHash(file)
+    if (cur !== expected) {
+      failures.push({ path: file, error: '文件已被外部修改，已跳过' })
+      continue
+    }
+
+    try {
+      await assertUndoWritable(sessionId, file)
+      if (targetHash === null) {
+        if (expected !== null) await rm(file) // 该时点文件尚不存在：校验后删除
+      } else {
+        const blob = await readBlob(targetHash)
+        if (!blob) throw new Error('快照数据缺失（可能已被清理）')
+        await atomicWrite(file, blob)
+      }
+      db.updateFileChangeStatus(appliedAfter[0].id, 'undone')
+      for (const r of appliedAfter.slice(1)) db.updateFileChangeStatus(r.id, 'superseded')
+      count++
+    } catch (err) {
+      failures.push({ path: file, error: err instanceof Error ? err.message : String(err) })
+    }
+  }
+
+  const updatedRows = db.listFileChangesBySession(sessionId)
+  pushFileChanges(sessionId, updatedRows)
+  log.info('回退文件改动到指定记录', {
+    sessionId,
+    logId,
+    files: count,
+    skipped: failures.length
+  })
   return { ok: true, count, failures }
 }
 

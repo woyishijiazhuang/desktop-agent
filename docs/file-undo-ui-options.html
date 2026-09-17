@@ -1,0 +1,1529 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>文件撤销 UI · 调研与候选方案</title>
+    <style>
+      /* 配色直接对齐 src/renderer/src/assets/base.css 的暗色 token，保证 mockup 与真实产品一致 */
+      :root {
+        --bg: #18181b;
+        --bg-soft: #1f1f23;
+        --bg-mute: #27272a;
+        --border: #2a2a2e;
+        --border-soft: #232327;
+        --text-1: #f4f4f5;
+        --text-2: #a1a1aa;
+        --text-3: #71717a;
+        --primary: #a78bfa;
+        --primary-soft: rgba(167, 139, 250, 0.16);
+        --success: #34d399;
+        --success-soft: rgba(52, 211, 153, 0.15);
+        --warning: #fbbf24;
+        --warning-soft: rgba(251, 191, 36, 0.15);
+        --error: #f87171;
+        --error-soft: rgba(248, 113, 113, 0.15);
+        --code-bg: #0c0c0e;
+        --radius: 8px;
+        --radius-lg: 12px;
+        --mono: 'SF Mono', 'Fira Code', ui-monospace, Menlo, monospace;
+      }
+      * {
+        box-sizing: border-box;
+        margin: 0;
+      }
+      body {
+        background: #101012;
+        color: var(--text-1);
+        font:
+          14px/1.6 -apple-system,
+          BlinkMacSystemFont,
+          'Segoe UI',
+          'PingFang SC',
+          'Hiragino Sans GB',
+          'Microsoft YaHei',
+          sans-serif;
+        padding: 32px 24px 96px;
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap {
+        max-width: 1180px;
+        margin: 0 auto;
+      }
+      h1 {
+        font-size: 22px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+      }
+      h2 {
+        font-size: 17px;
+        font-weight: 600;
+        margin: 40px 0 14px;
+        padding-bottom: 8px;
+        border-bottom: 1px solid var(--border);
+      }
+      h3 {
+        font-size: 15px;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+      p.sub {
+        color: var(--text-2);
+        margin-top: 8px;
+        max-width: 900px;
+      }
+      a {
+        color: var(--primary);
+        text-decoration: none;
+      }
+      a:hover {
+        text-decoration: underline;
+      }
+      code {
+        font-family: var(--mono);
+        font-size: 12.5px;
+        background: var(--code-bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 1px 5px;
+        color: #d4d4d8;
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+        margin-top: 12px;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 9px 10px;
+        border-bottom: 1px solid var(--border-soft);
+        vertical-align: top;
+      }
+      th {
+        color: var(--text-2);
+        font-weight: 500;
+        background: var(--bg-soft);
+        white-space: nowrap;
+      }
+      td strong {
+        color: var(--text-1);
+      }
+      .chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-top: 14px;
+      }
+      .chip {
+        font-size: 12px;
+        padding: 3px 9px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--bg-soft);
+        color: var(--text-2);
+      }
+      .chip.ok {
+        border-color: rgba(52, 211, 153, 0.35);
+        color: var(--success);
+      }
+      .chip.no {
+        border-color: rgba(248, 113, 113, 0.3);
+        color: var(--error);
+      }
+
+      /* ---------- 方案页签 ---------- */
+      .tabs {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin: 18px 0 14px;
+      }
+      .tab {
+        padding: 7px 14px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--bg-soft);
+        color: var(--text-2);
+        font-size: 13px;
+        cursor: pointer;
+      }
+      .tab:hover {
+        color: var(--text-1);
+      }
+      .tab.active {
+        border-color: var(--primary);
+        background: var(--primary-soft);
+        color: var(--primary);
+      }
+      .panel {
+        display: none;
+      }
+      .panel.active {
+        display: block;
+      }
+      .option {
+        display: grid;
+        grid-template-columns: minmax(420px, 1.15fr) minmax(300px, 0.85fr);
+        gap: 20px;
+        align-items: start;
+      }
+      @media (max-width: 900px) {
+        .option {
+          grid-template-columns: 1fr;
+        }
+      }
+      .stage {
+        background: var(--bg-soft);
+        border: 1px solid var(--border);
+        border-radius: var(--radius-lg);
+        padding: 14px;
+      }
+      .stage-label {
+        font-size: 11px;
+        color: var(--text-3);
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+        margin-bottom: 10px;
+      }
+      .notes {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .note {
+        background: var(--bg-soft);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        padding: 12px 14px;
+      }
+      .note h4 {
+        font-size: 13px;
+        margin-bottom: 6px;
+        color: var(--text-1);
+      }
+      .note ul {
+        padding-left: 18px;
+        color: var(--text-2);
+        font-size: 13px;
+      }
+      .note li + li {
+        margin-top: 4px;
+      }
+      .note.pro h4 {
+        color: var(--success);
+      }
+      .note.con h4 {
+        color: var(--error);
+      }
+      .note.cost h4 {
+        color: var(--warning);
+      }
+      .tag-mini {
+        display: inline-block;
+        font-size: 11px;
+        padding: 1px 7px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        color: var(--text-2);
+        margin-left: 6px;
+        vertical-align: 1px;
+      }
+
+      /* ---------- 复刻应用 mockup ---------- */
+      .app {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        overflow: hidden;
+        font-size: 13px;
+      }
+      .app-bar {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        background: var(--bg-soft);
+        border-bottom: 1px solid var(--border);
+        color: var(--text-3);
+        font-size: 12px;
+      }
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--bg-mute);
+        border: 1px solid var(--border);
+      }
+      .app-body {
+        padding: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      .msg-user {
+        align-self: flex-end;
+        max-width: 78%;
+        background: var(--bg-mute);
+        border-radius: 10px;
+        padding: 7px 11px;
+        color: var(--text-1);
+        position: relative;
+      }
+      .msg-ai {
+        color: var(--text-2);
+        font-size: 13px;
+      }
+
+      .tool-card {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--bg-soft);
+      }
+      .tool-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 7px 10px;
+      }
+      .tool-title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        min-width: 0;
+      }
+      .tool-name {
+        font-family: var(--mono);
+        font-weight: 600;
+        color: var(--text-1);
+        white-space: nowrap;
+      }
+      .tool-reason {
+        color: var(--text-3);
+        font-size: 12px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .tool-extra {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        flex-shrink: 0;
+      }
+      .tag {
+        font-size: 11px;
+        padding: 1px 8px;
+        border-radius: 999px;
+        border: 1px solid transparent;
+        white-space: nowrap;
+      }
+      .tag.success {
+        color: var(--success);
+        background: var(--success-soft);
+      }
+      .tag.muted {
+        color: var(--text-3);
+        background: var(--bg-mute);
+      }
+      .tag.warn {
+        color: var(--warning);
+        background: var(--warning-soft);
+      }
+      .tag.error {
+        color: var(--error);
+        background: var(--error-soft);
+      }
+      .undo-btn {
+        font-size: 12px;
+        padding: 0 5px;
+        border: none;
+        background: none;
+        color: var(--text-3);
+        cursor: pointer;
+        border-radius: 3px;
+        line-height: 1.4;
+      }
+      .undo-btn:hover {
+        color: var(--error);
+      }
+      .undo-btn.armed {
+        color: var(--error);
+        font-weight: 600;
+      }
+      .undo-btn[disabled] {
+        opacity: 0.45;
+        cursor: not-allowed;
+        color: var(--text-3);
+      }
+      .undo-btn[disabled]:hover {
+        color: var(--text-3);
+      }
+      .undo-state {
+        font-size: 12px;
+        color: var(--text-3);
+        cursor: default;
+      }
+      .undo-state.done {
+        color: var(--success);
+      }
+      .hint {
+        margin: 6px 0 0;
+        font-size: 12px;
+        color: var(--text-3);
+      }
+      .tip {
+        position: absolute;
+        z-index: 5;
+        background: #3f3f46;
+        color: var(--text-1);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 5px 9px;
+        font-size: 12px;
+        white-space: nowrap;
+        box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+        opacity: 0;
+        transition: opacity 0.12s;
+        pointer-events: none;
+      }
+      .tip.show {
+        opacity: 1;
+      }
+      .diff {
+        font-family: var(--mono);
+        font-size: 12px;
+        background: var(--code-bg);
+        border-top: 1px solid var(--border);
+        padding: 8px 10px;
+        color: var(--text-2);
+        line-height: 1.5;
+      }
+      .diff .del {
+        color: #f87171;
+      }
+      .diff .add {
+        color: #34d399;
+      }
+
+      /* 方案 B：消息 hover 回退 */
+      .msg-user .revert-arrow {
+        position: absolute;
+        right: -30px;
+        top: 50%;
+        transform: translateY(-50%);
+        width: 22px;
+        height: 22px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--bg-soft);
+        color: var(--text-2);
+        display: grid;
+        place-items: center;
+        cursor: pointer;
+        opacity: 0;
+        transition: opacity 0.12s;
+        font-size: 12px;
+      }
+      .msg-user:hover .revert-arrow {
+        opacity: 1;
+      }
+      .menu {
+        position: absolute;
+        right: -8px;
+        top: 30px;
+        z-index: 6;
+        min-width: 210px;
+        background: var(--bg-soft);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 5px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+        display: none;
+        text-align: left;
+      }
+      .menu.show {
+        display: block;
+      }
+      .menu-item {
+        padding: 6px 9px;
+        border-radius: 6px;
+        font-size: 13px;
+        color: var(--text-1);
+        cursor: pointer;
+      }
+      .menu-item:hover {
+        background: var(--bg-mute);
+      }
+      .menu-item.dim {
+        color: var(--text-3);
+        cursor: default;
+      }
+      .menu-item.dim:hover {
+        background: transparent;
+      }
+      .menu-sep {
+        height: 1px;
+        background: var(--border);
+        margin: 4px 6px;
+      }
+      .menu-hint {
+        font-size: 11px;
+        color: var(--text-3);
+        padding: 4px 9px 2px;
+      }
+
+      /* 方案 C：改动面板 */
+      .panel-head-btn {
+        font-size: 12px;
+        padding: 3px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: var(--bg-mute);
+        color: var(--text-2);
+        cursor: pointer;
+      }
+      .panel-head-btn:hover {
+        color: var(--text-1);
+      }
+      .drawer {
+        position: relative;
+        background: var(--bg-soft);
+        border-left: 1px solid var(--border);
+        padding: 10px;
+      }
+      .drawer-title {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 8px;
+      }
+      .file-group {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        margin-bottom: 8px;
+        overflow: hidden;
+      }
+      .file-group-head {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 7px 9px;
+        background: var(--bg);
+      }
+      .file-path {
+        font-family: var(--mono);
+        font-size: 12px;
+        color: var(--text-1);
+        flex: 1;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .change-row {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        padding: 6px 9px 6px 26px;
+        border-top: 1px solid var(--border-soft);
+        font-size: 12px;
+        color: var(--text-2);
+      }
+      .change-row:hover {
+        background: var(--bg-mute);
+      }
+      .change-row .who {
+        font-family: var(--mono);
+        color: var(--text-2);
+      }
+      .change-row .when {
+        color: var(--text-3);
+      }
+      .change-row .grow {
+        flex: 1;
+      }
+      input[type='checkbox'] {
+        accent-color: var(--primary);
+        width: 13px;
+        height: 13px;
+      }
+      .drawer-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding-top: 8px;
+        border-top: 1px solid var(--border);
+      }
+      .btn {
+        font-size: 12px;
+        padding: 5px 12px;
+        border-radius: 6px;
+        border: 1px solid var(--border);
+        background: var(--bg-mute);
+        color: var(--text-1);
+        cursor: pointer;
+      }
+      .btn.primary {
+        background: var(--primary);
+        border-color: var(--primary);
+        color: #1a1029;
+        font-weight: 600;
+      }
+      .btn.ghost {
+        background: transparent;
+        color: var(--text-2);
+      }
+      .btn[disabled] {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      /* 方案 D：snackbar / 时间线 */
+      .snackbar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        background: #2f2f33;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        padding: 9px 14px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        font-size: 13px;
+        opacity: 0;
+        transform: translateY(8px);
+        transition: all 0.18s;
+      }
+      .snackbar.show {
+        opacity: 1;
+        transform: none;
+      }
+      .snackbar .undo-link {
+        color: var(--primary);
+        cursor: pointer;
+        font-weight: 600;
+      }
+      .timeline {
+        border-left: 2px dashed var(--border);
+        margin-left: 6px;
+        padding-left: 14px;
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .tl-node {
+        position: relative;
+      }
+      .tl-node::before {
+        content: '';
+        position: absolute;
+        left: -21px;
+        top: 6px;
+        width: 9px;
+        height: 9px;
+        border-radius: 50%;
+        background: var(--bg-soft);
+        border: 2px solid var(--text-3);
+      }
+      .tl-node.done::before {
+        border-color: var(--success);
+        background: var(--success);
+      }
+      .tl-node.current::before {
+        border-color: var(--primary);
+        background: var(--primary);
+      }
+      .tl-label {
+        font-size: 12.5px;
+        color: var(--text-2);
+      }
+      .tl-meta {
+        font-size: 11px;
+        color: var(--text-3);
+      }
+
+      .verdict {
+        margin-top: 14px;
+        border: 1px solid rgba(167, 139, 250, 0.35);
+        background: var(--primary-soft);
+        border-radius: var(--radius);
+        padding: 14px 16px;
+      }
+      .verdict h4 {
+        color: var(--primary);
+        font-size: 14px;
+        margin-bottom: 6px;
+      }
+      .verdict ul {
+        padding-left: 18px;
+        color: var(--text-1);
+        font-size: 13px;
+      }
+      .footnote {
+        margin-top: 34px;
+        color: var(--text-3);
+        font-size: 12px;
+      }
+      .footnote li {
+        margin-bottom: 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>文件撤销 UI · 调研与候选方案</h1>
+      <p class="sub">
+        目标：为 <code>write_file</code> / <code>edit_file</code> 的撤销能力换一套更清晰的
+        UI。下面是市面主流做法的调研结论，以及 4 个可直接落地的候选方案（含可点击的交互
+        mockup）。请挑选或组合。
+      </p>
+
+      <div class="chips" style="margin-top: 12px">
+        <span class="chip ok"
+          >2026-09 进展：已采纳方案
+          B，<code>revertTo</code>（阶段四）与消息级「回退到这里」入口已实现 → 见
+          docs/file-undo-design.md</span
+        >
+      </div>
+
+      <div class="chips">
+        <span class="chip ok">后端已具备：单条撤销 undo(logId)（乐观锁 + superseded 闸）</span>
+        <span class="chip ok">后端已具备：会话级撤销 undoSession(sessionId)</span>
+        <span class="chip ok">后端已具备：按会话列出全部改动 + 状态推送</span>
+        <span class="chip ok">后端已具备：revertTo（回退到某条，阶段四已实现）</span>
+        <span class="chip no">后端缺失：redo / 复活</span>
+        <span class="chip no">后端缺失：批量按勾选撤销</span>
+      </div>
+
+      <h2>一、市面做法调研</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>产品</th>
+            <th>模型粒度</th>
+            <th>入口与交互</th>
+            <th>可借鉴点</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+              <strong>Claude Code</strong><br /><a
+                href="https://code.claude.com/docs/en/checkpointing"
+                target="_blank"
+                >/rewind 文档</a
+              >
+            </td>
+            <td>每个用户 prompt 一个 checkpoint（保留最近 100 个）</td>
+            <td>
+              <code>/rewind</code> 或输入框为空时连按两次 <code>Esc</code> → 弹出「checkpoint
+              列表」，选中某条后再选动作：还原代码/还原对话/两者/摘要/取消
+            </td>
+            <td>
+              动作是<b>二次选择</b>而非一堆按钮挤在列表里；代码与对话解耦（「只还原代码，保留对话」）；明确写了不可覆盖
+              bash 改动
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <strong>Cursor</strong><br /><a href="https://cursor.com/help/ai-features/agent"
+                >Agent 文档</a
+              >
+            </td>
+            <td>每轮对话一个 checkpoint</td>
+            <td>
+              hover 上一条用户消息 → 右下角出现 <b>Restore Checkpoint</b> →
+              一次性回滚该点之后所有文件改动（不动对话）
+            </td>
+            <td>
+              入口藏在「用户消息
+              hover」，不占聊天区；按<b>时间点</b>回退比按文件回退更符合直觉；官方明确此处是高频回归点（按钮丢失会引发大量投诉）→
+              可见性要够
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <strong>Cline</strong><br /><a
+                href="https://docs.cline.bot/core-workflows/checkpoints"
+                >Checkpoints 文档</a
+              >
+            </td>
+            <td>每次 tool use 一个 checkpoint（影子 git）</td>
+            <td>
+              对话流里插一条「Checkpoint」虚线 + 两个按钮：<b>Compare</b>（打开 diff）/
+              <b>Restore</b>（三选一：只还原文件 / 只还原任务 / 两者）
+            </td>
+            <td>
+              「Compare 先看再决定」的两段式心智；<b>任务级「查看本次新增改动」</b>汇总视图（View
+              New Changes）解决了「文件多、逐个卡片点太慢」
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <strong>Windsurf / Cascade</strong><br /><a
+                href="https://docs.windsurf.com/windsurf/cascade/cascade"
+                target="_blank"
+                >Cascade 文档</a
+              >
+            </td>
+            <td>每个 prompt 一个 step</td>
+            <td>
+              hover 原始 prompt
+              右侧的<b>回退箭头</b>，或从对话「目录（TOC）」里直接回退；不可逆，官方加粗提示谨慎
+            </td>
+            <td>
+              提供「目录/时间线」这种<b>全局跳转入口</b>，长会话里不用翻聊天记录；并且明示「不可逆」的风险提示文案
+            </td>
+          </tr>
+          <tr>
+            <td>
+              <strong>GitHub Copilot（VS Code / VS）</strong><br /><a
+                href="https://learn.microsoft.com/visualstudio/ide/copilot-agent-mode"
+                target="_blank"
+                >Agent Mode 文档</a
+              >
+            </td>
+            <td>每轮编辑 + 「上次保留/撤销之后」的累积差异</td>
+            <td>
+              聊天区 <b>Total changes</b> 汇总 + 多文件 summary diff 单页查看，支持<b>逐文件粒度</b>
+              accept / undo；文档明确「不支持逐步 undo」
+            </td>
+            <td>一个<b>汇总 diff 页</b>承载多文件审阅与选择性撤销，是「卡片内联」的天花板替代品</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="note" style="margin-top: 16px">
+        <h4>三条可迁移结论</h4>
+        <ul>
+          <li>
+            <b>主流已从「文件级按钮」转向「时间点回退」</b>：Cursor / Claude Code / Windsurf / Cline
+            都是一次性回退到某个时间点，而不是让用户逐个文件点撤销。原因是 agent
+            一轮会改多个文件，「逐文件」的心智负担高。
+          </li>
+          <li>
+            <b>回退动作普遍是「选点 → 选动作」两段式</b
+            >，且在菜单里用文字写清「会还原什么、不会还原什么」；对不可逆操作会显式警示。
+          </li>
+          <li>
+            <b>差异总览是刚需</b>：Cline 的 Compare、Copilot 的 Total changes、Cursor 的 diff view
+            都在解决「我到底改了什么」。我们目前只能靠单个卡片里的 Monaco DiffEditor 逐个看。
+          </li>
+        </ul>
+      </div>
+
+      <h2>二、候选方案（可交互 mockup）</h2>
+      <p class="sub">
+        下面 4 个方案不是互斥的：A 是止血，C 是主入口，B 已实现（后端
+        <code>revertTo</code> 已补），D 依赖 redo。每个方案都标注了后端工作量。
+      </p>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="A">方案 A · 卡片内联改良</button>
+        <button class="tab" data-tab="B">方案 B · 消息级「回退到此处」</button>
+        <button class="tab" data-tab="C">方案 C · 会话改动面板</button>
+        <button class="tab" data-tab="D">方案 D · 撤销提示条 + 时间线</button>
+      </div>
+
+      <!-- ============ 方案 A ============ -->
+      <div class="panel active" data-panel="A">
+        <div class="option">
+          <div class="stage">
+            <div class="stage-label">Mockup · 同一文件被连续编辑 3 次</div>
+            <div class="app">
+              <div class="app-bar">
+                <i class="dot"></i><i class="dot"></i><i class="dot"></i> 会话
+              </div>
+              <div class="app-body">
+                <div class="msg-user">把 utils.ts 里的时间格式化改成 dayjs</div>
+
+                <div class="tool-card">
+                  <div class="tool-head">
+                    <div class="tool-title">
+                      <span class="tool-name">edit_file</span>
+                      <span class="tool-reason">src/utils.ts 替换 date-fns 调用</span>
+                    </div>
+                    <div class="tool-extra">
+                      <button
+                        class="undo-btn"
+                        disabled
+                        data-tip="该文件在此之后还有改动，请先撤销更晚的改动"
+                      >
+                        撤销
+                      </button>
+                      <span class="tag success">成功</span>
+                    </div>
+                  </div>
+                  <div class="tip"></div>
+                </div>
+
+                <div class="tool-card">
+                  <div class="tool-head">
+                    <div class="tool-title">
+                      <span class="tool-name">edit_file</span>
+                      <span class="tool-reason">src/utils.ts 补 formatRange</span>
+                    </div>
+                    <div class="tool-extra">
+                      <button
+                        class="undo-btn"
+                        disabled
+                        data-tip="该文件在此之后还有改动，请先撤销更晚的改动"
+                      >
+                        撤销
+                      </button>
+                      <span class="tag success">成功</span>
+                    </div>
+                  </div>
+                  <div class="tip"></div>
+                </div>
+
+                <div class="tool-card">
+                  <div class="tool-head">
+                    <div class="tool-title">
+                      <span class="tool-name">edit_file</span>
+                      <span class="tool-reason">src/utils.ts 修掉类型报错</span>
+                    </div>
+                    <div class="tool-extra">
+                      <button class="undo-btn" id="a-undo">撤销</button>
+                      <span class="tag success">成功</span>
+                    </div>
+                  </div>
+                  <div class="diff">
+                    <div class="del">- const d = new Date(ts)</div>
+                    <div class="add">+ const d = dayjs(ts)</div>
+                  </div>
+                </div>
+
+                <div class="tool-card">
+                  <div class="tool-head">
+                    <div class="tool-title">
+                      <span class="tool-name">write_file</span>
+                      <span class="tool-reason">src/utils.test.ts 补测试</span>
+                    </div>
+                    <div class="tool-extra">
+                      <span class="undo-state done">已撤销</span>
+                      <span class="tag success">成功</span>
+                    </div>
+                  </div>
+                </div>
+                <p class="hint">
+                  第 1、2 张是禁用态（hover 看 tooltip）；第 3 张可点（试试点一下，两段式确认）；第
+                  4 张已撤销。
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="notes">
+            <div class="note">
+              <h4>交互</h4>
+              <ul>
+                <li>
+                  <code>undoable</code> 且「该文件没有更晚的改动」→ 显示可点按钮（保留两段式确认）
+                </li>
+                <li>有更晚改动 → 按钮置灰 + tooltip「请先撤销更晚的改动」（不再点了才报错）</li>
+                <li>终态 → 「已撤销 / 已作废」标签（hover 显示原因）</li>
+                <li>卡片展开后仍用现有 Monaco DiffEditor 看 diff</li>
+              </ul>
+            </div>
+            <div class="note pro">
+              <h4>优点</h4>
+              <ul>
+                <li>纯前端改动，<b>零后端成本</b>；今天就能修掉「点了才被拒」的体验坑</li>
+                <li>保持「改动就地可撤」的空间连续性</li>
+              </ul>
+            </div>
+            <div class="note con">
+              <h4>缺点</h4>
+              <ul>
+                <li>LIFO 顺序仍要求用户自己理解「必须倒着撤」，跨文件时尤其反直觉</li>
+                <li>文件多/卡片多时，找目标靠翻聊天记录，无全局视图</li>
+                <li>与市面主流（时间点回退）方向不一致</li>
+              </ul>
+            </div>
+            <div class="note cost">
+              <h4>后端工作量 <span class="tag-mini">几乎为零</span></h4>
+              <ul>
+                <li>
+                  仅需在
+                  <code>FileChangeItem</code> 增加一个「是否有更晚改动」的布尔位，或在渲染侧按 path
+                  自己算（store 里已有全量数据，可直接算）
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 方案 B ============ -->
+      <div class="panel" data-panel="B">
+        <div class="option">
+          <div class="stage">
+            <div class="stage-label">Mockup · hover 用户消息 → 回退到此处（点箭头看菜单）</div>
+            <div class="app">
+              <div class="app-bar">
+                <i class="dot"></i><i class="dot"></i><i class="dot"></i> 会话
+              </div>
+              <div class="app-body" style="gap: 18px">
+                <div class="msg-user" id="b-msg">
+                  把 utils.ts 里的时间格式化改成 dayjs
+                  <button class="revert-arrow" id="b-arrow" title="回退到此处">⟲</button>
+                  <div class="menu" id="b-menu">
+                    <div class="menu-hint">回退到此消息之前</div>
+                    <div class="menu-item">还原本轮之后的所有文件改动（3 个文件）</div>
+                    <div class="menu-item dim">还原对话到此（暂不支持）</div>
+                    <div class="menu-sep"></div>
+                    <div class="menu-item">取消</div>
+                  </div>
+                </div>
+
+                <div class="msg-ai">我来把 date-fns 换成 dayjs，并补上 formatRange。</div>
+
+                <div class="tool-card">
+                  <div class="tool-head">
+                    <div class="tool-title">
+                      <span class="tool-name">edit_file</span
+                      ><span class="tool-reason">src/utils.ts</span>
+                    </div>
+                    <div class="tool-extra"><span class="tag muted">已回退</span></div>
+                  </div>
+                </div>
+                <div class="tool-card">
+                  <div class="tool-head">
+                    <div class="tool-title">
+                      <span class="tool-name">write_file</span
+                      ><span class="tool-reason">src/utils.test.ts</span>
+                    </div>
+                    <div class="tool-extra"><span class="tag muted">已回退</span></div>
+                  </div>
+                </div>
+                <p class="hint">
+                  关键：一次动作把「该时间点之后的全部文件」一起退回去，卡片进入「已回退」终态；对话保留。
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div class="notes">
+            <div class="note">
+              <h4>交互</h4>
+              <ul>
+                <li>hover 用户消息 → 右侧浮出 ⟲ 按钮（不占空间）</li>
+                <li>点击 → 菜单写明「将还原 N 个文件」再执行；对话还原项先置灰标注未支持</li>
+                <li>
+                  回退后，之后的所有 <code>applied</code> 记录 →
+                  <code>superseded</code>，卡片显示「已回退」
+                </li>
+              </ul>
+            </div>
+            <div class="note pro">
+              <h4>优点</h4>
+              <ul>
+                <li>与 Claude Code / Cursor / Windsurf 一致，用户已有肌肉记忆</li>
+                <li>「这一轮搞砸了」是最高频场景，一次点击解决，不用理解 LIFO</li>
+                <li>复用现有卡片 diff，无需新视图</li>
+              </ul>
+            </div>
+            <div class="note con">
+              <h4>缺点</h4>
+              <ul>
+                <li>
+                  hover 入口<b>可发现性差</b>（Cursor
+                  因此吃了大量投诉），建议同时在消息上常驻一个弱化图标
+                </li>
+                <li>必须实现 <code>revertTo</code>，且跨文件部分失败时要明确报告哪些没退成功</li>
+                <li>不可逆（无 redo），误点代价大 → 需要二次确认</li>
+              </ul>
+            </div>
+            <div class="note cost">
+              <h4>后端工作量 <span class="tag-mini">中 · 已完成</span></h4>
+              <ul>
+                <li>
+                  新增 <code>revertTo(sessionId, logId)</code>：取该条及其后所有 applied，按 path
+                  归并出目标内容（设计文档阶段 4 已写好推导）
+                </li>
+                <li>
+                  逐文件乐观锁校验 + failures 报告；已有 <code>undoSession</code> 的框架可直接复用
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 方案 C ============ -->
+      <div class="panel" data-panel="C">
+        <div class="option">
+          <div class="stage">
+            <div class="stage-label">Mockup · 会话头部「改动 6」→ 右侧改动面板（试试勾选）</div>
+            <div class="app" style="display: grid; grid-template-columns: 1fr 288px">
+              <div class="app-body" style="border-right: 1px solid var(--border)">
+                <div class="app-bar" style="margin: -12px -12px 4px">
+                  <i class="dot"></i><i class="dot"></i><i class="dot"></i>
+                  <span style="flex: 1"></span>
+                  <button class="panel-head-btn">改动 6</button>
+                </div>
+                <div class="msg-user">把 utils.ts 里的时间格式化改成 dayjs</div>
+                <div class="msg-ai">已完成，共修改 3 个文件。</div>
+                <div class="tool-card">
+                  <div class="tool-head">
+                    <div class="tool-title">
+                      <span class="tool-name">edit_file</span
+                      ><span class="tool-reason">src/utils.ts</span>
+                    </div>
+                    <div class="tool-extra"><span class="tag success">成功</span></div>
+                  </div>
+                </div>
+                <div class="tool-card">
+                  <div class="tool-head">
+                    <div class="tool-title">
+                      <span class="tool-name">write_file</span
+                      ><span class="tool-reason">src/utils.test.ts</span>
+                    </div>
+                    <div class="tool-extra"><span class="tag success">成功</span></div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="drawer">
+                <div class="drawer-title">
+                  <span>本会话文件改动</span>
+                  <span style="color: var(--text-3); font-weight: 400">3 个文件 / 6 条</span>
+                </div>
+
+                <div class="file-group">
+                  <div class="file-group-head">
+                    <input type="checkbox" class="c-file" />
+                    <span class="file-path">src/utils.ts</span>
+                    <span class="tag warn">3 条</span>
+                  </div>
+                  <div class="change-row">
+                    <input type="checkbox" class="c-item" checked />
+                    <span class="who">edit_file</span>
+                    <span class="when">14:02</span>
+                    <span class="grow"></span>
+                    <span class="tag muted">最新</span>
+                  </div>
+                  <div class="change-row">
+                    <input type="checkbox" class="c-item" />
+                    <span class="who">edit_file</span>
+                    <span class="when">14:01</span>
+                    <span class="grow"></span>
+                    <span class="undo-btn" style="cursor: pointer">撤销</span>
+                  </div>
+                  <div class="change-row">
+                    <input type="checkbox" class="c-item" />
+                    <span class="who">edit_file</span>
+                    <span class="when">13:58</span>
+                    <span class="grow"></span>
+                    <span class="undo-btn" style="cursor: pointer">撤销</span>
+                  </div>
+                </div>
+
+                <div class="file-group">
+                  <div class="file-group-head">
+                    <input type="checkbox" class="c-file" />
+                    <span class="file-path">src/utils.test.ts</span>
+                    <span class="tag success">新建</span>
+                  </div>
+                  <div class="change-row">
+                    <input type="checkbox" class="c-item" checked />
+                    <span class="who">write_file</span>
+                    <span class="when">13:59</span>
+                    <span class="grow"></span>
+                    <span class="tag muted">最新</span>
+                  </div>
+                </div>
+
+                <div class="file-group">
+                  <div class="file-group-head">
+                    <input type="checkbox" class="c-file" disabled />
+                    <span class="file-path">assets/logo.png</span>
+                    <span class="tag error" title="二进制文件，不记录撤销快照">不可撤销</span>
+                  </div>
+                  <div class="change-row" style="color: var(--text-3)">
+                    <span>二进制文件，未记录快照</span>
+                  </div>
+                </div>
+
+                <div class="drawer-foot">
+                  <span style="font-size: 12px; color: var(--text-3)"
+                    >已选 <b id="c-count">2</b> 条</span
+                  >
+                  <span style="display: flex; gap: 6px">
+                    <button class="btn ghost">全部撤销</button>
+                    <button class="btn primary" id="c-apply">撤销选中</button>
+                  </span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="notes">
+            <div class="note">
+              <h4>交互</h4>
+              <ul>
+                <li>会话头部常驻「改动 N」徽标 → 打开右侧面板（或从侧栏会话菜单进入）</li>
+                <li>按文件分组，组内按时间倒序列出每次改动，可展开 diff 预览</li>
+                <li>
+                  支持勾选任意条 / 整文件 / 一键「全部撤销」（复用现有 <code>undoSession</code>）
+                </li>
+                <li>不可撤销的文件（二进制/超限/外部修改）就地显示原因，不静默消失</li>
+              </ul>
+            </div>
+            <div class="note pro">
+              <h4>优点</h4>
+              <ul>
+                <li>解决「文件多、卡片难找」的根本问题，长会话可用</li>
+                <li>是 B 方案的<b>前置基础设施</b>：面板天然承载「回退到某点」的高级入口</li>
+                <li>「改了什么」一览无余，误改能被发现（现状缺乏全局视图）</li>
+                <li>勾选多条撤销可放宽 LIFO 限制：用户选中的集合内部按逆序自动串行执行</li>
+              </ul>
+            </div>
+            <div class="note con">
+              <h4>缺点</h4>
+              <ul>
+                <li>多一个需要维护的面板（新组件 + 空态/加载态/分组逻辑）</li>
+                <li>与卡片内联按钮存在一定功能重叠，需要想清楚两者分工</li>
+              </ul>
+            </div>
+            <div class="note cost">
+              <h4>后端工作量 <span class="tag-mini">小</span></h4>
+              <ul>
+                <li>列表数据已具备（<code>listSessionChanges</code> 含 path/时间/状态）</li>
+                <li>
+                  勾选批量撤销：可前端串行调 <code>undo(logId)</code>（当次操作内按 id
+                  倒序），或新增 <code>undoMany(ids)</code> 一次加锁执行、合并报告 failures
+                </li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============ 方案 D ============ -->
+      <div class="panel" data-panel="D">
+        <div class="option">
+          <div class="stage">
+            <div class="stage-label">Mockup · 底部撤销提示条（点「撤销」看效果）+ 时间线视图</div>
+            <div class="app">
+              <div class="app-bar">
+                <i class="dot"></i><i class="dot"></i><i class="dot"></i> 会话
+              </div>
+              <div class="app-body" style="gap: 18px">
+                <div class="tool-card">
+                  <div class="tool-head">
+                    <div class="tool-title">
+                      <span class="tool-name">edit_file</span
+                      ><span class="tool-reason">src/utils.ts</span>
+                    </div>
+                    <div class="tool-extra">
+                      <button class="undo-btn" id="d-undo">撤销</button>
+                      <span class="tag success">成功</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="snackbar" id="d-snack">
+                  <span>已撤销 <b>src/utils.ts</b> 的改动</span>
+                  <span class="undo-link" id="d-redo">重做</span>
+                </div>
+
+                <div style="margin-top: 4px">
+                  <div class="stage-label" style="margin-bottom: 10px">时间线（Checkpoint 轴）</div>
+                  <div class="timeline">
+                    <div class="tl-node done">
+                      <div class="tl-label">把 utils.ts 改成 dayjs</div>
+                      <div class="tl-meta">14:02 · 3 个文件 · 已撤销</div>
+                    </div>
+                    <div class="tl-node current">
+                      <div class="tl-label">补 formatRange 的单测</div>
+                      <div class="tl-meta">14:10 · 1 个文件 · 可回退到此处</div>
+                    </div>
+                    <div class="tl-node">
+                      <div class="tl-label">当前状态</div>
+                      <div class="tl-meta">14:18</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="notes">
+            <div class="note">
+              <h4>交互</h4>
+              <ul>
+                <li>撤销成功后底部弹出提示条：告知「撤了什么」+ 提供「重做」，几秒后自动消失</li>
+                <li>时间线：以用户 prompt 为节点，一眼看出每个阶段改了几个文件、能否回退</li>
+              </ul>
+            </div>
+            <div class="note pro">
+              <h4>优点</h4>
+              <ul>
+                <li>提示条把「刚发生什么、能不能反悔」讲清楚，降低误操作焦虑（Gmail 式心智）</li>
+                <li>时间线可视化 agent 的工作节奏，长任务里更好定位「哪一轮开始跑偏」</li>
+              </ul>
+            </div>
+            <div class="note con">
+              <h4>缺点</h4>
+              <ul>
+                <li>「重做」需要 <b>redo</b>（快照 + 状态机倒放），后端工作量最大</li>
+                <li>提示条只对「最近一次」友好，与批量/多文件场景不一致</li>
+                <li>时间线需要按用户消息聚合改动，后端要补 <code>turnId</code> 或时间区间归属</li>
+                <li>视觉噪音偏高，可能干扰阅读</li>
+              </ul>
+            </div>
+            <div class="note cost">
+              <h4>后端工作量 <span class="tag-mini">大</span></h4>
+              <ul>
+                <li>新增 redo（或至少「撤销后可恢复」）；改动记录需带上所属用户消息</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <h2>三、横向对比</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>维度</th>
+            <th>A 卡片内联</th>
+            <th>B 消息级回退</th>
+            <th>C 改动面板</th>
+            <th>D 提示条 + 时间线</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>解决的痛点</td>
+            <td>误点被拒、状态说不清</td>
+            <td>一轮搞砸、快速回到之前</td>
+            <td>改动太多看不清、找不到入口</td>
+            <td>刚撤完想反悔</td>
+          </tr>
+          <tr>
+            <td>发现性</td>
+            <td>高（就在卡片上）</td>
+            <td>中（hover 才现身，可加常驻弱图标）</td>
+            <td>高（头部徽标常驻）</td>
+            <td>高</td>
+          </tr>
+          <tr>
+            <td>后端改动</td>
+            <td>几乎为零</td>
+            <td>中（需 revertTo）</td>
+            <td>小（批量接口可选）</td>
+            <td>大（需 redo）</td>
+          </tr>
+          <tr>
+            <td>与现有实现契合</td>
+            <td>完全契合</td>
+            <td>需补阶段 4</td>
+            <td>完全契合</td>
+            <td>需补 redo + 归属字段</td>
+          </tr>
+          <tr>
+            <td>UI 复杂度</td>
+            <td>低</td>
+            <td>低</td>
+            <td>中</td>
+            <td>中高</td>
+          </tr>
+          <tr>
+            <td>是否对齐市面主流</td>
+            <td>否（各家已弃）</td>
+            <td>是（Claude Code / Cursor / Windsurf）</td>
+            <td>是（Cline / Copilot）</td>
+            <td>部分（时间线接近 Cursor CLI）</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="verdict">
+        <h4>我的建议（供你否决）</h4>
+        <ul>
+          <li>
+            <b>已落地：方案 B</b>。后端
+            <code>revertTo</code>（阶段四）与消息级「回退到这里」入口已实现，见
+            <code>docs/file-undo-design.md</code>。注意当前实现用的是<b>确认框</b>而非 mockup
+            里的悬浮菜单，且不含「还原对话」（对话还原仍未支持）。
+          </li>
+          <li>
+            <b>仍待定：A + C</b>。A 用极小成本修掉「点了才报错」（非最新改动时按钮置灰 +
+            tooltip），C 提供全局改动视图与批量撤销；两者都只依赖现有后端能力。
+          </li>
+          <li>
+            <b>D 暂不做</b>。redo 会显著抬高状态机复杂度，而「撤销提示条」的价值可以用 C
+            面板的状态翻转 + toast 文案部分替代。
+          </li>
+        </ul>
+      </div>
+
+      <div class="footnote">
+        <p>参考来源：</p>
+        <ul>
+          <li>
+            <a href="https://code.claude.com/docs/en/checkpointing" target="_blank"
+              >Claude Code · Checkpointing</a
+            >
+          </li>
+          <li>
+            <a href="https://cursor.com/help/ai-features/agent" target="_blank"
+              >Cursor · Agent mode</a
+            >
+          </li>
+          <li>
+            <a href="https://docs.cline.bot/core-workflows/checkpoints" target="_blank"
+              >Cline · Checkpoints</a
+            >
+          </li>
+          <li>
+            <a href="https://docs.windsurf.com/windsurf/cascade/cascade" target="_blank"
+              >Windsurf/Cascade · 命名检查点与回退</a
+            >
+          </li>
+          <li>
+            <a
+              href="https://learn.microsoft.com/visualstudio/ide/copilot-agent-mode"
+              target="_blank"
+              >GitHub Copilot · Agent mode（Total changes / 逐文件 undo）</a
+            >
+          </li>
+        </ul>
+      </div>
+    </div>
+
+    <script>
+      // ---------- 页签 ----------
+      document.querySelectorAll('.tab').forEach(function (tab) {
+        tab.addEventListener('click', function () {
+          document.querySelectorAll('.tab').forEach(function (t) {
+            t.classList.toggle('active', t === tab)
+          })
+          document.querySelectorAll('.panel').forEach(function (p) {
+            p.classList.toggle('active', p.dataset.panel === tab.dataset.tab)
+          })
+        })
+      })
+
+      // ---------- 通用 tooltip（禁用按钮的拒因） ----------
+      document.querySelectorAll('.tool-card').forEach(function (card) {
+        var tip = card.querySelector('.tip')
+        var trigger = card.querySelector('[data-tip]')
+        if (!tip || !trigger) return
+        trigger.addEventListener('mouseenter', function () {
+          var r = trigger.getBoundingClientRect()
+          var c = card.getBoundingClientRect()
+          tip.textContent = trigger.dataset.tip
+          tip.style.left = Math.max(6, r.left - c.left - 190) + 'px'
+          tip.style.top = r.top - c.top + r.height + 6 + 'px'
+          tip.classList.add('show')
+        })
+        trigger.addEventListener('mouseleave', function () {
+          tip.classList.remove('show')
+        })
+      })
+
+      // ---------- 方案 A：两段式撤销 ----------
+      var aBtn = document.getElementById('a-undo')
+      if (aBtn) {
+        var armed = false
+        aBtn.addEventListener('click', function () {
+          if (!armed) {
+            armed = true
+            aBtn.classList.add('armed')
+            aBtn.textContent = '确认撤销？'
+            setTimeout(function () {
+              if (!armed) return
+              armed = false
+              aBtn.classList.remove('armed')
+              aBtn.textContent = '撤销'
+            }, 3000)
+            return
+          }
+          armed = false
+          var state = document.createElement('span')
+          state.className = 'undo-state done'
+          state.textContent = '已撤销'
+          aBtn.replaceWith(state)
+          card_diffReset(aBtn)
+        })
+        // 撤销后 diff 收起，示意"该次改动已回退"
+        function card_diffReset(btn) {
+          var card = btn.closest('.tool-card')
+          var diff = card && card.querySelector('.diff')
+          if (diff) diff.remove()
+        }
+      }
+
+      // ---------- 方案 B：hover 菜单 ----------
+      var bArrow = document.getElementById('b-arrow')
+      var bMenu = document.getElementById('b-menu')
+      if (bArrow && bMenu) {
+        bArrow.addEventListener('click', function (e) {
+          e.stopPropagation()
+          bMenu.classList.toggle('show')
+        })
+        bMenu.addEventListener('click', function (e) {
+          var item = e.target.closest('.menu-item')
+          if (!item || item.classList.contains('dim')) return
+          bMenu.classList.remove('show')
+        })
+        document.addEventListener('click', function () {
+          bMenu.classList.remove('show')
+        })
+      }
+
+      // ---------- 方案 C：勾选计数 ----------
+      function cRefresh() {
+        var n = document.querySelectorAll('#c-count')
+        var items = document.querySelectorAll('.c-item')
+        var checked = 0
+        items.forEach(function (i) {
+          if (i.checked) checked++
+        })
+        n.forEach(function (el) {
+          el.textContent = String(checked)
+        })
+      }
+      document.querySelectorAll('.c-item').forEach(function (i) {
+        i.addEventListener('change', cRefresh)
+      })
+      document.querySelectorAll('.c-file').forEach(function (f) {
+        f.addEventListener('change', function () {
+          var group = f.closest('.file-group')
+          group.querySelectorAll('.c-item').forEach(function (i) {
+            i.checked = f.checked
+          })
+          cRefresh()
+        })
+      })
+      cRefresh()
+
+      // ---------- 方案 D：撤销提示条 ----------
+      var dUndo = document.getElementById('d-undo')
+      var dSnack = document.getElementById('d-snack')
+      var dRedo = document.getElementById('d-redo')
+      if (dUndo && dSnack) {
+        dUndo.addEventListener('click', function () {
+          var state = document.createElement('span')
+          state.className = 'undo-state done'
+          state.textContent = '已撤销'
+          dUndo.replaceWith(state)
+          dSnack.classList.add('show')
+          setTimeout(function () {
+            dSnack.classList.remove('show')
+          }, 6000)
+        })
+        dRedo.addEventListener('click', function () {
+          dSnack.classList.remove('show')
+        })
+      }
+    </script>
+  </body>
+</html>

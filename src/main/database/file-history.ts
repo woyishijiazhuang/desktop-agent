@@ -41,8 +41,6 @@ export interface FileHistoryApi {
   getFileChange(id: number): FileChangeRow | undefined
   listFileChangesBySession(sessionId: string): FileChangeRow[]
   updateFileChangeStatus(id: number, status: FileChangeStatus, undoError?: string | null): void
-  /** 同 path 是否存在 id 更大且仍 applied 的记录（单条撤销的 superseded 检查，跨会话：文件全局共享）。 */
-  hasAppliedFileChangeAfter(path: string, id: number): boolean
   /** 仍被撤销链引用的全部 before_hash（blob GC 存活集：含 undone/superseded 行——
    *  会话级回退的目标可能是已被单条撤销过的首条记录，只保 applied 会误删仍需的快照）。 */
   listReferencedBeforeHashes(): Set<string>
@@ -122,15 +120,6 @@ export function createFileHistoryApi(db: DatabaseSync): FileHistoryApi {
         undoError ?? null,
         id
       )
-    },
-
-    hasAppliedFileChangeAfter(path, id) {
-      const row = db
-        .prepare(
-          "SELECT 1 FROM file_change_log WHERE path = ? AND id > ? AND status = 'applied' LIMIT 1"
-        )
-        .get(path, id)
-      return row !== undefined
     },
 
     listReferencedBeforeHashes() {

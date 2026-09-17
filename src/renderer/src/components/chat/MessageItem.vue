@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, provide, ref } from 'vue'
-import { NTag, NButton, NIcon, useMessage } from 'naive-ui'
+import { NTag, NButton, NIcon, useDialog, useMessage } from 'naive-ui'
 import {
+  ArrowUndoOutline,
   CheckmarkCircleOutline,
   CloseCircleOutline,
   CopyOutline,
@@ -26,6 +27,9 @@ import UserImageBlock from './UserImageBlock.vue'
 import UserFileBlock from './UserFileBlock.vue'
 import UserSkillBlock from './UserSkillBlock.vue'
 import { useChatStore } from '@renderer/store/useChatStore'
+import { useFileHistoryStore } from '@renderer/store/useFileHistoryStore'
+import type { RevertTarget } from '@renderer/store/useFileHistoryStore'
+import type { FileChangeItem } from '@main/infra/file-history'
 import { useThemeStore } from '@renderer/store/useThemeStore'
 import { useCopy } from '@renderer/composables/useCopy'
 import { useStickToBottomPause } from '@renderer/composables/useStickToBottomPause'
@@ -48,17 +52,22 @@ const props = withDefaults(
     isLastMessage?: boolean
     /** 工具调用 → 匹配到的 toolResult（MessageList 合并时传入），供 ToolCallCard 展示结果 */
     matchedToolResults?: Map<string, ToolResultMessage>
+    /** 消息级「回退到此处」目标（仅 user 消息、该条之后存在可回退改动时传入） */
+    revertTarget?: RevertTarget | null
   }>(),
   {
-    isLastMessage: false
+    isLastMessage: false,
+    revertTarget: null
   }
 )
 const emit = defineEmits<{ regenerate: [] }>()
 const chatStore = useChatStore()
+const fileHistoryStore = useFileHistoryStore()
 const themeStore = useThemeStore()
 const { copy } = useCopy()
 const pauseStick = useStickToBottomPause()
 const toast = useMessage()
+const dialog = useDialog()
 
 const isUser = computed(() => props.message.role === 'user')
 const isToolResult = computed(() => props.message.role === 'toolResult')
@@ -281,6 +290,91 @@ function onFork(): void {
   void chatStore.forkFromMessage(messageId.value)
 }
 
+/**
+ * 回退到本条 user 消息之前（消息级「回退到此处」）：把该条及其后的全部文件改动一并退回，
+ * 对话内容不动。先确认影响面；被手工/外部修改过、快照缺失的文件由主进程逐个跳过并回报。
+ * 生成中禁用（避免与在途写入竞争），成功后卡片状态经 onFileChanges 推送翻转。
+ */
+function onRevert(): void {
+  const target = props.revertTarget
+  const sessionId = chatStore.currentSessionId
+  if (!target || !sessionId || chatStore.isBusy) return
+  dialog.warning({
+    title: '回退到这里',
+    content: `将把本条消息之后的 ${target.files} 个文件（${target.changes} 条改动）回退到本条消息发出前的状态。对话内容不受影响；已手动修改过的文件会自动跳过。`,
+    positiveText: '回退',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await fileHistoryStore.revertTo(sessionId, target.logId)
+        if (!res.ok) {
+          toast.error(res.error ?? '回退失败')
+          return
+        }
+        if (res.count > 0) toast.success(`已回退 ${res.count} 个文件的改动`)
+        else if (res.failures.length === 0) toast.info('没有可回退的文件改动')
+        for (const f of res.failures) toast.warning(`已跳过 ${f.path}：${f.error}`)
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err))
+      }
+    }
+  })
+}
+
+/**
+ * 本行工具调用中「仍可撤销」的文件变更：write_file / edit_file 每次落盘一条，
+ * 其撤销入口渲染在行悬停操作条（时间 + 复制那一排），而非工具卡片头部。
+ * 一个 assistant 消息含多次写文件时会有多个入口（各自的 title 标明文件与工具）。
+ */
+const undoItems = computed<FileChangeItem[]>(() => {
+  const sid = chatStore.currentSessionId
+  if (!sid || isUser.value || isToolResult.value) return []
+  const out: FileChangeItem[] = []
+  for (const b of blocks.value) {
+    if (b.kind !== 'toolCall') continue
+    const item = fileHistoryStore.getItem(sid, b.toolCall.id)
+    if (item?.undoable) out.push(item)
+  }
+  return out
+})
+
+/**
+ * 撤销某次文件改动：先确认（不可恢复），成功后卡片状态经 onFileChanges 推送翻转。
+ * 该文件之后仍有改动时不报错，而是说明「将一并回退到这次之前、只影响该文件」——后续改动
+ * 叠在它上面，没有中间态可复原（后端按文件级连带回退处理）。
+ * 生成中不给入口（避免与在途写入竞争），被手动改动过的文件由主进程拒绝并回报原因。
+ */
+function onUndoFileChange(item: FileChangeItem): void {
+  if (chatStore.isBusy) return
+  const later = fileHistoryStore.countLaterApplied(item.sessionId, item)
+  const content =
+    later > 0
+      ? `「${item.path}」在此之后还有 ${later} 次改动，无法只撤其中一次（后续改动叠在它上面）。将把该文件整体回退到这次改动之前，这 ${later} 次改动一并作废；本文件之外的改动不受影响。此操作不可恢复。`
+      : `将把「${item.path}」恢复到这次 ${item.toolName} 执行前的内容（该文件若是这次新建的，将被删除）。此操作不可恢复；该文件之后若被手动改动过，会被拒绝。`
+  dialog.warning({
+    title: later > 0 ? '回退该文件到这次改动之前' : '撤销这次文件改动',
+    content,
+    positiveText: later > 0 ? '一并回退' : '撤销',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      try {
+        const res = await fileHistoryStore.undo(item.logId, item.sessionId)
+        if (!res.ok) {
+          toast.error(res.error ?? '撤销失败')
+          return
+        }
+        toast.success(
+          res.cascaded
+            ? `已回退该文件到这次改动之前（连带作废 ${res.cascaded} 次后续改动）`
+            : '已撤销该文件改动'
+        )
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : String(err))
+      }
+    }
+  })
+}
+
 /** 消息时间戳（HH:mm），悬停时显露。Message 各变体均含 timestamp。 */
 const timeText = computed(() => {
   const ts = (props.message as { timestamp?: number }).timestamp
@@ -448,12 +542,39 @@ provide(chatMessageContextKey, messageId)
         </template>
       </div>
 
-      <!-- 悬停操作条：时间戳 + 复制（始终）+ 重新生成（仅末条 assistant 且空闲） -->
+      <!-- 悬停操作条：时间戳 + 复制（始终）+ 撤销文件改动（含 write_file/edit_file 的行）
+           + 回退到此（user 且其后有可回退改动）+ 分支（user）+ 重新生成（仅末条 assistant 且空闲） -->
       <div class="row__actions">
         <span v-if="timeText" class="row__time">{{ timeText }}</span>
         <NButton quaternary size="tiny" :focusable="false" title="复制" @click="onCopyMessage">
           <template #icon
             ><NIcon><CopyOutline /></NIcon
+          ></template>
+        </NButton>
+        <template v-for="item in undoItems" :key="item.logId">
+          <NButton
+            v-if="!chatStore.isBusy"
+            quaternary
+            size="tiny"
+            :focusable="false"
+            :title="`撤销这次文件改动：${item.toolName} 对「${item.path}」的改动（恢复到改动前内容）`"
+            @click="onUndoFileChange(item)"
+          >
+            <template #icon
+              ><NIcon><ArrowUndoOutline /></NIcon
+            ></template>
+          </NButton>
+        </template>
+        <NButton
+          v-if="isUser && revertTarget && !chatStore.isBusy"
+          quaternary
+          size="tiny"
+          :focusable="false"
+          title="回退到这里（撤销本条及其后的全部文件改动，对话保留）"
+          @click="onRevert"
+        >
+          <template #icon
+            ><NIcon><ArrowUndoOutline /></NIcon
           ></template>
         </NButton>
         <NButton

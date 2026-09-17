@@ -2,6 +2,7 @@ import { IpcService } from 'electron-ipc-service'
 import {
   gcFileHistoryBlobs,
   listSessionFileChanges,
+  revertToFileChange,
   undoFileChange,
   undoSessionFileChanges
 } from '../infra/file-history'
@@ -34,6 +35,15 @@ export class FileHistoryService extends IpcService {
   /** 撤销单条改动（乐观锁 + superseded 校验；新建类撤销 = 校验后删除文件）。 */
   undo(logId: number, sessionId: string): Promise<UndoResult> {
     return undoFileChange(logId, sessionId)
+  }
+
+  /**
+   * 回退到某条记录之前（消息级「回退到此处」）：该条及其后的本会话改动一并退回，
+   * 对话不受影响。logId 由渲染侧按「消息时间戳 ⇄ 记录 createdAt」换算（见 useFileHistoryStore），
+   * 以保证 task 子代理按宿主会话记录、未出现在工具卡片上的写入同样被覆盖。
+   */
+  revertTo(sessionId: string, logId: number): Promise<RevertResult> {
+    return revertToFileChange(sessionId, logId)
   }
 
   /** 撤销本会话全部已应用改动（逐文件校验，外部修改过的文件跳过并在 failures 报告）。 */

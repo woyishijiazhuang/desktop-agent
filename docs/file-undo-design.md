@@ -1,7 +1,7 @@
 # 文件撤销（File Undo）设计方案
 
 > 目标读者：本项目维护者
-> 状态：已实现（阶段 1/2/3 + 清理 GC；阶段 4 `revertTo` 与配额未实现，见十一）
+> 状态：已实现（阶段 1/2/3/4 + 清理 GC；阶段 5 配额未实现，见十一）
 > 范围：`write_file` / `edit_file` 两个写文件工具的文件级撤销
 
 ---
@@ -84,6 +84,15 @@ renderer「撤销」─→ FileHistoryService.undo(logId)
                      ├─ 校验：status / 乐观锁 / superseded
                      ├─ 取 blob → 原子写回（临时文件 + rename）；新建则删文件
                      └─ 更新 log.status → 推送 onFileChanges（仅工作区窗口）
+                  └────────────────────────────────────────────────────────────────┘
+
+                  ┌──────────────────── 回退路径（阶段四 revertTo） ────────────────┐
+renderer「回退到这里」─→ FileHistoryService.revertTo(sessionId, logId)
+                     ├─ 该条及其后的 applied 按 path 归并；目标 = 时点前记录的重放结果
+                     │  （时点前无记录则取时点后最早一条的 before_hash）
+                     ├─ 逐文件校验：期望状态重放比对（外部修改 → 跳过）+ 沙箱写边界
+                     ├─ 取 blob → 原子写回；该时点尚不存在的文件 → 校验后删除
+                     └─ 最早一条 applied 标 undone、其余标 superseded → 推送 onFileChanges
                   └────────────────────────────────────────────────────────────────┘
 ```
 
@@ -176,33 +185,39 @@ result.push(...entry.build(opts).map((t) => wrapGate(wrapSandboxFsPolicy(wrapFil
 
 ## 七、撤销语义与 API
 
-分三期落地，粒度由小到大。
+分四期落地，粒度由小到大。
 
-### 阶段一：单条撤销 `undo(logId)`
+### 阶段一：单条撤销 `undo(logId)` ✅ 已实现
 
 前置校验（任一不满足即拒绝，并给出可读原因）：
 
 1. `status === 'applied'`；
-2. **乐观锁**：`sha256(当前文件) === after_hash`；不等 → `external_modified`，拒绝（保护用户手工编辑 / 其他程序写入）；
-3. **superseded 检查**：同 `path` 存在 `id > logId` 且 `status='applied'` 的记录 → 拒绝，提示改用「回退到此状态」，避免制造账本错乱。
+2. **乐观锁**：当前文件内容 ===「期望状态」；不等 → `external_modified`，拒绝（保护用户手工编辑 / 其他程序写入）。无后续改动时期望状态严格取该条的 `after_hash`；有后续改动时按账本重放；
+3. **基线检查**：该文件在本会话的首条记录若为 `skipped`，而撤销点在它之后 → 基线不可知，拒绝。
 
 执行：
 
-- `before_hash === null`（本条是新建）→ 校验 hash 后**删除文件**；
-- 否则 → 从 blob 读 `before_hash` 字节 → 原子写回（临时文件 + rename）。
+- 目标 = 该条生效前的内容：有时点前记录 → `replayState(时点前记录)`；否则就是该条自己的 `before_hash`；
+- `before_hash === null`（该时点文件尚不存在）→ 校验后**删除文件**；否则从 blob 读目标快照 → 原子写回（临时文件 + rename）。
 
-收尾：`status='undone'`，推送 `onFileChanges`。
+**文件级连带回退**：若该文件在撤销点之后还有 `applied` 改动，不再拒绝（旧实现返回 `superseded_by_later_ops`）——后续改动叠在它上面，没有中间态可复原，因而把**该文件**整体回退到这条之前，后续记录标 `superseded`（只影响该文件，其它文件不动），结果里返回 `cascaded` 条数；确认框据此写明「该文件之后还有 N 次改动，将一并回退」。
 
-### 阶段二：回退到某条 `revertTo(sessionId, logId)`
+收尾：该条标 `undone`、连带记录标 `superseded`，推送 `onFileChanges`。
 
-- 取该条**及其后**同会话所有 `applied` 记录，按 `path` 归并出「每个文件在该时点的内容」：
-  - 该时点前若存在同 path 的 `applied` 记录 → 用「最近一条」的 `after_hash`；
-  - 否则用该时点后**最早一条**的 `before_hash`（即这批改动的起点状态）；
-  - `before_hash = null` 且无更早记录 → 该文件应被删除。
-- 每个受影响文件单次原子写回；随后被跳过的记录标记 `superseded`（cascade），确认框明示「将连带作废 N 条」。
-- 整批复活（redo）作为可选后续，先不做。
+### 阶段二：回退到某条 `revertTo(sessionId, logId)` ✅ 已实现
 
-### 阶段三：会话级 `oops(sessionId)`
+「回退到此处」：把该条**及其后**同会话所有 `applied` 改动涉及的文件，恢复到「该条记录生效前」的状态（等价回退到一个时间点），对话不受影响。
+
+- 按 `path` 归并，每文件推出两个状态（共用 `replayState`，与 `undoSession` 同一套重放规则：`applied`/`skipped` → `after_hash`、`undone` → `before_hash`、`superseded` 不改变状态）：
+  - **目标状态**：时点前若无该文件记录 → 取时点后**最早一条**的 `before_hash`（即这批改动的起点）；有时点前记录 → 从该文件首条记录前重放到时点为止；
+  - **期望当前状态**：全量重放结果，与磁盘实际内容不符即视为被外部修改 → 跳过该文件并报告；
+  - 目标为 `null`（该文件在该时点尚不存在）→ 校验后删除文件。
+- 时点前的首条记录若是 `skipped`（未存快照），基线不可知 → 该文件整体拒绝并报告，避免误删会话前已存在的文件。
+- 每个受影响文件单次原子写回；受影响记录中**最早一条标 `undone`**（保住撤销链可重放），其余标 `superseded`（cascade）。
+- **logId 由渲染侧换算**：取 `createdAt ≥ 该条用户消息时间戳` 的最早一条 `applied` 记录的 id。按时间戳而非「消息里出现过的 toolCallId」定位，才能覆盖 task 子代理按宿主会话记录、不出现在工具卡片上的写入（见十一「实现落点」注）。
+- 确认框写明影响面（N 个文件 / M 条改动）；整批复活（redo）作为可选后续，**仍未实现**。
+
+### 阶段三：会话级 `oops(sessionId)` ✅ 已实现
 
 撤销本会话全部 `applied` 记录（等价 `revertTo` 到最早一条）。实现最简、价值最高，**建议作为第一个上线的入口**。
 
@@ -213,7 +228,7 @@ result.push(...entry.build(opts).map((t) => wrapGate(wrapSandboxFsPolicy(wrapFil
 ```ts
 listSessionChanges(sessionId: string): FileChangeItem[]   // 含 path/toolName/时间/status/undoable+原因
 undo(logId: number, sessionId: string): UndoResult        // { ok, error?, externalModified? }
-revertTo(sessionId: string, logId: number): RevertResult  // { ok, count, error? }
+revertTo(sessionId: string, logId: number): RevertResult  // { ok, count, failures[] }｜回退到该条生效前
 undoSession(sessionId: string): RevertResult
 ```
 
@@ -223,13 +238,15 @@ undoSession(sessionId: string): RevertResult
 
 ## 八、UI 设计
 
-| 入口         | 位置                                                                   | 说明                                                                                        |
-| ------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| 单条撤销     | `ToolCallCard.vue` 头部（仅 `write_file` / `edit_file` 且 `undoable`） | 二次确认（同 dsh：按钮变「确认撤销？」3 秒内再点，或弹确认框）；成功后卡片显示「已撤销」tag |
-| 撤销预览     | 复用卡片已有的 Monaco DiffEditor                                       | 展示「撤销视角」的 diff：绿 = 将恢复的内容，红 = 将移除的当前内容                           |
-| 回退到此     | `MessageItem.vue` hover 操作                                           | 调用 `revertTo`，确认框说明连带作废步数                                                     |
-| 会话级 oops  | 会话头部 / 侧栏会话菜单                                                | 「撤销本会话的文件改动」，调用 `undoSession`                                                |
-| 不可撤销原因 | 卡片 tooltip                                                           | 如「文件已被手动修改，无法撤销」「bash 命令的改动无法撤销，请使用 git」                     |
+| 入口         | 位置                                                                         | 说明                                                                                                              |
+| ------------ | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| 单条撤销     | 消息行悬停操作条 ⟲（含 `write_file` / `edit_file` 的行，见八·下注）          | 弹确认框写明文件与影响面（该文件之后还有 N 次改动时提示「一并回退」）；生成中不给入口                             |
+| 撤销预览     | 复用卡片已有的 Monaco DiffEditor                                             | 展示「撤销视角」的 diff：绿 = 将恢复的内容，红 = 将移除的当前内容                                                 |
+| 回退到此     | `MessageItem.vue` hover 操作条（仅 user 消息，且该条之后有可回退改动时出现） | 调用 `revertTo`，确认框写明「N 个文件 / M 条改动」并说明对话不受影响；生成中禁用；结果逐个 toast 报告被跳过的文件 |
+| 会话级 oops  | 会话头部 / 侧栏会话菜单                                                      | 「撤销本会话的文件改动」，调用 `undoSession`                                                                      |
+| 不可撤销原因 | 卡片 tooltip                                                                 | 如「文件已被手动修改，无法撤销」「bash 命令的改动无法撤销，请使用 git」                                           |
+
+注：单条撤销入口原先放在 `ToolCallCard.vue` 卡片头部，与「结果摘要 / 状态 tag / 展开箭头」争位，且属于 hover 才需要的操作用常驻按钮呈现显得拥挤；现移到消息行的悬停操作条（与复制、分支、重新生成同排），卡片头部只保留终态灰字标签（已撤销 / 已作废 / 不可撤销）。同一 assistant 消息含多次写文件时会出现多个 ⟲（tooltip 标明工具与文件）。
 
 状态来源：会话加载时调一次 `listSessionChanges(sessionId)` 建立 `toolCallId → item` 映射，之后由 `onFileChanges` 推送增量更新（保证重启后状态仍准确，而非渲染层本地标记）。
 
@@ -239,14 +256,16 @@ undoSession(sessionId: string): RevertResult
 
 ### 9.1 安全闸（照抄业界教训，优先级高于功能）
 
-| 场景                          | 处理                                                                                                 |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------- |
-| 快照后文件被手工/其他程序改动 | `external_modified` → 拒绝撤销（不让 AI 吞掉用户编辑）                                               |
-| 撤销中间某条旧记录            | `superseded_by_later_ops` → 拒绝，引导用 `revertTo`                                                  |
-| 写回前的竞态                  | 乐观锁复核 hash                                                                                      |
-| 撤销「新建」                  | 校验 hash 后真删文件；仅在文件仍等于 `after_hash` 时执行                                             |
-| 路径安全                      | 撤销路径必须来自 `file_change_log`；写入前 `realpath` 解析（防符号链接逃逸），并复用沙箱的写边界判定 |
-| bash 造成的改动               | 不记录；UI 明确提示「请使用 git」                                                                    |
+| 场景                          | 处理                                                                                                                                                                     |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 快照后文件被手工/其他程序改动 | `external_modified` → 拒绝撤销（不让 AI 吞掉用户编辑）                                                                                                                   |
+| 撤销中间某条旧记录            | 文件级连带回退：该文件整体回退到这条之前，后续记录标 `superseded`（不再拒绝），确认框预先说明影响面                                                                      |
+| 回退跨越多个文件/多轮对话     | 逐文件校验后整体回退；外部修改过或快照缺失的文件跳过并逐个报告，不阻塞其余文件                                                                                           |
+| 写回前的竞态                  | 乐观锁复核 hash                                                                                                                                                          |
+| 两个撤销入口几乎同时执行      | **不加互斥**（已确认）：靠乐观锁兜底；最坏结果是「最后写盘的内容」与「最后标记的状态」不是同一次操作，导致后续撤销被误判为外部修改而拒绝——不会覆盖数据，等下次写入即自愈 |
+| 撤销「新建」                  | 校验 hash 后真删文件；仅在文件仍等于 `after_hash` 时执行                                                                                                                 |
+| 路径安全                      | 撤销路径必须来自 `file_change_log`；写入前 `realpath` 解析（防符号链接逃逸），并复用沙箱的写边界判定                                                                     |
+| bash 造成的改动               | 不记录；UI 明确提示「请使用 git」                                                                                                                                        |
 
 ### 9.2 其他边界
 
@@ -277,27 +296,28 @@ undoSession(sessionId: string): RevertResult
 | ---------------------- | ------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ---------------------- |
 | 1. 快照基础设施        | `SnapshotStore`（blob 读写/GC）+ `file_change_log` 表 + `wrapFileHistory` | 每次 write/edit 后 DB 有记录、blob 有旧内容；失败/被拒调用无记录          | ✅ 已实现              |
 | 2. 会话级撤销          | `FileHistoryService.undoSession` + 会话入口 + `onFileChanges`             | 撤销后文件内容与操作前逐字节一致（含 BOM / CRLF / 尾换行）                | ✅ 已实现              |
-| 3. 单条撤销 + 卡片按钮 | `undo(logId)` + `ToolCallCard` 按钮 + 已撤销态                            | 乐观锁与 `external_modified` 拒绝路径可用；手工改动后撤销被拒             | ✅ 已实现              |
-| 4. 回退到某条          | `revertTo` + 消息级入口 + cascade 标记                                    | 跨多文件、多步回退后所有受影响文件状态正确；被作废条目状态为 `superseded` | 未实现                 |
+| 3. 单条撤销 + 行内入口 | `undo(logId)` + 消息行操作条 ⟲ + 终态标签                                 | 乐观锁与 `external_modified` 拒绝路径可用；手工改动后撤销被拒             | ✅ 已实现              |
+| 4. 回退到某条          | `revertTo` + 消息级入口 + cascade 标记                                    | 跨多文件、多步回退后所有受影响文件状态正确；被作废条目状态为 `superseded` | ✅ 已实现              |
 | 5. 清理与配额          | 回收站/工作区/启动三处 GC + 配额                                          | 删除会话后 blob 无泄漏；超限淘汰后仍可撤销保留期内记录                    | GC 已实现 / 配额未实现 |
 
 **验证手段**：真实文件（含 CRLF / 无尾换行 / BOM / 中文）做「写入 → 撤销 → 逐字节比对」；并发场景用「撤销前手工改文件」验证拒绝路径。
 
 **实现落点**（2026-09）：
 
-| 层            | 文件                                                                                              |
-| ------------- | ------------------------------------------------------------------------------------------------- |
-| 表结构        | `src/main/database/schema.ts`（`file_change_log` + 3 索引）                                       |
-| log 读写 API  | `src/main/database/file-history.ts`（组装进 `db` 门面）                                           |
-| 快照 + 撤销域 | `src/main/infra/file-history.ts`（blob 读写 / 记录 / undo / undoSession / GC / 推送）             |
-| 工具包装层    | `src/main/agent/tools/index.ts` 的 `wrapFileHistory`（`wrapGate → sandbox → fileHistory → 工具`） |
-| IPC 服务      | `src/main/services/file-history-service.ts`（namespace `fileHistory`）                            |
-| 推送          | `rendererClient.agentEvent.onFileChanges({ sessionId, items })` → 渲染侧 `agent-event-service.ts` |
-| 渲染侧状态    | `src/renderer/src/store/useFileHistoryStore.ts`（全量拉取 + 推送合并）                            |
-| 单条撤销 UI   | `ToolCallCard.vue` 头部（两段式确认按钮 + 已撤销/已作废/不可撤销标签）                            |
-| 会话级入口 UI | `SessionItem.vue` ⋯ 菜单「撤销文件改动」→ `SessionSidebar.vue` 确认框                             |
+| 层            | 文件                                                                                                           |
+| ------------- | -------------------------------------------------------------------------------------------------------------- |
+| 表结构        | `src/main/database/schema.ts`（`file_change_log` + 3 索引）                                                    |
+| log 读写 API  | `src/main/database/file-history.ts`（组装进 `db` 门面）                                                        |
+| 快照 + 撤销域 | `src/main/infra/file-history.ts`（blob 读写 / 记录 / undo / **revertTo** / undoSession / GC / 推送）           |
+| 工具包装层    | `src/main/agent/tools/index.ts` 的 `wrapFileHistory`（`wrapGate → sandbox → fileHistory → 工具`）              |
+| IPC 服务      | `src/main/services/file-history-service.ts`（namespace `fileHistory`）                                         |
+| 推送          | `rendererClient.agentEvent.onFileChanges({ sessionId, items })` → 渲染侧 `agent-event-service.ts`              |
+| 渲染侧状态    | `src/renderer/src/store/useFileHistoryStore.ts`（全量拉取 + 推送合并 +「回退到此处」目标换算）                 |
+| 单条撤销 UI   | 入口在 `MessageItem.vue` 行悬停操作条 ⟲（确认框）；`ToolCallCard.vue` 只保留终态标签（已撤销/已作废/不可撤销） |
+| 消息级回退 UI | `MessageItem.vue` hover 操作条 ⟲ + 确认框；目标由 `MessageList.vue` 按用户消息时间戳算好后传入                 |
+| 会话级入口 UI | `SessionItem.vue` ⋯ 菜单「撤销文件改动」→ `SessionSidebar.vue` 确认框                                          |
 
-注：`undoSession` 逐文件校验「期望状态」（按时间线重放 applied/skipped→after、undone→before），外部修改过的文件跳过并逐个报告；最早一条 applied 标 `undone`、其余标 `superseded`。子代理（task 工具）复用宿主会话 id 记录，会话级撤销天然覆盖其改动。
+注：`undoSession` / `revertTo` 共用 `replayState`（按时间线重放 `applied`/`skipped`→`after`、`undone`→`before`）逐文件校验「期望状态」，外部修改过或快照缺失的文件跳过并逐个报告；受影响记录中最早一条标 `undone`、其余标 `superseded`。子代理（task 工具）复用宿主会话 id 记录：会话级撤销天然覆盖其改动，「回退到此处」则靠**消息时间戳 ⇄ 记录 `createdAt`** 换算目标 logId 覆盖（不用 toolCallId 匹配，因为子代理的内部工具调用不在主会话消息流里）。
 
 ---
 

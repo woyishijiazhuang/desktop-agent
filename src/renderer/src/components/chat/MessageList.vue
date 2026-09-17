@@ -11,6 +11,7 @@ import { useStableMessageKeys } from '@renderer/composables/useStableMessageKeys
 import { provideStickToBottomPause } from '@renderer/composables/useStickToBottomPause'
 import { useChatStore } from '@renderer/store/useChatStore'
 import { useFileHistoryStore } from '@renderer/store/useFileHistoryStore'
+import type { RevertTarget } from '@renderer/store/useFileHistoryStore'
 
 const props = defineProps<{
   messages: AgentMessage[]
@@ -113,6 +114,23 @@ const layout = computed<LayoutItem[]>(() => {
     }
   }
   return out
+})
+
+/**
+ * 消息级「回退到此处」目标（仅 user 消息）：按消息时间戳换算该条之后最早的 applied 记录，
+ * 交给 MessageItem 渲染悬停回退按钮。该条之后无改动（或已全部撤销）则不给入口。
+ */
+const revertTargets = computed<Map<string, RevertTarget>>(() => {
+  const map = new Map<string, RevertTarget>()
+  const sid = props.sessionId
+  if (!sid) return map
+  for (const item of layout.value) {
+    const m = item.message as { role?: string; timestamp?: number }
+    if (m.role !== 'user') continue
+    const target = fileHistoryStore.resolveRevertTarget(sid, m.timestamp)
+    if (target) map.set(item.id, target)
+  }
+  return map
 })
 
 /** 已压缩消息条数（id <= compressLastIndex 的已落库消息；乐观/流式中消息无 id 不计）。 */
@@ -560,6 +578,7 @@ watch(
                 :message="item.message"
                 :matched-tool-results="item.matchedToolResults"
                 :is-last-message="i === layout.length - 1"
+                :revert-target="revertTargets.get(item.id) ?? null"
                 @regenerate="emit('regenerate')"
               />
               <!-- 压缩分界：在该条（或分界 toolResult 所并入的工具卡）之后插入分界卡片 -->
