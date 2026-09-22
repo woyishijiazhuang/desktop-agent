@@ -35,7 +35,11 @@ import {
   setWebSearchApiKeyConfig,
   clearWebSearchApiKeyConfig
 } from '../agent/model/web-search-config'
-import { resolvePermission, SETTING_BASH_ALLOWLIST } from '../agent/runtime/permission'
+import {
+  resolvePermission,
+  resolveSandboxEscalation,
+  SETTING_BASH_ALLOWLIST
+} from '../agent/runtime/permission'
 import { resolvePlanApproval } from '../agent/runtime/plan-mode'
 import { resolveAskUser } from '../agent/runtime/ask-user'
 import { extractDocumentText } from '../utils/doc-parser'
@@ -936,6 +940,15 @@ export class AgentService extends IpcService {
    */
   respondPermission(requestId: string, approved: boolean, scope: PermissionScope = 'once'): void {
     resolvePermission(requestId, approved, scope)
+  }
+
+  /**
+   * 回传沙箱提权结果。scope 只取两档：
+   * once=仅本次（授权绑定该 toolCallId，执行完即清）/ session=本会话允许（签发会话级可写根）。
+   * 不支持 always —— 提权不落持久白名单，否则沙箱边界会被静默放宽。
+   */
+  respondEscalation(requestId: string, approved: boolean, scope: PermissionScope = 'once'): void {
+    resolveSandboxEscalation(requestId, approved, scope)
   }
 
   /** 回传计划审批结果（renderer 计划卡片「批准/拒绝」后调用，feedback 在拒绝时携带）。 */

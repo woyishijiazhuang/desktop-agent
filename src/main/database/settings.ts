@@ -73,6 +73,8 @@ const SETTING_VALIDATORS: Record<string, (v: unknown) => boolean> = {
   // ---- bash 沙箱（key 见 agent/types.ts SETTING_SANDBOX_*）----
   /** 沙箱总开关（默认关闭）。 */
   'sandbox.enabled': (v) => typeof v === 'boolean',
+  /** 沙箱提权通道总开关（默认开启；关闭后越界写入一律硬拒）。 */
+  'sandbox.escalationEnabled': (v) => typeof v === 'boolean',
   /** 用户追加的可写根（绝对路径 string[]）。 */
   'sandbox.writableRoots': (v) => Array.isArray(v) && v.every((x) => typeof x === 'string'),
   /** 禁止读取目录（绝对路径 string[]，默认全局可读）。 */

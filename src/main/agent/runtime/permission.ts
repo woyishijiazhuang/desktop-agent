@@ -1,4 +1,5 @@
 import type { BeforeToolCallContext, BeforeToolCallResult } from '@earendil-works/pi-agent-core'
+import { dirname } from 'node:path'
 import { rendererClient } from '../../infra/render-client'
 import { db } from '../../database'
 import { createLogger } from '../../utils/log'
@@ -8,15 +9,20 @@ import {
   isPathWithinAny,
   getSessionFsPolicy,
   isSandboxWriteAllowed,
-  sandboxWriteDeniedMessage
+  isSandboxEscalationEnabled,
+  sandboxEscalationHint,
+  grantSessionWritableRoots,
+  grantOnceWritableRoots,
+  clearSessionSandboxGrants
 } from './sandbox'
+import { blockFromOutcome, toolOutcomeText, toolOutcomes, type ToolOutcome } from './tool-outcome'
 import {
   beginInteraction,
   respondInteraction,
   getInteractionCtx,
   getInteractionTimeoutMs
 } from './interaction'
-import type { PermissionScope } from '../types'
+import type { PermissionScope, SandboxEscalationRequest } from '../types'
 import { SETTING_PERMISSION_AUTO_APPROVE } from '../types'
 
 const log = createLogger('permission')
@@ -38,12 +44,17 @@ const log = createLogger('permission')
  * 6. 其余 → ask。
  *
  * write_file / edit_file：
- * 1. 目标路径位于「会话可写边界」（工作区 + 可写目录 + 系统临时目录）内 → allow；
- * 2. 命中本会话路径放行 → allow；
- * 3. 其余 → ask。文件型操作无持久白名单（路径型 always 意义有限），仅支持会话放行。
+ * 1. 沙箱开启且目标在可写范围之外 → **沙箱提权流程**（见下方 handleSandboxBoundary）；
+ * 2. 目标路径位于「会话可写边界」（工作区 + 可写目录 + 系统临时目录）内 → allow；
+ * 3. 命中本会话路径放行 → allow；
+ * 4. 其余 → ask。文件型操作无持久白名单（路径型 always 意义有限），仅支持会话放行。
  *
  * install_skill：从外部平台下载并落盘不可信代码，恒 ask（仅本次，无会话/总是放行）。
  * mcp_call：第三方 MCP 工具调用，ask（支持本会话放行，无持久白名单）。
+ *
+ * 失败语义：所有拒绝都走 tool-outcome 的**分类结局文本**，不再返回泛化的一句话 ——
+ * 「用户拒绝」「超时」「中断」「计划模式」「沙箱越界」必须能被模型区分，
+ * 否则模型会把策略拒绝当成执行失败而反复重试（见 tool-outcome.ts 的说明）。
  */
 const DANGEROUS_TOOLS = new Set(['write_file', 'edit_file', 'bash', 'install_skill', 'mcp_call'])
 
@@ -148,6 +159,52 @@ interface PermissionCtx {
   hardAsk: boolean
 }
 
+/**
+ * 权限确认挂起结果：放行，或带**明确结局**的拒绝。
+ * blockedReason 已是面向模型的结局文本（含分类前缀，见 tool-outcome.ts）。
+ */
+interface PermissionPendingResult {
+  allowed: boolean
+  blockedReason: string
+  /** 是否请求提前结束本轮（仅「用户中断」为 true）。 */
+  terminate?: boolean
+}
+
+/** 沙箱提权挂起上下文（回执时据此签发授权）。 */
+interface EscalationCtx {
+  sessionId: string
+  /** 绑定到具体工具调用：「仅本次」授权按 toolCallId 传递到执行层复核。 */
+  toolCallId: string
+  /** 发起申请的工具（bash / write_file…）：bash 的 once 授权不经 onceGrants，直接随 runOneOff 传参。 */
+  toolName: string
+  requestedRoots: string[]
+}
+
+/** 提权申请的挂起结果。 */
+interface EscalationAskResult {
+  allowed: boolean
+  /** 批准时的作用域（once=仅本次 / session=本会话允许）。 */
+  scope?: PermissionScope
+  /** 拒绝时的结局（用户拒绝 / 超时 / 中断）。 */
+  outcome?: ToolOutcome
+}
+
+/** 提权申请参数（文件工具与 bash 共用同一通道）。 */
+export interface SandboxEscalationAsk {
+  sessionId: string
+  toolName: string
+  toolCallId: string
+  /** 申请追加的可写根。 */
+  requestedRoots: string[]
+  /** 展示给用户的「被拒路径」。 */
+  deniedPaths: string[]
+  /** 为何需要提权（一句话）。 */
+  reason: string
+  /** bash 场景携带命令原文（仅 UI 展示）。 */
+  command?: string
+  signal?: AbortSignal
+}
+
 /** 是否为只读安全命令（简单命令 + 命中只读白名单）：计划模式与只读子代理的 bash 放行判定。 */
 export function evaluateReadonlyBash(command: string): boolean {
   if (!command) return false
@@ -224,11 +281,177 @@ function summarizeToolArgs(toolName: string, args: unknown): string {
   }
 }
 
+// ==================== 沙箱提权（越界写的运行时出口） ====================
+
+/**
+ * 沙箱边界处理：文件工具目标落在可写范围之外时的提权流程。
+ *
+ * 返回 handled=false 表示「与沙箱边界无关」（沙箱未开启 / 路径本就在范围内），
+ * 交由后续常规判定（可写边界自动放行或弹普通确认）处理。
+ *
+ * 红线（见设计文档第六节）：
+ * - denyRead 目录**不可提权**（隐私边界，只开「写」的口子）；
+ * - 「跳过工具确认」/ 计划已批准**不会**自动批准提权（否则沙箱全局可绕过）；
+ * - 提权不做持久白名单（只支持 once / session）。
+ */
+async function handleSandboxBoundary(params: {
+  sessionId: string
+  toolName: string
+  toolCallId: string
+  targetPath: string
+  requestedRoots: string[]
+  deniedPaths: string[]
+  reason: string
+  signal?: AbortSignal
+}): Promise<
+  | { handled: false }
+  | { handled: true; allowed: true }
+  | { handled: true; allowed: false; block: BeforeToolCallResult }
+> {
+  const { sessionId, toolName, toolCallId, targetPath, requestedRoots, deniedPaths, reason } =
+    params
+  const policy = await getSessionFsPolicy(sessionId)
+  if (!policy || !targetPath || isSandboxWriteAllowed(policy, targetPath)) return { handled: false }
+
+  const deniedLabel = deniedPaths.join('、')
+
+  // 红线：命中「禁止读取」目录的路径不可提权
+  const readBlocked = requestedRoots.filter((r) => isPathWithinAny(r, policy.denyReadRoots))
+  if (readBlocked.length > 0) {
+    log.info('提权被红线拒绝（命中禁读目录）', { sessionId, toolName, readBlocked })
+    return {
+      handled: true,
+      allowed: false,
+      block: blockFromOutcome(
+        toolOutcomes.sandboxDenied(
+          deniedPaths,
+          '该路径位于「禁止读取」目录内，属于不可提权的隐私边界，请改用其他路径。'
+        )
+      )
+    }
+  }
+
+  // 提权通道关闭：与关闭前的严格行为一致（硬拒 + 引导去设置），不弹任何确认
+  if (!isSandboxEscalationEnabled()) {
+    log.info('沙箱提权通道已关闭，区外写入直接拒绝', { sessionId, toolName, targetPath })
+    return {
+      handled: true,
+      allowed: false,
+      block: blockFromOutcome(toolOutcomes.sandboxDenied(deniedPaths, sandboxEscalationHint()))
+    }
+  }
+
+  const result = await requestSandboxEscalation({
+    sessionId,
+    toolName,
+    toolCallId,
+    requestedRoots,
+    deniedPaths,
+    reason,
+    signal: params.signal
+  })
+  if (result.allowed) return { handled: true, allowed: true }
+  const outcome = result.outcome ?? toolOutcomes.userDenied(`对「${deniedLabel}」的提权申请`)
+  return { handled: true, allowed: false, block: blockFromOutcome(outcome) }
+}
+
+/**
+ * 申请沙箱提权：弹交互条并等待用户决策（文件工具与 bash 共用同一通道）。
+ * 批准时授权已在 resolveSandboxEscalation 内签发（once 绑 toolCallId / session 落会话级）。
+ */
+export async function requestSandboxEscalation(
+  ask: SandboxEscalationAsk
+): Promise<EscalationAskResult> {
+  const timeoutMs = getInteractionTimeoutMs()
+  const expiresAt = timeoutMs > 0 ? Date.now() + timeoutMs : 0
+  const deniedLabel = ask.deniedPaths.join('、')
+  const slot = beginInteraction<EscalationAskResult>({
+    kind: 'sandbox_escalation',
+    sessionId: ask.sessionId,
+    timeoutMs,
+    signal: ask.signal,
+    ctx: {
+      sessionId: ask.sessionId,
+      toolCallId: ask.toolCallId,
+      toolName: ask.toolName,
+      requestedRoots: ask.requestedRoots
+    } satisfies EscalationCtx,
+    onTimeout: () => ({
+      allowed: false,
+      outcome: toolOutcomes.approvalTimeout(`对「${deniedLabel}」的提权申请`)
+    }),
+    onAbort: () => ({
+      allowed: false,
+      outcome: toolOutcomes.aborted(`对「${deniedLabel}」的提权申请`)
+    })
+  })
+  const payload: SandboxEscalationRequest = {
+    kind: 'sandbox_escalation',
+    requestId: slot.requestId,
+    sessionId: ask.sessionId,
+    toolName: ask.toolName,
+    toolCallId: ask.toolCallId,
+    requestedRoots: ask.requestedRoots,
+    reason: ask.reason,
+    command: ask.command,
+    deniedPaths: ask.deniedPaths,
+    expiresAt
+  }
+  rendererClient.agentEvent.onInteractionRequest(payload)
+  log.info('提交沙箱提权申请', {
+    sessionId: ask.sessionId,
+    toolName: ask.toolName,
+    requestedRoots: ask.requestedRoots,
+    timeoutMs
+  })
+  return slot.promise
+}
+
+/** renderer 回传沙箱提权结果（once=仅本次 / session=本会话允许）。 */
+export function resolveSandboxEscalation(
+  requestId: string,
+  approved: boolean,
+  scope: PermissionScope = 'once'
+): void {
+  const ctx = getInteractionCtx(requestId) as EscalationCtx | undefined
+  if (!ctx) {
+    log.warn('收到未知提权回执', { requestId, approved })
+    return
+  }
+  if (!approved) {
+    log.info('沙箱提权被拒绝', { requestId, roots: ctx.requestedRoots })
+    respondInteraction(requestId, {
+      allowed: false,
+      outcome: toolOutcomes.userDenied(`对「${ctx.requestedRoots.join('、')}」的提权申请`)
+    } satisfies EscalationAskResult)
+    return
+  }
+  // 提权不支持持久白名单（否则沙箱边界会被静默放宽），always 一律降级为 session
+  if (scope === 'always') {
+    log.warn('沙箱提权不支持 always，按 session 处理', { requestId })
+  }
+  const effectiveScope: PermissionScope = scope === 'once' ? 'once' : 'session'
+  if (effectiveScope === 'session') {
+    grantSessionWritableRoots(ctx.sessionId, ctx.requestedRoots)
+  } else if (ctx.toolName !== 'bash') {
+    // 「仅本次」：授权绑定到这次 toolCallId，由工具执行层（wrapSandboxFsPolicy）复核后清除。
+    // 不能只靠 beforeToolCall 放行 —— 执行层还会独立复查一次沙箱边界，不带上这次授权就会硬拒。
+    // bash 例外：它的 once 重跑走 runOneOff(extraWritableRoots) 直接带参，不读这个 Map；
+    // 写了反而没有清理点（wrapSandboxFsPolicy 只包文件工具与 read_file），会残留到进程退出。
+    grantOnceWritableRoots(ctx.toolCallId, ctx.requestedRoots)
+  }
+  log.info('沙箱提权已批准', { requestId, scope: effectiveScope, roots: ctx.requestedRoots })
+  respondInteraction(requestId, {
+    allowed: true,
+    scope: effectiveScope
+  } satisfies EscalationAskResult)
+}
+
 /**
  * 创建 beforeToolCall 钩子（绑定 sessionId，用于推送权限请求）。
  * isVoiceAutoApprove：语音 run 判定（由 agent-manager 传入，实时查询 voiceRuns 标记）。
  * 语音会话没有人工确认入口，因此 run 自动放行涵盖语音；破坏性命令（hardAsk）仍要求人工。
- * 返回 undefined = 放行；返回 { block } = 拦截（用户拒绝 / 超时 / 中止 / 计划模式）。
+ * 返回 undefined = 放行；返回 { block } = 拦截（用户拒绝 / 超时 / 中止 / 计划模式 / 沙箱越界）。
  */
 export function createBeforeToolCallHook(
   sessionId: string,
@@ -246,10 +469,7 @@ export function createBeforeToolCallHook(
         if (evaluateReadonlyBash(command)) return undefined
       }
       log.info('计划模式拦截危险工具', { sessionId, toolName: toolCall.name })
-      return {
-        block: true,
-        reason: '当前处于计划模式：请先调用 exit_plan_mode 提交计划并获得用户批准后再执行操作。'
-      }
+      return blockFromOutcome(toolOutcomes.planMode())
     }
 
     const args = ctx.args as { command?: string; path?: string } | undefined
@@ -258,16 +478,22 @@ export function createBeforeToolCallHook(
       decision = decideBash(sessionId, args?.command?.trim() ?? '')
     } else if (toolCall.name === 'write_file' || toolCall.name === 'edit_file') {
       const path = args?.path ?? ''
-      // 沙箱开启时区外写入不可被人工放行（执行层/OS 沙箱必拒），直接按沙箱口径拒绝，
-      // 不弹确认条——避免「确认允许 → 执行层又硬拒」的假确认（见 sandbox.ts 文件域策略）。
-      const policy = await getSessionFsPolicy(sessionId)
-      if (policy && path && !isSandboxWriteAllowed(policy, path)) {
-        log.info('沙箱开启，区外写入直接拒绝（不弹确认）', {
-          sessionId,
-          toolName: toolCall.name,
-          path
-        })
-        return { block: true, reason: sandboxWriteDeniedMessage(path) }
+      // 沙箱开启且目标区外：走提权流程（仅本次 / 本会话允许）；通道关闭或用户拒绝则按
+      // sandbox_denied 结局拒绝 —— 不再弹「普通确认」制造「确认允许后执行层又硬拒」的假确认。
+      const escalation = await handleSandboxBoundary({
+        sessionId,
+        toolName: toolCall.name,
+        toolCallId: toolCall.id,
+        targetPath: path,
+        // 文件工具按「目标文件所在目录」申请提权（目录粒度才有复用价值）
+        requestedRoots: path ? [dirname(path)] : [],
+        deniedPaths: path ? [path] : [],
+        reason: '该路径不在沙箱可写范围内（工作区 / 可写目录 / 系统临时目录之外）',
+        signal
+      })
+      if (escalation.handled) {
+        if (escalation.allowed) return undefined
+        return escalation.block
       }
       decision = await decideFile(sessionId, path)
     } else if (toolCall.name === 'mcp_call') {
@@ -298,7 +524,8 @@ export function createBeforeToolCallHook(
     })
     const timeoutMs = getInteractionTimeoutMs()
     const expiresAt = timeoutMs > 0 ? Date.now() + timeoutMs : 0
-    const slot = beginInteraction<{ allowed: boolean; blockedReason: string }>({
+    const targetLabel = summary ? `「${summary}」` : '该操作'
+    const slot = beginInteraction<PermissionPendingResult>({
       kind: 'tool_permission',
       sessionId,
       timeoutMs,
@@ -309,8 +536,14 @@ export function createBeforeToolCallHook(
         target: summary,
         hardAsk: denyHit
       } satisfies PermissionCtx,
-      onTimeout: () => ({ allowed: false, blockedReason: '权限确认超时，已自动拒绝' }),
-      onAbort: () => ({ allowed: false, blockedReason: '已中断' })
+      onTimeout: () => ({
+        allowed: false,
+        blockedReason: toolOutcomeText(toolOutcomes.approvalTimeout(targetLabel))
+      }),
+      onAbort: () => {
+        const o = toolOutcomes.aborted(targetLabel)
+        return { allowed: false, blockedReason: toolOutcomeText(o), terminate: o.terminate }
+      }
     })
     rendererClient.agentEvent.onInteractionRequest({
       kind: 'tool_permission',
@@ -329,7 +562,11 @@ export function createBeforeToolCallHook(
       toolName: toolCall.name,
       reason: outcome.blockedReason
     })
-    return { block: true, reason: outcome.blockedReason }
+    return {
+      block: true,
+      reason: outcome.blockedReason,
+      ...(outcome.terminate ? { terminate: true } : {})
+    }
   }
 }
 
@@ -346,7 +583,10 @@ export function resolvePermission(
   }
   if (!approved) {
     log.info('权限请求已拒绝', { requestId, toolName: ctx.toolName, scope })
-    respondInteraction(requestId, { allowed: false, blockedReason: '用户拒绝执行该工具' })
+    respondInteraction(requestId, {
+      allowed: false,
+      blockedReason: toolOutcomeText(toolOutcomes.userDenied(`对「${ctx.target}」的操作`))
+    })
     return
   }
   if (scope === 'session') recordSessionAllow(ctx)
@@ -379,14 +619,15 @@ function recordSessionAllow(ctx: PermissionCtx): void {
 }
 
 /**
- * 会话终止（删除会话 / 删除工作区）：释放该会话的全部「本会话放行」规则。
- * 三张表均以 sessionId 为键且只在会话存续期间有意义；不清理会随历史会话数无限累积
+ * 会话终止（删除会话 / 删除工作区）：释放该会话的全部「本会话放行」规则与沙箱提权授权。
+ * 各表均以 sessionId 为键且只在会话存续期间有意义；不清理会随历史会话数无限累积
  * （会话/工作区删除链路见 db-service.deleteSession 与 service/index onSessionsRemoved）。
  */
 export function clearSessionPermissions(sessionId: string): void {
   sessionBashAllow.delete(sessionId)
   sessionFileAllow.delete(sessionId)
   sessionMcpAllow.delete(sessionId)
+  clearSessionSandboxGrants(sessionId)
 }
 
 /** 写入持久白名单（仅 bash 且未命中破坏性命令；deny 兜底不可被白名单覆盖）。 */

@@ -8,10 +8,25 @@ import {
   bashSessionManager,
   DEFAULT_TIMEOUT,
   formatBytes,
+  getPersistentCommandId,
   resolveShell,
-  setBashSandboxWrapper
+  setBashSandboxWrapper,
+  type ShellRunResult
 } from '../runtime/bash-session'
-import { createSandboxWrapper } from '../runtime/sandbox'
+import {
+  createSandboxWrapper,
+  deniedPathsToRoots,
+  getSandboxDeniedWritePaths,
+  getSessionFsPolicy,
+  getSessionSandboxGrants,
+  grantSessionWritableRoots,
+  isPathWithinAny,
+  isSandboxActive,
+  isSandboxEscalationEnabled,
+  sandboxEscalationHint
+} from '../runtime/sandbox'
+import { requestSandboxEscalation } from '../runtime/permission'
+import { toolOutcomeText, toolOutcomes } from '../runtime/tool-outcome'
 import { createLogger } from '../../utils/log'
 
 const log = createLogger('tool:bash')
@@ -151,6 +166,120 @@ export interface BashInputDetails {
 }
 
 /**
+ * 等待并读取本次命令的越界写路径。
+ *
+ * 违规来自 srt 的**异步**内核日志流（macOS 走 `log stream` 过滤），到达时刻可能略晚于命令
+ * 结束时刻 —— 立即查询会漏判，导致提权入口时灵时不灵。故做一次短轮询（最多 ~250ms，
+ * 且只在命令已失败、沙箱确实生效时才会走到这里，正常路径零开销）。
+ */
+async function waitForDeniedWritePaths(commandId: string, since: number): Promise<string[]> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const paths = getSandboxDeniedWritePaths(commandId, since)
+    if (paths.length > 0) return paths
+    await new Promise((resolve) => setTimeout(resolve, 250))
+  }
+  return getSandboxDeniedWritePaths(commandId, since)
+}
+
+/**
+ * bash 沙箱被动检测 + 提权重跑。
+ *
+ * 链路：命令因沙箱被拒而失败 → 用 srt 违规归因（commandId + 起始时刻）取被拒路径 →
+ * 弹提权申请 → 批准后以扩展可写根**重跑**该命令。
+ *
+ * 为什么是「重跑」而不是放宽当前 shell：沙箱在 spawn 时一次性施加，运行中的 shell 无法追加
+ * 可写路径 —— 这也是业界一致做法（Gemini CLI 的 Sandbox Expansion、Claude Code 的
+ * unsandboxed retry 都是重跑）。
+ *
+ * 返回：
+ * - undefined：无需处理（未开启沙箱 / 无写类违规），调用方按原失败结果返回；
+ * - string：明确结局文本（提权通道关闭 / 被拒 / 超时 / 中断），追加到命令输出；
+ * - { result, note }：提权已批准并重跑完成，note 为必须如实展示的继承情况说明。
+ */
+async function escalateSandboxDenial(params: {
+  sessionId: string
+  toolCallId: string
+  command: string
+  cwd: string
+  env: NodeJS.ProcessEnv
+  timeoutMs: number
+  signal?: AbortSignal
+  startedAt: number
+}): Promise<undefined | string | { result: ShellRunResult; note: string }> {
+  const { sessionId, toolCallId, command, cwd, env, timeoutMs, signal, startedAt } = params
+  const denied = await waitForDeniedWritePaths(getPersistentCommandId(sessionId), startedAt)
+  if (denied.length === 0) return undefined
+  const roots = deniedPathsToRoots(denied)
+  if (roots.length === 0) return undefined
+  const denyText = (hint: string): string =>
+    `\n\n${toolOutcomeText(toolOutcomes.sandboxDenied(denied, hint))}`
+
+  // 红线：被拒写路径命中「禁止读取」目录时不可提权（与文件工具 handleSandboxBoundary 同口径）。
+  // roots 来自违规路径的父目录，可能比禁读根更宽，因此同时直接判定被拒路径本身，避免漏网。
+  const policy = await getSessionFsPolicy(sessionId)
+  const readBlocked = policy ? denied.filter((d) => isPathWithinAny(d, policy.denyReadRoots)) : []
+  if (readBlocked.length > 0) {
+    log.info('提权被红线拒绝（命中禁读目录）', { sessionId, toolName: 'bash', readBlocked })
+    return denyText('该路径位于「禁止读取」目录内，属于不可提权的隐私边界，请改用其他路径。')
+  }
+
+  // 提权通道关闭：给出可操作指引，不再弹任何确认（与关闭前的严格行为一致）
+  if (!isSandboxEscalationEnabled()) return denyText(sandboxEscalationHint())
+
+  const ask = await requestSandboxEscalation({
+    sessionId,
+    toolName: 'bash',
+    toolCallId,
+    requestedRoots: roots,
+    deniedPaths: denied,
+    reason: '命令被沙箱拒绝写入上述路径',
+    command,
+    signal
+  })
+  const deniedLabel = denied.join('、')
+  if (!ask.allowed) {
+    const outcome = ask.outcome ?? toolOutcomes.userDenied(`对「${deniedLabel}」的提权申请`)
+    return `\n\n${toolOutcomeText(outcome)}`
+  }
+
+  // 状态继承：env 从当前 shell 原样回放（决策 8：和上一个 shell 一样）；cwd 由调用方显式传入
+  const snapshot = await bashSessionManager.snapshotDefaultEnv(sessionId)
+  const runEnv = snapshot ?? env
+  const inheritNote = snapshot
+    ? `已继承工作目录与 ${Object.keys(snapshot).length} 个已导出环境变量；`
+    : '未能继承环境变量；'
+  // 无法回放的部分必须如实说明，不能让 Agent 以为一切如常
+  const costNote = '未继承 shell 函数 / 别名 / 未导出变量。'
+
+  if (ask.scope === 'session') {
+    grantSessionWritableRoots(sessionId, roots)
+    bashSessionManager.rebuildDefault(sessionId, getSessionSandboxGrants(sessionId))
+    const result = await bashSessionManager.getOrCreateDefault(sessionId).run(command, {
+      timeoutMs,
+      signal,
+      cwd,
+      env: runEnv
+    })
+    return {
+      result,
+      note: `[沙箱提权已批准 · 本会话允许] 已追加可写目录：${roots.join('、')}；该会话 shell 已重建以使其生效。${inheritNote}${costNote}`
+    }
+  }
+
+  const result = await bashSessionManager.runOneOff(command, {
+    cwd,
+    env: runEnv,
+    extraWritableRoots: roots,
+    timeoutMs,
+    signal
+  })
+  return {
+    result,
+    note: `[沙箱提权已批准 · 仅本次] 本次命令已在一次性沙箱会话中重跑（扩展可写目录：${roots.join('、')}）。${inheritNote}${costNote}`
+  }
+}
+
+/**
  * 按 Agent 会话构建 bash 家族工具：
  * - `bash`：在持久化 shell 会话中执行命令（cd/export 保留）；background=true 时后台启动
  * - `bash_output`：读取后台会话输出（全量 / 增量 tail）
@@ -171,7 +300,7 @@ export function createBashTools(sessionId: string): AgentTool[] {
     description: `在持久化 shell 会话中执行命令并返回 stdout+stderr（${shellNote}）。cd 与环境变量设置在会话内保留。默认 30 秒超时（可用 timeout_ms 参数按命令调整）；长驻命令（npm run dev 等）用 background=true 后台启动，再用 bash_output 读取、kill_shell 终止；交互式命令（提示确认/密码、REPL）也用 background=true 启动，用 bash_input 写入应答、bash_output 读结果。危险操作需用户确认。`,
     parameters: bashParams,
     executionMode: 'sequential',
-    async execute(_toolCallId, p, signal, onUpdate) {
+    async execute(toolCallId, p, signal, onUpdate) {
       // 不预检交互式命令（无法准确分辨，误报比漏放更烦人）：裸 REPL/读 stdin 的命令
       // 最坏情况是吞掉哨兵直至超时（默认 30s），超时兜底会整组终止会话并在下次调用自动
       // 重建，错误信息引导换非交互写法或 background=true。
@@ -205,8 +334,9 @@ export function createBashTools(sessionId: string): AgentTool[] {
 
       const shell = bashSessionManager.getOrCreateDefault(sessionId)
       const timeout = p.timeout_ms ?? DEFAULT_TIMEOUT
+      const startedAt = Date.now()
       log.info('执行命令', { sessionId, command: p.command.slice(0, 200), cwd, timeout })
-      const result = await shell.run(p.command, {
+      let result = await shell.run(p.command, {
         timeoutMs: timeout,
         signal,
         cwd,
@@ -217,16 +347,54 @@ export function createBashTools(sessionId: string): AgentTool[] {
             details: { command: p.command, exitCode: null, durationMs: 0, truncated: false }
           })
       })
+      // 沙箱被动检测：命令失败且确实存在「写被拒」违规时，尝试提权重跑。
+      // 非沙箱场景 / 无写类违规时 escalateSandboxDenial 返回 undefined，这里零开销。
+      let note = ''
+      // 提权的「策略性结局」（拒绝 / 超时 / 中断 / 通道关闭 / 命中禁读红线）。
+      // 必须以 isError:true 的 toolResult 结束：pi-agent-core 只在 execute 抛错或 beforeToolCall
+      // block 时置 isError（见其 finalizeExecutedToolCall），普通 return 一律 false，
+      // 否则前端会把「已被拒绝」渲染成绿色「已完成」。抛错消息保留原始输出 + 结局前缀文本，
+      // 与文件工具走 beforeToolCall block 时模型看到的形状完全一致。
+      let denialNote = false
+      if (result.exitCode !== 0 && !result.aborted && !result.timedOut && isSandboxActive()) {
+        try {
+          const escalated = await escalateSandboxDenial({
+            sessionId,
+            toolCallId,
+            command: p.command,
+            cwd,
+            env,
+            timeoutMs: timeout,
+            signal,
+            startedAt
+          })
+          if (typeof escalated === 'string') {
+            note = escalated
+            denialNote = true
+          } else if (escalated) {
+            result = escalated.result
+            note = `\n\n${escalated.note}`
+          }
+        } catch (err) {
+          // 提权链路自身失败不影响「命令已失败」这一事实，按原结果返回
+          log.warn('沙箱提权链路失败（保持原失败结果）', {
+            sessionId,
+            error: err instanceof Error ? err.message : String(err)
+          })
+        }
+      }
       log.info('命令执行完成', {
         sessionId,
         command: p.command.slice(0, 200),
         exitCode: result.exitCode,
         durationMs: result.durationMs,
         outputLength: result.text.length,
-        timedOut: result.timedOut
+        timedOut: result.timedOut,
+        escalated: note.length > 0
       })
+      if (denialNote) throw new Error(`${result.text}${note}`.trim())
       return {
-        content: [{ type: 'text', text: result.text }],
+        content: [{ type: 'text', text: result.text + note }],
         details: {
           command: p.command,
           exitCode: result.exitCode,

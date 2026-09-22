@@ -1,23 +1,30 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { NButton, NIcon, NInput, NTag } from 'naive-ui'
-import { HelpCircleOutline, TimerOutline, DocumentTextOutline } from '@vicons/ionicons5'
+import {
+  HelpCircleOutline,
+  TimerOutline,
+  DocumentTextOutline,
+  ShieldCheckmarkOutline
+} from '@vicons/ionicons5'
 import { useInteractionStore } from '@renderer/store/useInteractionStore'
 import { useChatStore } from '@renderer/store/useChatStore'
 import type {
   AskUserRequest,
   InteractionRequest,
   PlanApprovalRequest,
+  SandboxEscalationRequest,
   ToolPermissionRequest
 } from '@main/agent/types'
 
 /**
- * 统一「人工介入」条（危险工具确认 / 计划审批 / 澄清提问 三合一，取代原
+ * 统一「人工介入」条（危险工具确认 / 沙箱提权 / 计划审批 / 澄清提问 四合一，取代原
  * PermissionBar / PlanApprovalBar / AskUserBar 三个独立组件）：
  * - 全部请求走同一条队列（useInteractionStore），同一外观、同一倒计时口径；
  * - 超时源统一：main 按 permission.timeoutSec 处理，请求携带 expiresAt（0=一直等待），
  *   本组件据此显示剩余秒数，到点由 store 清理（权限卡翻转为拒绝态）。
- * scope 收敛为 once/session/always：破坏性命令只给「允许/拒绝」，不给会话/总是放行。
+ * scope 收敛为 once/session/always：破坏性命令只给「允许/拒绝」，不给会话/总是放行；
+ * 沙箱提权只给 once/session（提权不落持久白名单）。
  */
 const interactionStore = useInteractionStore()
 const chatStore = useChatStore()
@@ -30,6 +37,9 @@ const queueLen = computed(() => pending.value.length)
 /* ===== 当前交互 ===== */
 function isPermission(r: InteractionRequest | null): r is ToolPermissionRequest {
   return r?.kind === 'tool_permission'
+}
+function isEscalation(r: InteractionRequest | null): r is SandboxEscalationRequest {
+  return r?.kind === 'sandbox_escalation'
 }
 function isPlan(r: InteractionRequest | null): r is PlanApprovalRequest {
   return r?.kind === 'plan_approval'
@@ -61,6 +71,18 @@ function respondAllPermission(approved: boolean): void {
   for (const r of pending.value) {
     if (isPermission(r)) interactionStore.respondPermission(r, approved, 'once')
   }
+}
+
+/* ===== 沙箱提权 ===== */
+const escalationCurrent = computed<SandboxEscalationRequest | null>(() =>
+  isEscalation(current.value) ? current.value : null
+)
+
+/** 沙箱提权只回传 once / session 两档：提权永不落持久白名单（不提供 always）。 */
+function respondEscalation(approved: boolean, scope: 'once' | 'session' = 'once'): void {
+  const c = escalationCurrent.value
+  if (!c || !sessionId.value) return
+  interactionStore.respondEscalation(c, approved, scope)
 }
 
 /* ===== 计划审批 ===== */
@@ -225,7 +247,84 @@ const remainingSec = computed<number | null>(() => {
         </div>
       </div>
 
-      <!-- ============ 2. 计划审批 ============ -->
+      <!-- ============ 2. 沙箱提权申请 ============ -->
+      <div v-else-if="escalationCurrent" class="interaction-panel">
+        <div class="interaction-panel__head">
+          <span class="interaction-panel__title">
+            <NIcon :size="14" class="interaction-panel__icon--warn"
+              ><ShieldCheckmarkOutline
+            /></NIcon>
+            沙箱权限申请：需要写入沙箱外目录
+          </span>
+          <NTag size="tiny" type="warning" :bordered="false">{{ escalationCurrent.toolName }}</NTag>
+          <span
+            v-if="remainingSec !== null"
+            class="interaction-panel__countdown"
+            title="到点未确认将自动拒绝"
+          >
+            <NIcon :size="13"><TimerOutline /></NIcon>
+            {{ remainingSec }}s 后自动拒绝
+          </span>
+        </div>
+
+        <p v-if="escalationCurrent.reason" class="interaction-panel__reason">
+          {{ escalationCurrent.reason }}
+        </p>
+
+        <div class="interaction-panel__list">
+          <span class="interaction-panel__label">申请追加的可写目录</span>
+          <div
+            v-for="root in escalationCurrent.requestedRoots"
+            :key="root"
+            class="interaction-panel__row"
+          >
+            <code class="interaction-panel__cmd" :title="root">{{ root }}</code>
+          </div>
+          <template v-if="escalationCurrent.deniedPaths.length > 0">
+            <span class="interaction-panel__label">沙箱实际拒绝的路径</span>
+            <div
+              v-for="p in escalationCurrent.deniedPaths"
+              :key="p"
+              class="interaction-panel__row interaction-panel__row--deny"
+            >
+              <code class="interaction-panel__cmd" :title="p">{{ p }}</code>
+            </div>
+          </template>
+        </div>
+
+        <div v-if="escalationCurrent.command" class="interaction-panel__list">
+          <span class="interaction-panel__label">命令原文</span>
+          <code class="interaction-panel__cmd" :title="escalationCurrent.command">{{
+            escalationCurrent.command
+          }}</code>
+        </div>
+
+        <div class="interaction-panel__notice">
+          <span class="interaction-panel__notice--main">
+            批准后该操作仍在沙箱内重跑，并追加上述目录为本次可写；网络白名单与禁读目录限制继续生效。
+          </span>
+          <span class="interaction-panel__notice--sub">
+            授权不写入持久白名单；一次性或重建后的会话不会继承原有 shell 函数、别名与未导出变量。
+          </span>
+        </div>
+
+        <div class="interaction-panel__actions">
+          <NButton size="small" type="success" @click="respondEscalation(true, 'once')">
+            仅本次允许
+          </NButton>
+          <NButton
+            size="small"
+            type="warning"
+            secondary
+            @click="respondEscalation(true, 'session')"
+          >
+            本会话允许
+          </NButton>
+          <NButton size="small" @click="respondEscalation(false, 'once')">拒绝</NButton>
+        </div>
+      </div>
+
+      <!-- ============ 3. 计划审批 ============ -->
       <div v-else-if="isPlan(current)" class="interaction-panel">
         <div class="interaction-panel__head">
           <span class="interaction-panel__title">
@@ -270,7 +369,7 @@ const remainingSec = computed<number | null>(() => {
         </div>
       </div>
 
-      <!-- ============ 3. 澄清提问 ============ -->
+      <!-- ============ 4. 澄清提问 ============ -->
       <div v-else-if="isAsk(current)" class="interaction-panel">
         <div class="interaction-panel__head">
           <span class="interaction-panel__title">
@@ -429,6 +528,31 @@ const remainingSec = computed<number | null>(() => {
 }
 .interaction-panel__queued {
   font-size: 12px;
+  color: var(--text-3);
+}
+.interaction-panel__label {
+  font-size: 12px;
+  color: var(--text-3);
+}
+.interaction-panel__reason {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--text-2);
+}
+.interaction-panel__notice {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.interaction-panel__notice--main {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--warning);
+}
+.interaction-panel__notice--sub {
+  font-size: 11px;
+  line-height: 1.6;
   color: var(--text-3);
 }
 .interaction-panel__plan {

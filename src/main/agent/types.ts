@@ -61,10 +61,15 @@ export type PermissionScope = 'once' | 'session' | 'always'
 /**
  * 需要人工介入的交互类型（三套「等用户」收敛后的统一枚举）：
  * - tool_permission：危险工具执行前确认（写文件/命令/装技能）
+ * - sandbox_escalation：沙箱越界后的提权申请（追加可写目录，本会话/仅本次）
  * - plan_approval：exit_plan_mode 提交计划后的批准/拒绝
  * - ask_question：ask_user 的澄清提问（选项/自由输入/跳过）
  */
-export type InteractionKind = 'tool_permission' | 'plan_approval' | 'ask_question'
+export type InteractionKind =
+  | 'tool_permission'
+  | 'sandbox_escalation'
+  | 'plan_approval'
+  | 'ask_question'
 
 /**
  * 危险工具执行前的权限确认请求。
@@ -90,10 +95,45 @@ export interface ToolPermissionRequest {
 }
 
 /**
- * 统一交互请求载荷（危险工具确认 / 计划审批 / 澄清提问 共用一条推送通道）。
+ * 沙箱提权申请（沙箱越界后被拒时 main 推给 renderer）。
+ * 语义对齐业界「Sandbox Expansion」：批准后以扩展后的可写根执行本次动作。
+ * renderer 决策后调 agent.respondEscalation 回传（once=仅本次 / session=本会话允许）。
+ *
+ * 注意：这里复用的 PermissionScope 只取 once / session 两档 —— 沙箱提权**不做持久白名单**
+ * （持久化会让沙箱边界被静默放宽，见设计文档红线）。
+ */
+export interface SandboxEscalationRequest {
+  kind: 'sandbox_escalation'
+  requestId: string
+  sessionId: string
+  /** 触发提权的工具名（bash / write_file / edit_file / download）。 */
+  toolName: string
+  /** 对应 assistant 消息流中 toolCall 块的 id：renderer 据此关联具体工具卡片。 */
+  toolCallId: string
+  /** 申请追加的可写根（绝对路径，已去重归一）。 */
+  requestedRoots: string[]
+  /** 一句话说明为何需要（如「命令被沙箱拒绝写入该路径」）。 */
+  reason: string
+  /** bash 提权时携带命令原文（仅用于 UI 展示；重跑由 main 侧完成）。 */
+  command?: string
+  /** 真实被拒的路径（bash 被动检测得到；文件工具场景为空）。 */
+  deniedPaths: string[]
+  /**
+   * 超时截止时间（epoch ms）：到点 main 侧自动拒绝；0 = 一直等待。
+   * renderer 据此显示倒计时并同步清理本地队列。
+   */
+  expiresAt: number
+}
+
+/**
+ * 统一交互请求载荷（危险工具确认 / 沙箱提权 / 计划审批 / 澄清提问 共用一条推送通道）。
  * renderer 的 useInteractionStore 按 kind 分流渲染，回传仍走各自的 respond* 方法。
  */
-export type InteractionRequest = ToolPermissionRequest | PlanApprovalRequest | AskUserRequest
+export type InteractionRequest =
+  | ToolPermissionRequest
+  | SandboxEscalationRequest
+  | PlanApprovalRequest
+  | AskUserRequest
 
 /**
  * settings 表中存储的「跳过工具确认」开关 key（boolean，默认 false）。
@@ -425,6 +465,17 @@ export const SETTING_SANDBOX_ENABLED = 'sandbox.enabled'
 export const SETTING_SANDBOX_WRITABLE_ROOTS = 'sandbox.writableRoots'
 export const SETTING_SANDBOX_DENY_READ_ROOTS = 'sandbox.denyReadRoots'
 export const SETTING_SANDBOX_NETWORK_ALLOWLIST = 'sandbox.networkAllowlist'
+
+/**
+ * settings 表中存储的「沙箱提权通道」总开关 key（boolean，默认开启）。
+ * 开启时：越界写可经用户批准提权（仅本次 / 本会话允许）；关闭时：越界一律硬拒，
+ * 不提供任何提权入口（面向高安全 / 企业场景，对齐 Claude 的 allowUnsandboxedCommands）。
+ * 该开关永远无法让「跳过工具确认 / 计划已批准」自动放行提权（见 permission.ts 红线）。
+ */
+export const SETTING_SANDBOX_ESCALATION_ENABLED = 'sandbox.escalationEnabled'
+
+/** 沙箱提权通道默认开启（关闭 = 恢复「越界直接硬拒」的严格行为）。 */
+export const DEFAULT_SANDBOX_ESCALATION_ENABLED = true
 
 /** 沙箱默认关闭（开启会改变命令行为，须用户显式打开）。 */
 export const DEFAULT_SANDBOX_ENABLED = false

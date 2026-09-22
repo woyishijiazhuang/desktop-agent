@@ -17,6 +17,8 @@ const MAX_SESSION_OUTPUT = 100_000
 const MAX_BACKGROUND_SESSIONS = 8
 /** SIGTERM/SIGINT 后升级 SIGKILL 的宽限期（ms）。 */
 const KILL_GRACE_MS = 3_000
+/** 读取 shell 环境快照的超时（ms）：只读一次环境变量，给足冷启动余量即可。 */
+const SNAPSHOT_TIMEOUT_MS = 5_000
 /** 后台下载进度推送节流间隔（ms）。 */
 const PROGRESS_INTERVAL_MS = 200
 /** 后台下载连接建立后长时间无新数据（读不到字节）视为挂死，强制中止（防死链无限拖）。 */
@@ -68,8 +70,8 @@ export function resolveShell(): ShellSpec {
 
 /** 沙箱包装请求（tools/bash 侧注册的包装器按此信息决定是否/如何套 OS 沙箱）。 */
 export interface BashSandboxRequest {
-  /** persistent=持久会话 shell；background=后台单命令进程。 */
-  mode: 'persistent' | 'background'
+  /** persistent=持久会话 shell；background=后台单命令进程；oneoff=提权用一次性命令进程。 */
+  mode: 'persistent' | 'background' | 'oneoff'
   /** 待执行命令（persistent 为 shell 本体，如 bash；background 为用户命令原文）。 */
   command: string
   /** 附加参数（persistent 为 shell 参数，如 --noprofile --norc -s）。 */
@@ -78,6 +80,14 @@ export interface BashSandboxRequest {
   cwd: string
   /** 调用方组装好的子进程环境。 */
   env: NodeJS.ProcessEnv
+  /** 本次 spawn 额外授予的可写根（沙箱提权「仅本次」/「本会话允许」用）。 */
+  extraWritableRoots?: string[]
+  /**
+   * 违规归因键（srt per-invocation key）。下发后可用
+   * `getSandboxDeniedWritePaths(commandId, since)` 定位本次被拒的路径。
+   * 未下发时 srt 按命令文本归因，长命令共享前缀会串味（见其 README）。
+   */
+  commandId?: string
 }
 
 /** 沙箱包装结果：替换原 spawn 的 argv/env。 */
@@ -118,6 +128,21 @@ function cdCmd(cwd: string, kind: 'bash' | 'powershell'): string {
   return kind === 'bash'
     ? `cd ${shellQuote(cwd, kind)} || exit 1`
     : `Set-Location -LiteralPath ${shellQuote(cwd, kind)}; if (-not $?) { exit 1 }`
+}
+
+/**
+ * 持久 shell 的 srt 违规归因键。
+ *
+ * 持久 shell 是**一个**被包装的进程，其内部所有命令共享同一归因键 —— 因此无法靠 commandId
+ * 区分单条命令，必须配合时间戳过滤（见 sandbox.getSandboxDeniedWritePaths 的 since 参数）。
+ */
+function persistentCommandId(sessionId: string): string {
+  return `persistent:${sessionId}`
+}
+
+/** 导出给工具层：命令执行后用同一归因键 + 起始时刻反查「因写被拒」的路径。 */
+export function getPersistentCommandId(sessionId: string): string {
+  return persistentCommandId(sessionId)
 }
 
 /** 合并 stdout/stderr 为工具可见文本（超限时保留尾部 + 截断标记，错误信息通常在末尾）。 */
@@ -193,9 +218,19 @@ export class PersistentShell {
   private streamDirty = false
   private streamTimer: NodeJS.Timeout | null = null
   private disposed = false
+  /**
+   * 本会话额外授予的可写根（沙箱提权产生）。沙箱在 spawn 时一次性施加，故**只对之后新建的
+   * shell 生效**；要让当前 shell 生效必须销毁重建（见 BashSessionManager.rebuildDefault）。
+   */
+  private extraRoots: string[] = []
 
   constructor(sessionId: string) {
     this.sessionId = sessionId
+  }
+
+  /** 设置额外可写根（仅影响之后新建的 shell；重建由 BashSessionManager 负责）。 */
+  setExtraWritableRoots(roots: string[]): void {
+    this.extraRoots = [...roots]
   }
 
   /** 惰性启动 shell（env/cwd 仅首次/重建时生效，之后由 shell 内 cd/export 决定）。
@@ -220,7 +255,9 @@ export class PersistentShell {
           command: spec.command,
           args: spec.args,
           cwd,
-          env
+          env,
+          extraWritableRoots: this.extraRoots,
+          commandId: persistentCommandId(this.sessionId)
         })
       : null
     const argv = sandboxed?.argv ?? [spec.command, ...spec.args]
@@ -947,6 +984,8 @@ class BashSessionManager {
   private defaults = new Map<string, PersistentShell>()
   private backgrounds = new Map<string, BackgroundShell | BackgroundDownload>()
   private bgLru: string[] = []
+  /** 会话级额外可写根（沙箱提权「本会话允许」）：新建/重建默认 shell 时下发。 */
+  private sessionExtraRoots = new Map<string, string[]>()
   /** 变更订阅（后台任务 启动/退出/终止 时回调），renderer 面板据此刷新。 */
   private listeners = new Set<() => void>()
 
@@ -955,9 +994,177 @@ class BashSessionManager {
     let shell = this.defaults.get(sessionId)
     if (!shell) {
       shell = new PersistentShell(sessionId)
+      shell.setExtraWritableRoots(this.sessionExtraRoots.get(sessionId) ?? [])
       this.defaults.set(sessionId, shell)
     }
     return shell
+  }
+
+  /**
+   * 重建会话默认持久 shell，使新的沙箱可写根生效（沙箱提权「本会话允许」）。
+   *
+   * 为什么必须重建：沙箱在 spawn 时一次性施加，运行中的 shell 无法追加可写路径。
+   * 本方法在默认 shell 空闲时调用（工具调用是串行的），不会打断正在执行的命令；
+   * 后台任务存在另一个 Map（backgrounds），**不受影响**。
+   * 重建后由下次 getOrCreateDefault 惰性新建（携带新的额外可写根）。
+   *
+   * 代价：shell 函数 / 别名 / 未导出变量会丢失（cwd 与已导出变量由调用方用快照保住），
+   * 调用方必须如实标注，不可让 Agent 以为一切如常。
+   */
+  rebuildDefault(sessionId: string, extraRoots: string[]): void {
+    this.sessionExtraRoots.set(sessionId, [...extraRoots])
+    const shell = this.defaults.get(sessionId)
+    if (!shell) return
+    shell.dispose()
+    this.defaults.delete(sessionId)
+    log.info('已重建会话默认 shell 以应用沙箱提权', { sessionId, extraRoots })
+  }
+
+  /**
+   * 读取会话默认 shell 当前**已导出**的环境变量（提权执行体的状态继承用）。
+   *
+   * shell 内的 export 宿主不可见，只能主动回读；用 base64 包一层，避免 NUL / 换行破坏
+   * 哨兵扫描。读取失败或 shell 尚未启动时返回 null —— 调用方据此如实标注
+   * 「未继承环境变量」，不假装成功。
+   */
+  async snapshotDefaultEnv(sessionId: string): Promise<NodeJS.ProcessEnv | null> {
+    const shell = this.defaults.get(sessionId)
+    if (!shell) return null
+    const kind = resolveShell().kind
+    const cmd =
+      kind === 'bash'
+        ? "env -0 | base64 | tr -d '\\n'"
+        : `[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(((Get-ChildItem env: | ForEach-Object { "$($_.Name)=$($_.Value)" }) -join ([char]0))))`
+    try {
+      const res = await shell.run(cmd, { timeoutMs: SNAPSHOT_TIMEOUT_MS })
+      const b64 = res.text.trim()
+      if (!b64) return null
+      const decoded = Buffer.from(b64, 'base64').toString('utf-8')
+      const env: NodeJS.ProcessEnv = {}
+      for (const pair of decoded.split('\0')) {
+        if (!pair) continue
+        const eq = pair.indexOf('=')
+        if (eq <= 0) continue
+        env[pair.slice(0, eq)] = pair.slice(eq + 1)
+      }
+      return Object.keys(env).length > 0 ? env : null
+    } catch (err) {
+      log.warn('读取 shell 环境快照失败（提权将不继承环境变量）', {
+        sessionId,
+        error: err instanceof Error ? err.message : String(err)
+      })
+      return null
+    }
+  }
+
+  /**
+   * 「仅本次」沙箱提权用：独立起一个**一次性**沙箱 shell 执行单条命令后回收。
+   *
+   * 不碰会话的持久 shell（不改其边界、不动其状态）；代价是不继承 shell 函数 / 别名 / 未导出
+   * 变量，由调用方如实标注。fail-closed：未开启沙箱或包装失败一律抛错，绝不降级直跑。
+   */
+  async runOneOff(
+    command: string,
+    opts: {
+      cwd: string
+      env: NodeJS.ProcessEnv
+      extraWritableRoots: string[]
+      timeoutMs?: number
+      signal?: AbortSignal
+    }
+  ): Promise<ShellRunResult> {
+    const commandId = `oneoff:${randomUUID()}`
+    const sandboxed = sandboxWrapper
+      ? await sandboxWrapper({
+          mode: 'oneoff',
+          command,
+          args: [],
+          cwd: opts.cwd,
+          env: opts.env,
+          extraWritableRoots: opts.extraWritableRoots,
+          commandId
+        })
+      : null
+    if (!sandboxed) {
+      throw new Error('提权执行失败：沙箱未启用或包装失败（fail-closed，拒绝裸跑）')
+    }
+    const startedAt = Date.now()
+    const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT
+    return new Promise<ShellRunResult>((resolve) => {
+      let out = ''
+      let err = ''
+      let settled = false
+      let timedOut = false
+      let aborted = false
+      let timer: NodeJS.Timeout | null = null
+      const child = spawn(sandboxed.argv[0], sandboxed.argv.slice(1), {
+        cwd: opts.cwd,
+        env: sandboxed.env,
+        // 独立进程组：超时/中止可整组终止
+        detached: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+      })
+      const finish = (exitCode: number | null): void => {
+        if (settled) return
+        settled = true
+        if (timer) clearTimeout(timer)
+        opts.signal?.removeEventListener('abort', onAbort)
+        const merged = mergeOutput(out, err)
+        const suffix = timedOut
+          ? `\n[提权命令执行超时（${timeoutMs}ms），已中断]`
+          : aborted
+            ? '\n[提权命令已中止]'
+            : ''
+        resolve({
+          text: merged.text + suffix,
+          exitCode,
+          durationMs: Date.now() - startedAt,
+          truncated: merged.truncated,
+          timedOut,
+          aborted
+        })
+      }
+      const kill = (sig: NodeJS.Signals): void => {
+        if (child.pid !== undefined) {
+          try {
+            process.kill(-child.pid, sig)
+            return
+          } catch {
+            // 进程组已不存在，忽略
+          }
+        }
+        child.kill(sig)
+      }
+      const onAbort = (): void => {
+        aborted = true
+        kill('SIGTERM')
+        setTimeout(() => kill('SIGKILL'), KILL_GRACE_MS)
+      }
+      child.stdout?.setEncoding('utf-8')
+      child.stderr?.setEncoding('utf-8')
+      child.stdout?.on('data', (c: string) => {
+        out = (out + c).slice(-MAX_OUTPUT)
+      })
+      child.stderr?.on('data', (c: string) => {
+        err = (err + c).slice(-MAX_OUTPUT)
+      })
+      child.on('error', (e) => {
+        err += `\n提权命令启动失败：${e.message}`
+        finish(null)
+      })
+      child.on('close', (code) => finish(code))
+      timer =
+        timeoutMs > 0
+          ? setTimeout(() => {
+              timedOut = true
+              onAbort()
+            }, timeoutMs)
+          : null
+      if (opts.signal) {
+        if (opts.signal.aborted) onAbort()
+        else opts.signal.addEventListener('abort', onAbort, { once: true })
+      }
+    })
   }
 
   /**
@@ -965,6 +1172,7 @@ class BashSessionManager {
    * 不回收会随历史会话数累积常驻子进程，直到应用退出时才由 disposeAll 统一释放。
    */
   disposeSession(sessionId: string): void {
+    this.sessionExtraRoots.delete(sessionId)
     const shell = this.defaults.get(sessionId)
     if (!shell) return
     shell.dispose()

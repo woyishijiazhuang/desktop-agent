@@ -26,8 +26,11 @@ import {
   getSessionFsPolicy,
   isPathWithinAny,
   isSandboxWriteAllowed,
-  sandboxWriteDeniedMessage
+  sandboxWriteDeniedMessage,
+  getOnceWritableRoots,
+  clearOnceWritableRoots
 } from '../runtime/sandbox'
+import { toolOutcomeText, toolOutcomes } from '../runtime/tool-outcome'
 import {
   SETTING_ENABLED_TOOLS,
   SETTING_MEMORY_ENABLED,
@@ -258,9 +261,15 @@ function isToolCurrentlyEnabled(name: string): boolean {
   return true
 }
 
-/** 给单个工具套执行门控：被关时直接返回「已停用」提示，不执行内部逻辑。 */
+/**
+ * 给单个工具套执行门控：被关时直接抛错，不执行内部逻辑。
+ *
+ * 注意：这里必须**抛错**（而不是返回一段文本）——返回文本是「成功结果」，模型会以为工具
+ * 正常执行完了；抛错才会得到 isError 的 toolResult，配合 tool-outcome 的分类文本让模型
+ * 知道「工具被停用、该换路子」而不是「执行失败、重试一下」。
+ */
 function wrapGate(tool: AgentTool): AgentTool {
-  const { name, label } = tool
+  const { name } = tool
   const origExecute = tool.execute
   const execute = (async (
     toolCallId: string,
@@ -269,15 +278,7 @@ function wrapGate(tool: AgentTool): AgentTool {
     onUpdate?: unknown
   ) => {
     if (!isToolCurrentlyEnabled(name)) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `工具「${label ?? name}」当前已停用（设置中已关闭）。如需使用，请先在「设置 → 工具」中开启；开关即时生效，无需中断当前对话。`
-          }
-        ],
-        details: {}
-      }
+      throw new Error(toolOutcomeText(toolOutcomes.toolDisabled(name)))
     }
     return (origExecute as (...args: unknown[]) => Promise<unknown>).call(
       tool,
@@ -306,27 +307,37 @@ function wrapSandboxFsPolicy(tool: AgentTool, sessionId: string): AgentTool {
     onUpdate?: unknown
   ) => {
     const path = (params as { path?: string } | null | undefined)?.path
-    if (path) {
-      const policy = await getSessionFsPolicy(sessionId)
-      if (policy) {
-        if (FS_WRITE_TOOLS.has(name)) {
-          if (!isSandboxWriteAllowed(policy, path)) {
-            throw new Error(sandboxWriteDeniedMessage(path))
+    // 「仅本次」沙箱提权授权：审批发生在 beforeToolCall，执行层还须独立复核一次边界，
+    // 故按 toolCallId 取这次调用的临时可写根（无论本次执行成功与否都要清除，避免累积）。
+    const onceRoots = getOnceWritableRoots(toolCallId)
+    try {
+      if (path) {
+        const policy = await getSessionFsPolicy(sessionId)
+        if (policy) {
+          if (FS_WRITE_TOOLS.has(name)) {
+            const allowed =
+              isSandboxWriteAllowed(policy, path) ||
+              (onceRoots.length > 0 && isPathWithinAny(path, onceRoots))
+            if (!allowed) {
+              throw new Error(sandboxWriteDeniedMessage(path))
+            }
+          } else if (isPathWithinAny(path, policy.denyReadRoots)) {
+            throw new Error(
+              `沙箱已开启：路径「${path}」位于「禁止读取」目录内，拒绝读取。如需访问，请到「设置 → 沙箱 → 禁止读取的目录」调整。`
+            )
           }
-        } else if (isPathWithinAny(path, policy.denyReadRoots)) {
-          throw new Error(
-            `沙箱已开启：路径「${path}」位于「禁止读取」目录内，拒绝读取。如需访问，请到「设置 → 沙箱 → 禁止读取的目录」调整。`
-          )
         }
       }
+      return await (origExecute as (...args: unknown[]) => Promise<unknown>).call(
+        tool,
+        toolCallId,
+        params,
+        signal,
+        onUpdate
+      )
+    } finally {
+      if (onceRoots.length > 0) clearOnceWritableRoots(toolCallId)
     }
-    return (origExecute as (...args: unknown[]) => Promise<unknown>).call(
-      tool,
-      toolCallId,
-      params,
-      signal,
-      onUpdate
-    )
   }) as unknown as typeof tool.execute
   return { ...tool, execute }
 }

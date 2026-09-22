@@ -7,18 +7,19 @@ import type {
   InteractionRequest,
   PermissionScope,
   PlanApprovalRequest,
+  SandboxEscalationRequest,
   ToolPermissionRequest
 } from '@main/agent/types'
 
 /**
- * 统一「人工介入」队列（危险工具确认 / 计划审批 / 澄清提问 三合一）。
+ * 统一「人工介入」队列（危险工具确认 / 沙箱提权 / 计划审批 / 澄清提问 四合一）。
  * AgentEventService.onInteractionRequest 收到 main 推来的请求后入队：
- * - tool_permission：同时把对应工具卡片标记为 pending（等待确认）；
+ * - tool_permission / sandbox_escalation：同时把对应工具卡片标记为 pending（等待确认）；
  * - plan_approval / ask_question：InteractionBar 按 kind 渲染对应面板。
  * 超时由 main 侧按请求携带的 expiresAt 统一处理（0 = 一直等待），renderer 用同一时间
  * 同步清理队列（权限卡片翻转为拒绝态），避免残留「等待确认」卡片与过期面板。
- * 回传仍走各自的 agent.respondPermission / respondPlan / respondAskUser（main 侧汇入
- * interaction.ts 统一注册表）。
+ * 回传仍走各自的 agent.respondPermission / respondEscalation / respondPlan / respondAskUser
+ * （main 侧汇入 interaction.ts 统一注册表）。
  */
 export const useInteractionStore = defineStore('interaction', () => {
   const queue = ref<InteractionRequest[]>([])
@@ -35,7 +36,7 @@ export const useInteractionStore = defineStore('interaction', () => {
       const info: { sessionId: string; toolCallId?: string; toolName?: string } = {
         sessionId: req.sessionId
       }
-      if (req.kind === 'tool_permission') {
+      if (req.kind === 'tool_permission' || req.kind === 'sandbox_escalation') {
         info.toolCallId = req.toolCallId
         info.toolName = req.toolName
       }
@@ -103,6 +104,34 @@ export const useInteractionStore = defineStore('interaction', () => {
     }
   }
 
+  /**
+   * 回传沙箱提权结果。scope 仅 once / session（提权不落持久白名单，UI 亦不提供 always）。
+   * 卡片状态与 respondPermission 同理：批准后补置「执行中」——提权重跑由 main 侧完成、
+   * 不重发 tool_execution_start，否则卡片会一直停在「等待确认」；拒绝则翻转为拒绝态。
+   */
+  function respondEscalation(
+    req: SandboxEscalationRequest,
+    approved: boolean,
+    scope: PermissionScope = 'once'
+  ): void {
+    void mainClient.agent.respondEscalation(req.requestId, approved, scope)
+    remove(req.requestId)
+    if (approved) {
+      const current = useChatStore().toolStatus[req.toolCallId]
+      if (!current || current.status === 'pending') {
+        useChatStore().setToolStatus(req.sessionId, req.toolCallId, {
+          status: 'running',
+          toolName: req.toolName
+        })
+      }
+    } else {
+      useChatStore().setToolStatus(req.sessionId, req.toolCallId, {
+        status: 'error',
+        toolName: req.toolName
+      })
+    }
+  }
+
   /** 回传计划审批结果（feedback 在拒绝时携带）。 */
   function respondPlan(req: PlanApprovalRequest, approved: boolean, feedback: string): void {
     void mainClient.agent.respondPlan(req.requestId, approved, feedback)
@@ -115,10 +144,10 @@ export const useInteractionStore = defineStore('interaction', () => {
     remove(req.requestId)
   }
 
-  /** 会话结束（agent_end）时清理该会话残留的交互请求，权限卡翻转为拒绝态。 */
+  /** 会话结束（agent_end）时清理该会话残留的交互请求，权限/提权卡翻转为拒绝态。 */
   function clearSession(sessionId: string): void {
     for (const req of pendingForSession(sessionId)) {
-      if (req.kind === 'tool_permission') {
+      if (req.kind === 'tool_permission' || req.kind === 'sandbox_escalation') {
         useChatStore().setToolStatus(req.sessionId, req.toolCallId, {
           status: 'error',
           toolName: req.toolName
@@ -135,6 +164,7 @@ export const useInteractionStore = defineStore('interaction', () => {
     pendingForSession,
     currentForSession,
     respondPermission,
+    respondEscalation,
     respondPlan,
     respondAskUser,
     clearSession

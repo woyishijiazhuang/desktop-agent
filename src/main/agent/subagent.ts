@@ -13,6 +13,7 @@ import { extractMessageText } from '@shared/message-text'
 import { db } from '../database'
 import { resolveAssistantCost } from './model'
 import { evaluateReadonlyBash, createBeforeToolCallHook } from './runtime/permission'
+import { blockFromOutcome, toolOutcomes } from './runtime/tool-outcome'
 import { createLogger } from '../utils/log'
 
 const log = createLogger('subagent')
@@ -110,10 +111,7 @@ async function planReadonlyHook(
   if (ctx.toolCall.name !== 'bash') return undefined
   const command = (ctx.args as { command?: string }).command?.trim() ?? ''
   if (evaluateReadonlyBash(command)) return undefined
-  return {
-    block: true,
-    reason: '只读子代理仅允许执行只读命令（如 ls / cat / git status / git diff / git log）'
-  }
+  return blockFromOutcome(toolOutcomes.subagentReadonly())
 }
 
 export interface RunSubagentParams {

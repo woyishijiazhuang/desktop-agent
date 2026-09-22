@@ -68,6 +68,17 @@ async function toggleEnabled(v: boolean): Promise<void> {
   }
 }
 
+async function toggleEscalationEnabled(v: boolean): Promise<void> {
+  try {
+    await settings.saveSandboxEscalationEnabled(v)
+    message.success(
+      v ? '已开启沙箱提权：越界写入可经你确认后临时放行' : '已关闭沙箱提权：越界一律直接拒绝'
+    )
+  } catch (err) {
+    message.error(err instanceof Error ? err.message : '保存失败')
+  }
+}
+
 function addRow(cat: ListCat): void {
   const val = adding.value[cat.id].trim()
   if (!val) {
@@ -223,6 +234,31 @@ async function installWindowsSandbox(): Promise<void> {
         生效边界：沙箱在 shell 启动那一刻一次性施加，<b>已在运行的会话不受影响</b>（改动可写目录 /
         白名单后，重新发起命令并触发会话重建即可）；每台设备仅 macOS / Linux 支持，Windows
         需先完成沙箱安装（未安装时执行会直接报错拒绝，不会降级直跑）。
+      </NAlert>
+    </NCard>
+
+    <NCard size="small" class="settings-card">
+      <template #header>
+        <span>沙箱提权</span>
+      </template>
+      <p class="settings-card__desc">
+        开启后，Agent 遇到越界写入（超出工作区与「可写目录」）时可向你申请临时放宽可写范围，
+        你可选择「仅本次允许」或「本会话允许」；授权<b>不会写入持久白名单</b>，会话结束后即失效。
+        关闭本开关后越界一律直接拒绝，不再提供任何提权入口（适合高安全 / 企业场景）。
+        注意：「跳过工具确认」「计划已批准」等自动放行<b>不会</b>自动批准提权，越界仍须你逐次确认。
+      </p>
+      <div class="switch-row">
+        <NSwitch
+          :value="settings.sandboxEscalationEnabled"
+          @update:value="toggleEscalationEnabled"
+        />
+        <span class="switch-row__label">{{
+          settings.sandboxEscalationEnabled ? '已开启' : '已关闭'
+        }}</span>
+      </div>
+      <NAlert type="info" :show-icon="true" class="settings-card__alert">
+        提权只对当前这次操作或当前会话生效；一次性或重建后的会话不会继承原有 shell 函数、
+        别名与未导出变量。
       </NAlert>
     </NCard>
 

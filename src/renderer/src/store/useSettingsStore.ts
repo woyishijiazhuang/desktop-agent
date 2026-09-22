@@ -30,7 +30,9 @@ import {
   SETTING_SANDBOX_WRITABLE_ROOTS,
   SETTING_SANDBOX_DENY_READ_ROOTS,
   SETTING_SANDBOX_NETWORK_ALLOWLIST,
+  SETTING_SANDBOX_ESCALATION_ENABLED,
   SANDBOX_DEFAULT_NETWORK_ALLOWLIST,
+  DEFAULT_SANDBOX_ESCALATION_ENABLED,
   SETTING_VOICE_REGION,
   SETTING_VOICE_LANGUAGE,
   SETTING_VOICE_TTS_VOICE,
@@ -111,6 +113,8 @@ export const useSettingsStore = defineStore('settings', () => {
   const sandboxDenyReadRoots = ref<string[]>([])
   /** 网络域名白名单（空数组 = 全部拒网；默认内置常用站点）。 */
   const sandboxNetworkAllowlist = ref<string[]>(SANDBOX_DEFAULT_NETWORK_ALLOWLIST)
+  /** 沙箱提权通道总开关（默认开启；关闭后越界一律硬拒，不提供提权入口）。 */
+  const sandboxEscalationEnabled = ref(DEFAULT_SANDBOX_ESCALATION_ENABLED)
   // ---- 语音对话 ----
   /** MiMo 语音 API key 是否已配置（明文不进入渲染进程）。 */
   const voiceHasApiKey = ref(false)
@@ -160,7 +164,8 @@ export const useSettingsStore = defineStore('settings', () => {
           SETTING_SANDBOX_ENABLED,
           SETTING_SANDBOX_WRITABLE_ROOTS,
           SETTING_SANDBOX_DENY_READ_ROOTS,
-          SETTING_SANDBOX_NETWORK_ALLOWLIST
+          SETTING_SANDBOX_NETWORK_ALLOWLIST,
+          SETTING_SANDBOX_ESCALATION_ENABLED
         ]),
         mainClient.agent.listTools(),
         mainClient.agent.getWebSearchConfig(),
@@ -199,6 +204,9 @@ export const useSettingsStore = defineStore('settings', () => {
     // 未配置过才回退内置默认；显式存空数组 = 用户选择「禁止全部外网」
     sandboxNetworkAllowlist.value =
       allowlist === undefined ? [...SANDBOX_DEFAULT_NETWORK_ALLOWLIST] : allowlist
+    sandboxEscalationEnabled.value =
+      (settings[SETTING_SANDBOX_ESCALATION_ENABLED] as boolean | undefined) ??
+      DEFAULT_SANDBOX_ESCALATION_ENABLED
     // 语音配置（voice.getConfig 返回聚合配置，无 key 明文）
     const vc = voiceConfig as
       | {
@@ -367,6 +375,16 @@ export const useSettingsStore = defineStore('settings', () => {
   async function saveSandboxEnabled(v: boolean): Promise<void> {
     await mainClient.db.setSetting(SETTING_SANDBOX_ENABLED, v)
     sandboxEnabled.value = v
+  }
+
+  /**
+   * 切换沙箱提权通道总开关。
+   * 无需驱逐 Agent：main 侧每次沙箱越界时实时读取，改后下一次越界判断立即生效；
+   * 关闭后越界一律硬拒（不再推提权请求），已在等待中的提权请求不受影响。
+   */
+  async function saveSandboxEscalationEnabled(v: boolean): Promise<void> {
+    await mainClient.db.setSetting(SETTING_SANDBOX_ESCALATION_ENABLED, v)
+    sandboxEscalationEnabled.value = v
   }
 
   /** 保存用户追加的可写根（工作区目录自动可写，此处仅追加工作区外目录）。 */
@@ -546,6 +564,9 @@ export const useSettingsStore = defineStore('settings', () => {
       case SETTING_SANDBOX_NETWORK_ALLOWLIST:
         sandboxNetworkAllowlist.value = (value as string[] | undefined) ?? []
         break
+      case SETTING_SANDBOX_ESCALATION_ENABLED:
+        sandboxEscalationEnabled.value = (value as boolean) ?? DEFAULT_SANDBOX_ESCALATION_ENABLED
+        break
       case SETTING_VOICE_REGION:
         voiceRegion.value = (value as VoiceRegion) ?? DEFAULT_VOICE_REGION
         break
@@ -658,6 +679,7 @@ export const useSettingsStore = defineStore('settings', () => {
     sandboxWritableRoots,
     sandboxDenyReadRoots,
     sandboxNetworkAllowlist,
+    sandboxEscalationEnabled,
     voiceHasApiKey,
     voiceRegion,
     voiceLanguage,
@@ -675,6 +697,7 @@ export const useSettingsStore = defineStore('settings', () => {
     savePermissionAutoApprove,
     savePermissionTimeoutSec,
     saveSandboxEnabled,
+    saveSandboxEscalationEnabled,
     saveSandboxWritableRoots,
     saveSandboxDenyReadRoots,
     saveSandboxNetworkAllowlist,

@@ -129,13 +129,14 @@ export class AgentEventService extends IpcService {
   }
 
   /**
-   * 统一交互请求（危险工具确认 / 计划审批 / 澄清提问）。
-   * 入队后由 InteractionBar 按 kind 渲染；tool_permission 同时把对应工具卡片标记为「等待确认」。
+   * 统一交互请求（危险工具确认 / 沙箱提权 / 计划审批 / 澄清提问）。
+   * 入队后由 InteractionBar 按 kind 渲染；tool_permission 与 sandbox_escalation 同时把
+   * 对应工具卡片标记为「等待确认」（提权是某次工具调用被沙箱拒绝后触发的，卡片应显示等确认）。
    */
   onInteractionRequest(req: InteractionRequest): void {
     const store = useInteractionStore()
     store.enqueue(req)
-    if (req.kind === 'tool_permission') {
+    if (req.kind === 'tool_permission' || req.kind === 'sandbox_escalation') {
       useChatStore().setToolStatus(req.sessionId, req.toolCallId, {
         status: 'pending',
         toolName: req.toolName

@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { isAbsolute, join, relative, resolve } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { tmpdir } from 'node:os'
 import { app } from 'electron'
 import {
@@ -17,9 +17,11 @@ import { resolveSessionWorkdir } from './workdir'
 import type { BashSandboxWrapper } from './bash-session'
 import {
   DEFAULT_SANDBOX_ENABLED,
+  DEFAULT_SANDBOX_ESCALATION_ENABLED,
   SANDBOX_DEFAULT_NETWORK_ALLOWLIST,
   SETTING_SANDBOX_DENY_READ_ROOTS,
   SETTING_SANDBOX_ENABLED,
+  SETTING_SANDBOX_ESCALATION_ENABLED,
   SETTING_SANDBOX_NETWORK_ALLOWLIST,
   SETTING_SANDBOX_WRITABLE_ROOTS
 } from '../types'
@@ -66,6 +68,127 @@ export function readSandboxSettings(): SandboxSettings {
 
 /** 设置读取器（createSandboxWrapper 的依赖注入点：默认读库，测试可注入替身）。 */
 export type SandboxSettingsReader = () => SandboxSettings | Promise<SandboxSettings>
+
+// ==================== 提权通道开关与会话级提权授权 ====================
+
+/** 提权通道是否开启（settings 表，默认开启）。关闭时越界一律硬拒，不提供任何提权入口。 */
+export function isSandboxEscalationEnabled(): boolean {
+  return (
+    db.getSetting<boolean>(SETTING_SANDBOX_ESCALATION_ENABLED) ?? DEFAULT_SANDBOX_ESCALATION_ENABLED
+  )
+}
+
+/** 沙箱当前是否真的在生效（已初始化 + 平台支持 + 开关打开）。用于避免无谓的越界检测开销。 */
+export function isSandboxActive(): boolean {
+  try {
+    return SandboxManager.isSandboxingEnabled()
+  } catch {
+    return false
+  }
+}
+
+/**
+ * 会话级提权授权（sessionId → 追加的可写根）。
+ *
+ * 与 `sessionBashAllow` 同生命周期：仅内存、仅当前会话有效、会话/工作区删除时清理。
+ * 沙箱提权**不做持久白名单** —— 持久化等于把沙箱边界静默放宽（见设计文档红线）。
+ */
+const sessionSandboxGrants = new Map<string, string[]>()
+
+/** 读取会话级提权授权。 */
+export function getSessionSandboxGrants(sessionId: string): string[] {
+  return sessionSandboxGrants.get(sessionId) ?? []
+}
+
+/** 追加会话级提权授权（幂等；返回追加后的完整列表）。 */
+export function grantSessionWritableRoots(sessionId: string, roots: string[]): string[] {
+  const merged = uniquePaths([...(sessionSandboxGrants.get(sessionId) ?? []), ...roots])
+  sessionSandboxGrants.set(sessionId, merged)
+  log.info('已签发会话级提权授权', { sessionId, added: roots, total: merged.length })
+  return merged
+}
+
+/** 释放会话级提权授权（会话终止 / 删除工作区，由 clearSessionPermissions 调用）。 */
+export function clearSessionSandboxGrants(sessionId: string): void {
+  sessionSandboxGrants.delete(sessionId)
+}
+
+/**
+ * 「仅本次」提权授权：toolCallId → 追加的可写根。
+ *
+ * 为什么按 toolCallId 而不是按会话：审批发生在 beforeToolCall，而沙箱边界复查发生在
+ * 工具执行层（tools/index.ts 的 wrapSandboxFsPolicy）——两者是两个独立的包装器，
+ * 只能靠 toolCallId 把「这一次调用」的临时授权传递过去，用完即清（见 clearOnceWritableRoots）。
+ */
+const onceGrants = new Map<string, string[]>()
+
+/** 记录「仅本次」提权授权（绑定到具体 toolCallId）。 */
+export function grantOnceWritableRoots(toolCallId: string, roots: string[]): void {
+  if (!toolCallId) return
+  onceGrants.set(toolCallId, uniquePaths(roots))
+}
+
+/** 读取「仅本次」提权授权（工具执行层复核用；不清除，由执行方在 finally 中清理）。 */
+export function getOnceWritableRoots(toolCallId: string): string[] {
+  return onceGrants.get(toolCallId) ?? []
+}
+
+/** 清除「仅本次」提权授权（工具执行结束后必须调用，避免随会话累积）。 */
+export function clearOnceWritableRoots(toolCallId: string): void {
+  onceGrants.delete(toolCallId)
+}
+
+/**
+ * 提权通道关闭时的统一引导文案（面向 Agent）。
+ * 两个调用点都在 !isSandboxEscalationEnabled() 分支内（permission.ts / bash.ts），
+ * 因此这里只给关闭态口径（去设置加目录或关沙箱），避免出现永远不可达的开启态文案。
+ */
+export function sandboxEscalationHint(): string {
+  return '当前沙箱提权通道已关闭。如需写入，请到「设置 → 沙箱 → 可写目录」添加该目录，或临时关闭沙箱。'
+}
+
+/**
+ * 从 srt 违规记录中提取「因写被拒」的绝对路径（被动检测用）。
+ *
+ * srt 按 per-invocation 的 commandId 归因违规（见其 README「Violation attribution」），
+ * 因此包装时必须下发同一个 commandId。line 形如：
+ *   deny(1) file-write-create /Users/x/.npm/_cacache/tmp/xxx
+ * 只认 file-write* 且形如绝对路径的 token，避免把无关日志当成路径。
+ *
+ * since：只取该时刻**之后**的违规。持久 shell 是「一个进程跑所有命令」，全部命令共享同一
+ * 归因键，无法靠 commandId 区分单条命令 —— 调用方传入本次命令的开始时刻做时间窗过滤。
+ * 注意违规存的是环形缓冲（有上限），极端高频下窗口内的记录可能被挤掉，属可接受的降级。
+ */
+export function getSandboxDeniedWritePaths(commandId: string, since?: number): string[] {
+  try {
+    const events = SandboxManager.getSandboxViolationStore().getViolationsForCommand(commandId)
+    const paths = new Set<string>()
+    for (const e of events) {
+      if (since !== undefined) {
+        const at = e?.timestamp instanceof Date ? e.timestamp.getTime() : 0
+        if (at < since) continue
+      }
+      const m = /file-write[a-z-]*\s+(\/\S+)/.exec(e?.line ?? '')
+      if (m) paths.add(m[1])
+    }
+    return [...paths]
+  } catch (err) {
+    log.warn('读取沙箱违规记录失败', {
+      commandId,
+      error: err instanceof Error ? err.message : String(err)
+    })
+    return []
+  }
+}
+
+/**
+ * 被拒路径 → 申请提权的可写根：取**父目录**（保守、可预测）。
+ * 一条命令可能命中多个路径，故返回去重后的目录集合；若父目录仍不够，
+ * 用户/Agent 可再次发起提权（允许多次发起，见设计文档决策 4）。
+ */
+export function deniedPathsToRoots(paths: string[]): string[] {
+  return uniquePaths(paths.filter((p) => isAbsolute(p)).map((p) => dirname(p)))
+}
 
 // ==================== 文件域策略（文件工具与 bash 沙箱共用同一可写/禁读边界） ====================
 
@@ -116,7 +239,9 @@ export async function getSessionFsPolicy(sessionId: string): Promise<SandboxFsPo
     allowWriteRoots: uniquePaths([
       ...platformTempPaths(),
       ...(workdir ? [workdir] : []),
-      ...settings.writableRoots
+      ...settings.writableRoots,
+      // 会话级提权授权（用户批准的追加目录）与其它可写根同权
+      ...getSessionSandboxGrants(sessionId)
     ]),
     denyReadRoots: uniquePaths(settings.denyReadRoots)
   }
@@ -138,7 +263,9 @@ export async function getSessionWriteBoundary(sessionId: string): Promise<{
     allowWriteRoots: uniquePaths([
       ...platformTempPaths(),
       ...(workdir ? [workdir] : []),
-      ...settings.writableRoots
+      ...settings.writableRoots,
+      // 与沙箱策略保持同一边界：提权授权同时放宽审批层，避免「审批拒了沙箱却允许」的错位
+      ...getSessionSandboxGrants(sessionId)
     ]),
     denyReadRoots: uniquePaths(settings.denyReadRoots)
   }
@@ -374,7 +501,11 @@ async function ensureSandboxManager(settings: SandboxSettings): Promise<void> {
     }
     initPromise = (async () => {
       try {
-        await SandboxManager.initialize(buildRuntimeConfig(settings))
+        // 第三个参数 enableLogMonitor 默认 false：不开则 sandboxViolationStore 恒为空，
+        // 越界路径归因（getSandboxDeniedWritePaths）与 annotateStderr 全部失效，
+        // bash 侧「被动检测 → 提权重跑」就永远不会触发。故必须显式开启。
+        // macOS 下它会拉一个 `log stream --predicate ...` 子进程做内核日志过滤（Claude Code 同款用法）。
+        await SandboxManager.initialize(buildRuntimeConfig(settings), undefined, true)
         managerInitialized = true
         activeAllowlistKey = allowlistKey
         log.info('沙箱已初始化', { allowlistCount: settings.networkAllowlist.length })
@@ -404,11 +535,12 @@ export function createSandboxWrapper(
     const settings = await reader()
     if (!settings.enabled) return null
     await ensureSandboxManager(settings)
-    // 默认可写：各平台系统临时目录 + 命令所在工作区（动态）+ 用户追加目录
+    // 默认可写：各平台系统临时目录 + 命令所在工作区（动态）+ 用户追加目录 + 本次提权的追加根
     const allowWrite = uniquePaths([
       ...platformTempPaths(),
       ...(req.cwd ? [req.cwd] : []),
-      ...settings.writableRoots
+      ...settings.writableRoots,
+      ...(req.extraWritableRoots ?? [])
     ])
     if (allowWrite.length === 0) {
       throw new Error('沙箱开启但无可写目录：请在工作区中发起命令，或在设置-沙箱中添加可写目录')
@@ -422,13 +554,17 @@ export function createSandboxWrapper(
           filesystem: { allowWrite, denyWrite: [], denyRead: settings.denyReadRoots }
         },
         undefined,
-        req.cwd
+        req.cwd,
+        // commandId：违规归因键，供执行后用 getSandboxDeniedWritePaths 定位被拒路径。
+        // 未下发时 srt 按命令文本归因，长命令共享前缀会串味（见其 README）。
+        req.commandId ? { commandId: req.commandId } : undefined
       )
       log.info('命令已套入沙箱', {
         mode: req.mode,
         cwd: req.cwd,
         allowWrite,
-        denyRead: settings.denyReadRoots
+        denyRead: settings.denyReadRoots,
+        escalated: (req.extraWritableRoots ?? []).length > 0
       })
       // wrapWithSandboxArgv 返回的 env 即宿主环境；子进程需继承调用方组装好的 env
       //（含自动抓取 shell 环境与手动配置变量）。代理经命令前缀 env 注入，无需额外处理。
