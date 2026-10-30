@@ -38,6 +38,8 @@ const props = defineProps<{ isBusy: boolean }>()
 const emit = defineEmits<{
   send: [text: string, attachments?: ComposerAttachment[], skills?: string[]]
   abort: []
+  steer: [text: string]
+  interruptSend: [text: string]
 }>()
 
 const chatStore = useChatStore()
@@ -283,6 +285,22 @@ function onStop(): void {
   emit('abort')
 }
 
+/** 运行中 Enter：把消息插队排队（当前轮结束后由 agent 注入并继续）。 */
+function submitSteer(): void {
+  const value = text.value.trim()
+  if (!value) return
+  emit('steer', value)
+  text.value = ''
+}
+
+/** 运行中 Cmd/Ctrl+Enter：立即中止当前生成并发送新消息。 */
+function submitInterrupt(): void {
+  const value = text.value.trim()
+  if (!value) return
+  emit('interruptSend', value)
+  text.value = ''
+}
+
 function onKeydown(e: KeyboardEvent): void {
   // 输入法组词中（如中文选词回车/取消）的按键不参与快捷键处理，
   // 否则选词回车会误触发发送、取消组词 Esc 会误中止生成
@@ -296,6 +314,12 @@ function onKeydown(e: KeyboardEvent): void {
   // Enter 发送，Shift+Enter 换行；Cmd/Ctrl+Enter 也可发送
   if (e.key === 'Enter' && (!e.shiftKey || e.metaKey || e.ctrlKey)) {
     e.preventDefault()
+    if (props.isBusy) {
+      // 运行中：Cmd/Ctrl+Enter 立即中止并发送，普通 Enter 插队引导
+      if (e.metaKey || e.ctrlKey) submitInterrupt()
+      else submitSteer()
+      return
+    }
     submit()
   }
 }
@@ -364,7 +388,9 @@ function onKeydown(e: KeyboardEvent): void {
       :autosize="{ minRows: 1, maxRows: 8 }"
       :bordered="false"
       :placeholder="
-        isBusy ? '生成中…（Esc 中止）' : '输入消息…（Enter 发送，可拖拽/粘贴图片或文件）'
+        isBusy
+          ? '生成中… Enter 插队，⌘/Ctrl+Enter 立即发送，Esc 中止'
+          : '输入消息…（Enter 发送，可拖拽/粘贴图片或文件）'
       "
       @keydown="onKeydown"
       @paste="onPaste"
@@ -498,18 +524,32 @@ function onKeydown(e: KeyboardEvent): void {
             <NIcon><SendOutline /></NIcon>
           </template>
         </NButton>
-        <NButton
-          v-else
-          class="composer__send"
-          type="error"
-          circle
-          title="中止生成（Esc）"
-          @click="onStop"
-        >
-          <template #icon>
-            <NIcon><StopCircleOutline /></NIcon>
-          </template>
-        </NButton>
+        <!-- 运行中：插队发送（Enter）+ 中止（Esc）两个按钮并列 -->
+        <template v-else>
+          <NButton
+            class="composer__send"
+            type="primary"
+            circle
+            :disabled="!text.trim()"
+            title="插队发送（Enter）：当前轮结束后注入并继续"
+            @click="submitSteer"
+          >
+            <template #icon>
+              <NIcon><SendOutline /></NIcon>
+            </template>
+          </NButton>
+          <NButton
+            class="composer__send"
+            type="error"
+            circle
+            title="中止生成（Esc）"
+            @click="onStop"
+          >
+            <template #icon>
+              <NIcon><StopCircleOutline /></NIcon>
+            </template>
+          </NButton>
+        </template>
       </div>
     </div>
   </div>

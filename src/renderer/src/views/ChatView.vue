@@ -107,6 +107,16 @@ function onAbort(): void {
   chatStore.abort()
 }
 
+/** 运行中插队引导（Enter）：消息排队，当前轮结束后注入并继续。 */
+function onSteer(text: string): void {
+  void chatStore.steer(text)
+}
+
+/** 运行中立即中止并发送（Cmd/Ctrl+Enter）。 */
+function onInterruptSend(text: string): void {
+  void chatStore.interruptAndSend(text)
+}
+
 /** 重试上一轮失败的对话（main 侧清理 + 重跑，事件流自动回传）。 */
 function onRetry(): void {
   void chatStore.retry()
@@ -193,7 +203,13 @@ function goToSettings(): void {
         <!-- 计划执行进度条：批准后展示，report_step 驱动当前步骤 -->
         <PlanProgressBar />
         <div class="chat-view__composer">
-          <ChatInput :is-busy="chatStore.isBusy" @send="onSend" @abort="onAbort" />
+          <ChatInput
+            :is-busy="chatStore.isBusy"
+            @send="onSend"
+            @abort="onAbort"
+            @steer="onSteer"
+            @interrupt-send="onInterruptSend"
+          />
         </div>
       </template>
 

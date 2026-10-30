@@ -550,6 +550,46 @@ export const useChatStore = defineStore('chat', () => {
     void mainClient.agent.abort(currentSessionId.value)
   }
 
+  /**
+   * 运行中插队引导（steer）：消息入队，当前轮结束后由 agent 自动注入并继续。
+   * 乐观气泡带 pendingSteer 标记（气泡展示「等待注入」）；agent 消费后
+   * message_end 按相同 timestamp 替换为权威消息，标记消失。
+   */
+  async function steer(text: string): Promise<void> {
+    const sessionId = currentSessionId.value
+    const trimmed = text.trim()
+    const state = current.value
+    if (!sessionId || !state?.isBusy || !trimmed) return
+    const timestamp = Date.now()
+    const msg = {
+      role: 'user',
+      content: [{ type: 'text', text: trimmed }],
+      timestamp
+    } as AgentMessage
+    ;(msg as { pendingSteer?: boolean }).pendingSteer = true
+    state.messages.push(msg)
+    try {
+      await mainClient.agent.steer(sessionId, trimmed, timestamp)
+    } catch (err) {
+      // 入队失败：移除乐观气泡并提示
+      state.messages = state.messages.filter((m) => m !== msg)
+      state.error = err instanceof Error ? err.message : String(err)
+    }
+  }
+
+  /**
+   * 立即中止当前生成，并把新文本作为新一轮消息发送（紧急纠错）。
+   * 先等 main 侧中止收尾（agent_end 已下发、busy 解除），再走正常 send，
+   * 杜绝同一 Agent 双 run。
+   */
+  async function interruptAndSend(text: string): Promise<void> {
+    const sessionId = currentSessionId.value
+    const trimmed = text.trim()
+    if (!sessionId || !trimmed) return
+    await mainClient.agent.abortAndWaitIdle(sessionId)
+    await send(trimmed)
+  }
+
   /** 清除错误提示。 */
   function clearError(): void {
     if (current.value) current.value.error = null
@@ -687,6 +727,8 @@ export const useChatStore = defineStore('chat', () => {
     selectThinkingLevel,
     send,
     abort,
+    steer,
+    interruptAndSend,
     clearError,
     retry,
     regenerate,

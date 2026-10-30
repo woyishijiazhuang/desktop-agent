@@ -47,6 +47,13 @@ const MAX_AGENTS = 8
 
 const log = createLogger('agent')
 
+/**
+ * 标记经 agent.steer() 排队的 user 消息（对象标记，随引用在事件流中传递）。
+ * 事件桥据此在 message_end 落库——普通 prompt 的 user 已在 prompt 入口落库，
+ * 只有排队消费的消息需要在此补持久化。
+ */
+export const STEER_MESSAGE_FLAG = '__steerMessage'
+
 /** 新会话默认标题（生成标题时据此判断是否需要自动生成）。 */
 const DEFAULT_SESSION_TITLE = '新会话'
 
@@ -768,6 +775,17 @@ export class AgentManager {
             }
           } catch (err) {
             log.error('消息落库失败', { sessionId, role: msg.role, error: err })
+          }
+        } else if (
+          msg.role === 'user' &&
+          (msg as unknown as Record<string, unknown>)[STEER_MESSAGE_FLAG]
+        ) {
+          // steer 排队消息此刻才被 agent 注入：补落库（普通 prompt 的 user 已在入口落库）
+          try {
+            db.createMessage(toCreateMessageParams(sessionId, msg))
+            log.debug('steer 消息落库', { sessionId, timestamp: msg.timestamp })
+          } catch (err) {
+            log.error('steer 消息落库失败', { sessionId, error: err })
           }
         }
       }

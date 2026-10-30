@@ -45,7 +45,7 @@ import { resolveAskUser } from '../agent/runtime/ask-user'
 import { extractDocumentText } from '../utils/doc-parser'
 import { completeText, type CompleteTextResult } from '../agent/model/models'
 import { resolveAssistantCost } from '../agent/model'
-import { AgentManager } from '../agent/agent-manager'
+import { AgentManager, STEER_MESSAGE_FLAG } from '../agent/agent-manager'
 import { createLogger } from '../utils/log'
 import type {
   FindSkillSource,
@@ -359,14 +359,28 @@ export class AgentService extends IpcService {
     }
   }
 
-  steer(sessionId: string, text: string): void {
+  steer(sessionId: string, text: string, timestamp: number): void {
     log.debug('steer', { sessionId, text: text.slice(0, 100) })
     const msg: AgentMessage = {
       role: 'user',
       content: [{ type: 'text', text }],
-      timestamp: Date.now()
+      timestamp
     }
+    // 打标记：事件桥在消息被消费（message_end）时据此落库
+    ;(msg as unknown as Record<string, unknown>)[STEER_MESSAGE_FLAG] = true
     this.manager.getAgent(sessionId)?.steer(msg)
+  }
+
+  /**
+   * 中止当前生成并等待其完全收尾（agent_end 已推送、会话进入空闲）。
+   * 供「立即中止并发送新消息」使用：等 idle 后再 prompt，避免双 run 冲突。
+   */
+  async abortAndWaitIdle(sessionId: string): Promise<void> {
+    const agent = this.manager.getAgent(sessionId)
+    if (!agent?.signal) return
+    log.info('中止并等待收尾', { sessionId })
+    agent.abort()
+    await agent.waitForIdle()
   }
 
   followUp(sessionId: string, text: string): void {

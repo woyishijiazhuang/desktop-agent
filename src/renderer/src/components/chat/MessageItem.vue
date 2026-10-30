@@ -10,6 +10,7 @@ import {
   ChevronUpOutline,
   RefreshOutline,
   GitBranchOutline,
+  HourglassOutline,
   WarningOutline
 } from '@vicons/ionicons5'
 import MarkdownRender from 'markstream-vue'
@@ -71,6 +72,11 @@ const dialog = useDialog()
 
 const isUser = computed(() => props.message.role === 'user')
 const isToolResult = computed(() => props.message.role === 'toolResult')
+
+/** steer 排队中的用户消息：气泡上展示「等待注入」，消息被 agent 消费后经权威替换消失。 */
+const isPendingSteer = computed(
+  () => isUser.value && !!(props.message as { pendingSteer?: boolean }).pendingSteer
+)
 
 /** assistant 消息的 content block 列表 */
 const blocks = computed(() => {
@@ -487,6 +493,11 @@ provide(chatMessageContextKey, messageId)
             :text="s.text"
           />
           <UserFileBlock v-for="(f, i) in userFiles" :key="i" :name="f.file_name" :text="f.text" />
+          <!-- steer 排队中：展示「等待注入」，消费后权威替换消失 -->
+          <div v-if="isPendingSteer" class="row__steer-pending">
+            <NIcon :size="12"><HourglassOutline /></NIcon>
+            <span>等待注入…</span>
+          </div>
         </template>
         <template v-else>
           <div v-if="isFailedMarker" class="row__failed-marker">
@@ -658,6 +669,17 @@ provide(chatMessageContextKey, messageId)
   padding: 10px 14px;
   border-radius: var(--radius-lg);
   white-space: pre-wrap;
+}
+/* steer 排队提示：气泡内底部小字（图标 + 等待注入），消息被消费后消失 */
+.row__steer-pending {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--text-3);
+  white-space: normal;
 }
 /* assistant 消息走 Markdown 渲染：由 markstream 控制空白与块级布局，不强制 pre-wrap */
 .row__markdown {
